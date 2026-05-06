@@ -27,7 +27,7 @@ def get_data():
 
     # Pendientes agrupados por editor → cliente → archivos
     pending_rows = conn.execute("""
-        SELECT editor, cliente, file_name, detected_at
+        SELECT id, editor, cliente, file_name, detected_at
         FROM tasks
         WHERE status = 'pending'
         ORDER BY editor, cliente, detected_at
@@ -37,6 +37,7 @@ def get_data():
     for r in pending_rows:
         editor = r["editor"] or "— sin editor en Sheet —"
         by_editor[editor][r["cliente"].strip()].append({
+            "task_id": r["id"],
             "file": r["file_name"],
             "detected_at": r["detected_at"],
         })
@@ -99,13 +100,22 @@ def build_html(data: dict) -> str:
     editores_activos = len([e for e in by_editor if not e.startswith("—")])
     total_clientes_pend = sum(len(clientes) for clientes in by_editor.values())
 
-    # Sort editores alfabéticamente
+    # Sort editores: por cantidad de pendientes DESCENDENTE (más pendientes primero)
+    # Para los datos: necesitamos el task_id de cada pendiente para el botón de borrar
     editor_blocks = []
-    for editor in sorted(by_editor.keys()):
+    for editor in sorted(by_editor.keys(), key=lambda e: -len(by_editor[e])):
         clientes = by_editor[editor]
         clientes_html = ""
         for cliente in sorted(clientes.keys()):
-            clientes_html += f'<div class="cliente-card"><span class="cliente-name">{cliente}</span></div>'
+            files = clientes[cliente]
+            # task_id viene en cada file (lo agregamos en get_data)
+            task_id = files[0]["task_id"]
+            clientes_html += (
+                f'<div class="cliente-card" data-task-id="{task_id}">'
+                f'<span class="cliente-name">{cliente}</span>'
+                f'<button class="delete-btn" onclick="deleteTask({task_id}, this)" title="Marcar como hecho">🗑️</button>'
+                f'</div>'
+            )
         editor_blocks.append(f"""
             <section class="editor-block">
                 <header class="editor-header">
@@ -263,10 +273,31 @@ def build_html(data: dict) -> str:
             padding: 10px 16px;
             border-radius: 8px;
             font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: opacity 0.2s;
         }}
+        .cliente-card.removing {{ opacity: 0; transform: translateX(20px); }}
         .cliente-name {{
             font-weight: 500;
             color: var(--text);
+        }}
+        .delete-btn {{
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            font-size: 16px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            opacity: 0.4;
+            transition: opacity 0.2s, background 0.2s;
+        }}
+        .cliente-card:hover .delete-btn {{ opacity: 1; }}
+        .delete-btn:hover {{
+            background: rgba(255, 71, 71, 0.15);
+            opacity: 1;
         }}
         .empty-state {{
             background: var(--bg-card);
@@ -367,6 +398,26 @@ def build_html(data: dict) -> str:
         Asistente Revolv · datos del último scan en GitHub Actions ·
         para datos en vivo, hacé doble click en el ícono "Asistente Revolv" del Dock
     </footer>
+
+    <script>
+    async function deleteTask(taskId, btn) {{
+        if (!confirm('¿Marcar este pendiente como hecho?')) return;
+        const card = btn.closest('.cliente-card');
+        btn.disabled = true;
+        try {{
+            const res = await fetch('/api/task/' + taskId, {{ method: 'DELETE' }});
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.error || 'Error desconocido');
+            // Animar y remover
+            card.classList.add('removing');
+            setTimeout(() => card.remove(), 250);
+        }} catch (e) {{
+            btn.disabled = false;
+            alert('No se pudo eliminar:\\n' + e.message + '\\n\\nAsegurate de haber abierto el dashboard desde el ícono "Asistente Revolv" del Dock (no abrir el HTML directamente).');
+        }}
+    }}
+    </script>
 </body>
 </html>
 """

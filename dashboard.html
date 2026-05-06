@@ -128,10 +128,31 @@
             padding: 10px 16px;
             border-radius: 8px;
             font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: opacity 0.2s;
         }
+        .cliente-card.removing { opacity: 0; transform: translateX(20px); }
         .cliente-name {
             font-weight: 500;
             color: var(--text);
+        }
+        .delete-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            font-size: 16px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            opacity: 0.4;
+            transition: opacity 0.2s, background 0.2s;
+        }
+        .cliente-card:hover .delete-btn { opacity: 1; }
+        .delete-btn:hover {
+            background: rgba(255, 71, 71, 0.15);
+            opacity: 1;
         }
         .empty-state {
             background: var(--bg-card);
@@ -194,7 +215,7 @@
             </p>
         </div>
         <div class="header-meta">
-            <div>Última actualización: 19:09</div>
+            <div>Última actualización: 19:13</div>
             <button class="refresh-btn" onclick="window.location.reload()">🔄 Recargar</button>
         </div>
     </header>
@@ -218,37 +239,19 @@
     
             <section class="editor-block">
                 <header class="editor-header">
-                    <h2>Benja</h2>
-                </header>
-                <div class="clientes-grid">
-                    <div class="cliente-card"><span class="cliente-name">Ali Baig</span></div><div class="cliente-card"><span class="cliente-name">Daniel Ramirez</span></div><div class="cliente-card"><span class="cliente-name">TheEye</span></div>
-                </div>
-            </section>
-        
-            <section class="editor-block">
-                <header class="editor-header">
-                    <h2>Fran</h2>
-                </header>
-                <div class="clientes-grid">
-                    <div class="cliente-card"><span class="cliente-name">Egdylu</span></div><div class="cliente-card"><span class="cliente-name">Octavian</span></div>
-                </div>
-            </section>
-        
-            <section class="editor-block">
-                <header class="editor-header">
                     <h2>Rami</h2>
                 </header>
                 <div class="clientes-grid">
-                    <div class="cliente-card"><span class="cliente-name">David Hernandez</span></div><div class="cliente-card"><span class="cliente-name">Egdylu yt</span></div><div class="cliente-card"><span class="cliente-name">Federico Osorio</span></div><div class="cliente-card"><span class="cliente-name">Jose Social Pulse Media</span></div><div class="cliente-card"><span class="cliente-name">Liliana Rohenes</span></div><div class="cliente-card"><span class="cliente-name">Lorena Gz</span></div><div class="cliente-card"><span class="cliente-name">Natalia Pereyra</span></div><div class="cliente-card"><span class="cliente-name">Rafa Elvram</span></div>
+                    <div class="cliente-card" data-task-id="13"><span class="cliente-name">David Hernandez</span><button class="delete-btn" onclick="deleteTask(13, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="15"><span class="cliente-name">Egdylu yt</span><button class="delete-btn" onclick="deleteTask(15, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="14"><span class="cliente-name">Federico Osorio</span><button class="delete-btn" onclick="deleteTask(14, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="11"><span class="cliente-name">Jose Social Pulse Media</span><button class="delete-btn" onclick="deleteTask(11, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="9"><span class="cliente-name">Liliana Rohenes</span><button class="delete-btn" onclick="deleteTask(9, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="10"><span class="cliente-name">Lorena Gz</span><button class="delete-btn" onclick="deleteTask(10, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="2"><span class="cliente-name">Natalia Pereyra</span><button class="delete-btn" onclick="deleteTask(2, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="12"><span class="cliente-name">Rafa Elvram</span><button class="delete-btn" onclick="deleteTask(12, this)" title="Marcar como hecho">🗑️</button></div>
                 </div>
             </section>
         
             <section class="editor-block">
                 <header class="editor-header">
-                    <h2>Santi</h2>
+                    <h2>Benja</h2>
                 </header>
                 <div class="clientes-grid">
-                    <div class="cliente-card"><span class="cliente-name">Gaetan</span></div><div class="cliente-card"><span class="cliente-name">Gerardo</span></div>
+                    <div class="cliente-card" data-task-id="17"><span class="cliente-name">Ali Baig</span><button class="delete-btn" onclick="deleteTask(17, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="16"><span class="cliente-name">Daniel Ramirez</span><button class="delete-btn" onclick="deleteTask(16, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="18"><span class="cliente-name">TheEye</span><button class="delete-btn" onclick="deleteTask(18, this)" title="Marcar como hecho">🗑️</button></div>
                 </div>
             </section>
         
@@ -257,7 +260,25 @@
                     <h2>Valen</h2>
                 </header>
                 <div class="clientes-grid">
-                    <div class="cliente-card"><span class="cliente-name">Delfina Morganti</span></div><div class="cliente-card"><span class="cliente-name">Fer Trips</span></div><div class="cliente-card"><span class="cliente-name">Natalia Lopez</span></div>
+                    <div class="cliente-card" data-task-id="21"><span class="cliente-name">Delfina Morganti</span><button class="delete-btn" onclick="deleteTask(21, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="20"><span class="cliente-name">Fer Trips</span><button class="delete-btn" onclick="deleteTask(20, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="19"><span class="cliente-name">Natalia Lopez</span><button class="delete-btn" onclick="deleteTask(19, this)" title="Marcar como hecho">🗑️</button></div>
+                </div>
+            </section>
+        
+            <section class="editor-block">
+                <header class="editor-header">
+                    <h2>Fran</h2>
+                </header>
+                <div class="clientes-grid">
+                    <div class="cliente-card" data-task-id="24"><span class="cliente-name">Egdylu</span><button class="delete-btn" onclick="deleteTask(24, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="22"><span class="cliente-name">Octavian</span><button class="delete-btn" onclick="deleteTask(22, this)" title="Marcar como hecho">🗑️</button></div>
+                </div>
+            </section>
+        
+            <section class="editor-block">
+                <header class="editor-header">
+                    <h2>Santi</h2>
+                </header>
+                <div class="clientes-grid">
+                    <div class="cliente-card" data-task-id="23"><span class="cliente-name">Gaetan</span><button class="delete-btn" onclick="deleteTask(23, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="25"><span class="cliente-name">Gerardo</span><button class="delete-btn" onclick="deleteTask(25, this)" title="Marcar como hecho">🗑️</button></div>
                 </div>
             </section>
         
@@ -277,5 +298,25 @@
         Asistente Revolv · datos del último scan en GitHub Actions ·
         para datos en vivo, hacé doble click en el ícono "Asistente Revolv" del Dock
     </footer>
+
+    <script>
+    async function deleteTask(taskId, btn) {
+        if (!confirm('¿Marcar este pendiente como hecho?')) return;
+        const card = btn.closest('.cliente-card');
+        btn.disabled = true;
+        try {
+            const res = await fetch('/api/task/' + taskId, { method: 'DELETE' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.error || 'Error desconocido');
+            // Animar y remover
+            card.classList.add('removing');
+            setTimeout(() => card.remove(), 250);
+        } catch (e) {
+            btn.disabled = false;
+            alert('No se pudo eliminar:\n' + e.message + '\n\nAsegurate de haber abierto el dashboard desde el ícono "Asistente Revolv" del Dock (no abrir el HTML directamente).');
+        }
+    }
+    </script>
 </body>
 </html>
