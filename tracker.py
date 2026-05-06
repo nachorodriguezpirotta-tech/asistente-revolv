@@ -2,9 +2,10 @@
 Tracker — DB local SQLite que guarda el estado del watcher de Drive.
 
 Tablas:
-  - clients: carpetas de cliente conocidas (cliente, folder_id, raw_folder_id, last_scan_at)
-  - known_files: archivos vistos en /Material/ de cada cliente (file_id, cliente, name, first_seen_at)
-  - tasks: tareas pendientes generadas cuando aparece archivo nuevo después del baseline
+  - clients: carpetas de cliente conocidas
+  - known_files: archivos vistos en /Material/ de cada cliente (CRUDOS)
+  - known_edited_files: archivos vistos en la carpeta del cliente fuera de /Material/ (EDITADOS)
+  - tasks: tareas pendientes generadas cuando aparece crudo nuevo
 """
 
 import os
@@ -54,12 +55,33 @@ def init_db():
         status        TEXT NOT NULL DEFAULT 'pending',  -- pending | done
         mail_sent_at  TEXT,
         completed_at  TEXT,
+        completed_by_file_id TEXT,  -- file_id del editado que cerró la tarea (audit)
         FOREIGN KEY (file_id) REFERENCES known_files(file_id)
     );
 
+    -- Editados: archivos en la carpeta del cliente FUERA de /Material/.
+    -- Cada vez que aparece uno nuevo, cerramos la tarea pendiente más vieja del cliente.
+    CREATE TABLE IF NOT EXISTS known_edited_files (
+        file_id       TEXT PRIMARY KEY,
+        cliente       TEXT NOT NULL,
+        folder_id     TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        size          INTEGER,
+        created_time  TEXT,
+        first_seen_at TEXT NOT NULL,
+        is_baseline   INTEGER NOT NULL DEFAULT 0,
+        closed_task_id INTEGER  -- id de la tarea que cerró este editado (puede ser NULL si no había pendientes)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_cliente_status ON tasks(cliente, status);
     CREATE INDEX IF NOT EXISTS idx_known_cliente ON known_files(cliente);
+    CREATE INDEX IF NOT EXISTS idx_known_edited_cliente ON known_edited_files(cliente);
     """)
+    # Migración: agregar columna completed_by_file_id si la DB existe pero no la tiene
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+    if "completed_by_file_id" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN completed_by_file_id TEXT")
     conn.commit()
     conn.close()
 
@@ -122,6 +144,75 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
     return task_id
 
 
+# ─── EDITADOS (cierre de tareas) ──────────────────────────────────────────────
+
+def is_edited_known(file_id: str) -> bool:
+    conn = get_conn()
+    row = conn.execute("SELECT 1 FROM known_edited_files WHERE file_id = ?", (file_id,)).fetchone()
+    conn.close()
+    return row is not None
+
+
+def add_known_edited_file(file_id: str, cliente: str, folder_id: str, name: str,
+                          size: Optional[int], created_time: Optional[str],
+                          is_baseline: bool = False,
+                          closed_task_id: Optional[int] = None):
+    conn = get_conn()
+    conn.execute("""
+        INSERT OR IGNORE INTO known_edited_files
+        (file_id, cliente, folder_id, name, size, created_time, first_seen_at, is_baseline, closed_task_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (file_id, cliente, folder_id, name, size, created_time, now_iso(),
+          1 if is_baseline else 0, closed_task_id))
+    conn.commit()
+    conn.close()
+
+
+def edited_baseline_done(cliente: str) -> bool:
+    """¿Ya tomamos baseline de los editados de este cliente alguna vez?"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM known_edited_files WHERE cliente = ? LIMIT 1", (cliente,)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def close_oldest_pending(cliente: str, completed_by_file_id: str) -> Optional[int]:
+    """
+    Marca como 'done' la tarea pendiente MÁS VIEJA de este cliente.
+    Retorna el id de la tarea cerrada o None si no había pendientes.
+    """
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT id FROM tasks
+        WHERE cliente = ? AND status = 'pending'
+        ORDER BY detected_at ASC
+        LIMIT 1
+    """, (cliente,)).fetchone()
+    if row is None:
+        conn.close()
+        return None
+    task_id = row[0]
+    conn.execute("""
+        UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?
+        WHERE id=?
+    """, (now_iso(), completed_by_file_id, task_id))
+    conn.commit()
+    conn.close()
+    return task_id
+
+
+def count_pending_for_client(cliente: str) -> int:
+    conn = get_conn()
+    n = conn.execute("SELECT COUNT(*) FROM tasks WHERE cliente=? AND status='pending'",
+                     (cliente,)).fetchone()[0]
+    conn.close()
+    return n
+
+
+# ─── TAREAS ───────────────────────────────────────────────────────────────────
+
 def list_pending_tasks() -> list[sqlite3.Row]:
     conn = get_conn()
     rows = conn.execute("""
@@ -142,8 +233,8 @@ def stats() -> dict:
     conn = get_conn()
     s = {
         "clients": conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0],
-        "known_files": conn.execute("SELECT COUNT(*) FROM known_files").fetchone()[0],
-        "baseline_files": conn.execute("SELECT COUNT(*) FROM known_files WHERE is_baseline=1").fetchone()[0],
+        "known_crudos": conn.execute("SELECT COUNT(*) FROM known_files").fetchone()[0],
+        "known_edited": conn.execute("SELECT COUNT(*) FROM known_edited_files").fetchone()[0],
         "pending_tasks": conn.execute("SELECT COUNT(*) FROM tasks WHERE status='pending'").fetchone()[0],
         "done_tasks": conn.execute("SELECT COUNT(*) FROM tasks WHERE status='done'").fetchone()[0],
     }

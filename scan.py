@@ -73,6 +73,15 @@ def run(notify: bool = False):
         for c, fn in sin_editor:
             print(f"   - {c}: {fn}")
 
+    # CIERRE DE TAREAS: detectar editados nuevos y marcar tareas como hechas
+    print("\n🔄 Buscando editados nuevos para cerrar tareas...")
+    from closer import run_closer
+    closer_summary = run_closer(verbose=True)
+    if closer_summary["tareas_cerradas"] > 0:
+        print(f"\n✅ {closer_summary['tareas_cerradas']} tareas cerradas automáticamente.")
+    if closer_summary["baseline_runs"] > 0:
+        print(f"📸 Baseline de editados tomado para {closer_summary['baseline_runs']} clientes (primera vez).")
+
     pendings = list_pending_tasks()
     print(f"\n📊 Total tareas pendientes en DB: {len(pendings)}")
     print(f"   Stats: {stats()}")
