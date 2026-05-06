@@ -21,6 +21,18 @@ SPANISH_MONTHS = {
     9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
 }
 
+# Orden fijo de editores en el menú y bloques. Los que no estén en esta
+# lista van al final en orden alfabético.
+EDITOR_ORDER = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu"]
+
+
+def _order_editors(all_editors: list[str]) -> list[str]:
+    """Ordena editores: primero los de EDITOR_ORDER (en ese orden exacto),
+    después los demás alfabéticamente."""
+    in_order = [e for e in EDITOR_ORDER if e in all_editors]
+    extras = sorted([e for e in all_editors if e not in EDITOR_ORDER])
+    return in_order + extras
+
 
 def get_data():
     conn = get_conn()
@@ -100,10 +112,17 @@ def build_html(data: dict) -> str:
     editores_activos = len([e for e in by_editor if not e.startswith("—")])
     total_clientes_pend = sum(len(clientes) for clientes in by_editor.values())
 
-    # Sort editores: por cantidad de pendientes DESCENDENTE (más pendientes primero)
-    # Para los datos: necesitamos el task_id de cada pendiente para el botón de borrar
+    # Orden fijo de editores (definido al tope del módulo) + extras al final
+    editores_ordenados = _order_editors(list(by_editor.keys()))
+
+    # Generar tabs del menú
+    tabs_html = '<button class="tab active" data-target="all" onclick="filterEditor(this, \'all\')">Todos</button>'
+    for editor in editores_ordenados:
+        slug = editor.lower().replace(" ", "-")
+        tabs_html += f'<button class="tab" data-target="{slug}" onclick="filterEditor(this, \'{slug}\')">{editor}</button>'
+
     editor_blocks = []
-    for editor in sorted(by_editor.keys(), key=lambda e: -len(by_editor[e])):
+    for editor in editores_ordenados:
         clientes = by_editor[editor]
         clientes_html = ""
         for cliente in sorted(clientes.keys()):
@@ -116,8 +135,9 @@ def build_html(data: dict) -> str:
                 f'<button class="delete-btn" onclick="deleteTask({task_id}, this)" title="Marcar como hecho">🗑️</button>'
                 f'</div>'
             )
+        slug = editor.lower().replace(" ", "-")
         editor_blocks.append(f"""
-            <section class="editor-block">
+            <section class="editor-block" data-editor="{slug}">
                 <header class="editor-header">
                     <h2>{editor}</h2>
                 </header>
@@ -244,6 +264,39 @@ def build_html(data: dict) -> str:
             color: var(--text-dim);
             margin: 32px 0 16px;
             font-weight: 600;
+        }}
+        .tabs {{
+            display: flex;
+            gap: 6px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            background: var(--bg-card);
+            padding: 8px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }}
+        .tab {{
+            background: transparent;
+            color: var(--text-dim);
+            border: none;
+            padding: 10px 18px;
+            font-size: 14px;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+            font-family: inherit;
+        }}
+        .tab:hover {{
+            background: var(--bg-card-2);
+            color: var(--text);
+        }}
+        .tab.active {{
+            background: var(--accent);
+            color: white;
+        }}
+        .editor-block.hidden {{
+            display: none;
         }}
         .editor-block {{
             background: var(--bg-card);
@@ -381,6 +434,9 @@ def build_html(data: dict) -> str:
     </div>
 
     <h2 class="section-title">📦 Pendientes por editor</h2>
+    <div class="tabs">
+        {tabs_html}
+    </div>
     {editor_blocks_html}
 
     <div class="activity-grid">
@@ -400,6 +456,18 @@ def build_html(data: dict) -> str:
     </footer>
 
     <script>
+    function filterEditor(btn, target) {{
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.editor-block').forEach(block => {{
+            if (target === 'all' || block.dataset.editor === target) {{
+                block.classList.remove('hidden');
+            }} else {{
+                block.classList.add('hidden');
+            }}
+        }});
+    }}
+
     async function deleteTask(taskId, btn) {{
         if (!confirm('¿Marcar este pendiente como hecho?')) return;
         const card = btn.closest('.cliente-card');

@@ -100,6 +100,39 @@
             margin: 32px 0 16px;
             font-weight: 600;
         }
+        .tabs {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            background: var(--bg-card);
+            padding: 8px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+        .tab {
+            background: transparent;
+            color: var(--text-dim);
+            border: none;
+            padding: 10px 18px;
+            font-size: 14px;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+            font-family: inherit;
+        }
+        .tab:hover {
+            background: var(--bg-card-2);
+            color: var(--text);
+        }
+        .tab.active {
+            background: var(--accent);
+            color: white;
+        }
+        .editor-block.hidden {
+            display: none;
+        }
         .editor-block {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -215,7 +248,7 @@
             </p>
         </div>
         <div class="header-meta">
-            <div>Última actualización: 19:14</div>
+            <div>Última actualización: 19:17</div>
             <button class="refresh-btn" onclick="window.location.reload()">🔄 Recargar</button>
         </div>
     </header>
@@ -236,8 +269,11 @@
     </div>
 
     <h2 class="section-title">📦 Pendientes por editor</h2>
+    <div class="tabs">
+        <button class="tab active" data-target="all" onclick="filterEditor(this, 'all')">Todos</button><button class="tab" data-target="rami" onclick="filterEditor(this, 'rami')">Rami</button><button class="tab" data-target="benja" onclick="filterEditor(this, 'benja')">Benja</button><button class="tab" data-target="fran" onclick="filterEditor(this, 'fran')">Fran</button><button class="tab" data-target="valen" onclick="filterEditor(this, 'valen')">Valen</button><button class="tab" data-target="santi" onclick="filterEditor(this, 'santi')">Santi</button><button class="tab" data-target="agus" onclick="filterEditor(this, 'agus')">Agus</button><button class="tab" data-target="samu" onclick="filterEditor(this, 'samu')">Samu</button>
+    </div>
     
-            <section class="editor-block">
+            <section class="editor-block" data-editor="rami">
                 <header class="editor-header">
                     <h2>Rami</h2>
                 </header>
@@ -246,7 +282,7 @@
                 </div>
             </section>
         
-            <section class="editor-block">
+            <section class="editor-block" data-editor="benja">
                 <header class="editor-header">
                     <h2>Benja</h2>
                 </header>
@@ -255,16 +291,7 @@
                 </div>
             </section>
         
-            <section class="editor-block">
-                <header class="editor-header">
-                    <h2>Valen</h2>
-                </header>
-                <div class="clientes-grid">
-                    <div class="cliente-card" data-task-id="21"><span class="cliente-name">Delfina Morganti</span><button class="delete-btn" onclick="deleteTask(21, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="20"><span class="cliente-name">Fer Trips</span><button class="delete-btn" onclick="deleteTask(20, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="19"><span class="cliente-name">Natalia Lopez</span><button class="delete-btn" onclick="deleteTask(19, this)" title="Marcar como hecho">🗑️</button></div>
-                </div>
-            </section>
-        
-            <section class="editor-block">
+            <section class="editor-block" data-editor="fran">
                 <header class="editor-header">
                     <h2>Fran</h2>
                 </header>
@@ -273,7 +300,16 @@
                 </div>
             </section>
         
-            <section class="editor-block">
+            <section class="editor-block" data-editor="valen">
+                <header class="editor-header">
+                    <h2>Valen</h2>
+                </header>
+                <div class="clientes-grid">
+                    <div class="cliente-card" data-task-id="21"><span class="cliente-name">Delfina Morganti</span><button class="delete-btn" onclick="deleteTask(21, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="20"><span class="cliente-name">Fer Trips</span><button class="delete-btn" onclick="deleteTask(20, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="19"><span class="cliente-name">Natalia Lopez</span><button class="delete-btn" onclick="deleteTask(19, this)" title="Marcar como hecho">🗑️</button></div>
+                </div>
+            </section>
+        
+            <section class="editor-block" data-editor="santi">
                 <header class="editor-header">
                     <h2>Santi</h2>
                 </header>
@@ -282,7 +318,7 @@
                 </div>
             </section>
         
-            <section class="editor-block">
+            <section class="editor-block" data-editor="agus">
                 <header class="editor-header">
                     <h2>Agus</h2>
                 </header>
@@ -291,7 +327,7 @@
                 </div>
             </section>
         
-            <section class="editor-block">
+            <section class="editor-block" data-editor="samu">
                 <header class="editor-header">
                     <h2>Samu</h2>
                 </header>
@@ -318,6 +354,18 @@
     </footer>
 
     <script>
+    function filterEditor(btn, target) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.editor-block').forEach(block => {
+            if (target === 'all' || block.dataset.editor === target) {
+                block.classList.remove('hidden');
+            } else {
+                block.classList.add('hidden');
+            }
+        });
+    }
+
     async function deleteTask(taskId, btn) {
         if (!confirm('¿Marcar este pendiente como hecho?')) return;
         const card = btn.closest('.cliente-card');
