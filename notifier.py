@@ -81,7 +81,12 @@ def _build_mail(cliente: str, editor: Optional[str], items: list[dict], folder_i
 
 
 def get_pending_unsent_grouped() -> dict:
-    """Devuelve {(cliente, editor): [task_rows]} de tareas pendientes sin mail enviado."""
+    """
+    Devuelve {(cliente, editor): [task_rows]} de tareas pendientes sin mail enviado.
+
+    EXCLUYE las tareas cargadas manualmente (file_name = '(pendiente cargado manualmente)'):
+    esas no se notifican individualmente, solo aparecen en el resumen diario.
+    """
     conn = get_conn()
     rows = conn.execute("""
         SELECT t.id, t.cliente, t.editor, t.file_id, t.file_name, t.detected_at,
@@ -89,7 +94,10 @@ def get_pending_unsent_grouped() -> dict:
         FROM tasks t
         LEFT JOIN known_files kf ON kf.file_id = t.file_id
         LEFT JOIN clients c ON c.cliente = t.cliente
-        WHERE t.status='pending' AND t.mail_sent_at IS NULL
+        WHERE t.status='pending'
+          AND t.mail_sent_at IS NULL
+          AND t.file_name != '(pendiente cargado manualmente)'
+          AND t.file_id NOT LIKE 'manual:%'
         ORDER BY t.detected_at ASC
     """).fetchall()
     conn.close()
