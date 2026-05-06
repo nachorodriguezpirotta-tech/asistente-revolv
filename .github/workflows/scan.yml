@@ -5,6 +5,11 @@ on:
     # Cada 30 min (GitHub Actions tiene latencia variable de hasta ~15 min)
     - cron: '*/30 * * * *'
   workflow_dispatch: {}  # disparable a mano desde la UI de GitHub
+  push:
+    branches: [main]
+    # NO disparar si solo cambia la DB (los commits del bot no deben re-ejecutar)
+    paths-ignore:
+      - 'tracker.db'
 
 # Solo una corrida a la vez. Si una está en curso y dispara otra, espera.
 concurrency:
