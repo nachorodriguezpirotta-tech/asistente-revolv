@@ -1,0 +1,37 @@
+name: Daily Summary (8am Argentina)
+
+on:
+  schedule:
+    # 11:00 UTC = 08:00 Argentina (UTC-3, todo el año, no hay DST)
+    - cron: '0 11 * * *'
+  workflow_dispatch: {}  # disparable a mano
+
+permissions:
+  contents: read  # solo lee el repo, no commitea
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send daily summary
+        env:
+          OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+        run: python daily_summary.py
