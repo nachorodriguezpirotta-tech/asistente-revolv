@@ -79,28 +79,20 @@ def build_mail(grouped: dict):
         """
         return subject, text, html
 
-    # Totales
-    total_videos = sum(c["videos"] for clientes in grouped.values() for c in clientes)
-    total_clientes = sum(len(clientes) for clientes in grouped.values())
-    total_editores = len([e for e in grouped if not e.startswith("—")])
+    subject = f"📋 Pendientes del día — {fecha}"
 
-    subject = f"📋 Pendientes del día — {fecha} ({total_videos} videos)"
-
-    # Texto plano
+    # Texto plano (sin números, solo nombres)
     lines_text = [
-        f"Buen día Nacho,",
+        "Buen día Nacho,",
         "",
-        f"Resumen de pendientes ({total_videos} videos en {total_clientes} clientes, {total_editores} editores activos):",
+        "Resumen de clientes con pendientes:",
         "",
     ]
     for editor in sorted(grouped.keys()):
         clientes = grouped[editor]
-        total_editor = sum(c["videos"] for c in clientes)
-        plural = "s" if total_editor != 1 else ""
-        lines_text.append(f"👤 {editor} — {total_editor} video{plural}")
+        lines_text.append(f"👤 {editor}")
         for c in clientes:
-            v = c["videos"]
-            lines_text.append(f"   • {c['cliente']} ({v} video{'s' if v != 1 else ''})")
+            lines_text.append(f"   • {c['cliente']}")
         lines_text.append("")
     lines_text.append("— Asistente Revolv")
     text = "\n".join(lines_text)
@@ -109,16 +101,11 @@ def build_mail(grouped: dict):
     editor_blocks_html = []
     for editor in sorted(grouped.keys()):
         clientes = grouped[editor]
-        total_editor = sum(c["videos"] for c in clientes)
-        plural = "s" if total_editor != 1 else ""
-        items = "".join(
-            f'<li>{c["cliente"]} <span style="color:#888;">· {c["videos"]} video{"s" if c["videos"] != 1 else ""}</span></li>'
-            for c in clientes
-        )
+        items = "".join(f'<li>{c["cliente"]}</li>' for c in clientes)
         editor_blocks_html.append(
             f'<div style="margin:18px 0;">'
-            f'<h3 style="margin:0 0 6px 0;color:#111;">👤 {editor} <span style="color:#777;font-weight:normal;font-size:14px;">— {total_editor} video{plural}</span></h3>'
-            f'<ul style="margin:6px 0 0 4px;padding-left:20px;line-height:1.6;">{items}</ul>'
+            f'<h3 style="margin:0 0 6px 0;color:#111;">👤 {editor}</h3>'
+            f'<ul style="margin:6px 0 0 4px;padding-left:20px;line-height:1.7;">{items}</ul>'
             f'</div>'
         )
 
@@ -127,11 +114,7 @@ def build_mail(grouped: dict):
     <h2 style="margin-bottom:4px;">📋 Pendientes del día</h2>
     <p style="margin-top:0;color:#555;">{fecha}</p>
     <p>Buen día Nacho,</p>
-    <p>Resumen de pendientes:
-       <strong>{total_videos} videos</strong> en
-       <strong>{total_clientes} clientes</strong>,
-       <strong>{total_editores} editores</strong> activos.
-    </p>
+    <p>Estos son los clientes con pendientes hoy:</p>
     {"".join(editor_blocks_html)}
     <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
     <p style="color:#888;font-size:12px;">— Asistente Revolv</p>

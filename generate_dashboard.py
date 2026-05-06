@@ -96,37 +96,20 @@ def build_html(data: dict) -> str:
     fecha = f"{now.day} de {SPANISH_MONTHS[now.month]} de {now.year}"
     hora = now.strftime("%H:%M")
 
-    total_pendientes = sum(
-        sum(len(files) for files in clientes.values())
-        for clientes in by_editor.values()
-    )
-    total_clientes_pend = sum(len(clientes) for clientes in by_editor.values())
     editores_activos = len([e for e in by_editor if not e.startswith("—")])
+    total_clientes_pend = sum(len(clientes) for clientes in by_editor.values())
 
-    # Sort editores por cantidad de pendientes desc
+    # Sort editores alfabéticamente
     editor_blocks = []
-    for editor in sorted(by_editor.keys(), key=lambda e: -sum(len(f) for f in by_editor[e].values())):
+    for editor in sorted(by_editor.keys()):
         clientes = by_editor[editor]
-        total_editor = sum(len(f) for f in clientes.values())
         clientes_html = ""
-        for cliente, files in sorted(clientes.items()):
-            files_list = "".join(
-                f'<li><span class="file-name">{f["file"]}</span><span class="file-date">{_human_date(f["detected_at"])}</span></li>'
-                for f in files
-            )
-            n = len(files)
-            badge = f'<span class="badge">{n}</span>'
-            clientes_html += f"""
-                <details class="cliente-card">
-                    <summary><span class="cliente-name">{cliente}</span> {badge}</summary>
-                    <ul class="files-list">{files_list}</ul>
-                </details>
-            """
+        for cliente in sorted(clientes.keys()):
+            clientes_html += f'<div class="cliente-card"><span class="cliente-name">{cliente}</span></div>'
         editor_blocks.append(f"""
             <section class="editor-block">
                 <header class="editor-header">
                     <h2>{editor}</h2>
-                    <span class="editor-count">{total_editor} {'video' if total_editor == 1 else 'videos'}</span>
                 </header>
                 <div class="clientes-grid">
                     {clientes_html}
@@ -139,14 +122,14 @@ def build_html(data: dict) -> str:
     else:
         editor_blocks_html = "".join(editor_blocks)
 
-    # Recent activity
+    # Recent activity (sin números, solo cliente + editor + fecha)
     recent_html = "".join(
-        f'<li><strong>{r["cliente"]}</strong> · {r["editor"]} · <span class="dim">{_human_date(r["at"])}</span></li>'
+        f'<li><strong>{r["cliente"]}</strong> · {r["editor"]} <span class="dim">· {_human_date(r["at"])}</span></li>'
         for r in data["recent"]
     ) or '<li class="dim">Sin actividad reciente</li>'
 
     closed_html = "".join(
-        f'<li><strong>{c["cliente"]}</strong> · <span class="dim">{_human_date(c["at"])}</span></li>'
+        f'<li><strong>{c["cliente"]}</strong> <span class="dim">· {_human_date(c["at"])}</span></li>'
         for c in data["last_closed"]
     ) or '<li class="dim">Sin tareas cerradas todavía</li>'
 
@@ -271,78 +254,19 @@ def build_html(data: dict) -> str:
             font-size: 18px;
             font-weight: 600;
         }}
-        .editor-count {{
-            background: var(--bg-card-2);
-            padding: 4px 12px;
-            border-radius: 16px;
-            font-size: 12px;
-            color: var(--text-dim);
-            font-weight: 500;
-        }}
         .clientes-grid {{
             display: grid;
             gap: 8px;
         }}
-        details.cliente-card {{
+        .cliente-card {{
             background: var(--bg-card-2);
-            padding: 12px 16px;
+            padding: 10px 16px;
             border-radius: 8px;
-            cursor: pointer;
-        }}
-        details.cliente-card summary {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            list-style: none;
-            outline: none;
-        }}
-        details.cliente-card summary::-webkit-details-marker {{ display: none; }}
-        details.cliente-card summary::before {{
-            content: "▸";
-            color: var(--text-dim);
-            margin-right: 8px;
-            transition: transform 0.15s;
-            display: inline-block;
-        }}
-        details.cliente-card[open] summary::before {{
-            transform: rotate(90deg);
+            font-size: 14px;
         }}
         .cliente-name {{
             font-weight: 500;
-            flex: 1;
-        }}
-        .badge {{
-            background: var(--accent);
-            color: white;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 2px 8px;
-            border-radius: 10px;
-            min-width: 22px;
-            text-align: center;
-        }}
-        .files-list {{
-            list-style: none;
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px solid var(--border);
-        }}
-        .files-list li {{
-            padding: 6px 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 13px;
-        }}
-        .file-name {{
             color: var(--text);
-            word-break: break-all;
-            margin-right: 12px;
-        }}
-        .file-date {{
-            color: var(--text-dim);
-            font-size: 11px;
-            white-space: nowrap;
         }}
         .empty-state {{
             background: var(--bg-card);
@@ -412,20 +336,12 @@ def build_html(data: dict) -> str:
 
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-label">Pendientes</div>
-            <div class="stat-value pending">{total_pendientes}</div>
-        </div>
-        <div class="stat-card">
             <div class="stat-label">Clientes con pendientes</div>
-            <div class="stat-value">{total_clientes_pend}</div>
+            <div class="stat-value pending">{total_clientes_pend}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Editores activos</div>
             <div class="stat-value">{editores_activos}</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Tareas cerradas (total)</div>
-            <div class="stat-value done">{s['done_tasks']}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Clientes monitoreados</div>
