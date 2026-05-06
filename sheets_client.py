@@ -1,0 +1,155 @@
+"""
+Lector del Sheet de packs (SOLO LECTURA — el sistema NUNCA escribe).
+
+Estructura del Sheet 'Editores Excel':
+  - Hoja '$' contiene los packs.
+  - Headers en la fila 4: [Columna 1, Editor, Cliente, entradas, salidas,
+    segunda salida, Videos pedidos, Videos hechos, profit].
+  - Filas a partir de la 5 son los packs.
+
+Uso principal acá: dado el nombre de un cliente, devolver el editor responsable
+(usamos la fila MÁS RECIENTE de ese cliente como fuente de verdad del editor actual).
+"""
+
+import unicodedata
+from dataclasses import dataclass
+from typing import Optional
+
+from googleapiclient.discovery import build
+
+from config import SHEET_ID, PACKS_TAB, PACKS_HEADER_ROW
+from auth import get_credentials
+
+
+@dataclass
+class Pack:
+    row: int
+    fecha: str
+    editor: str
+    cliente: str
+    videos_pedidos: int
+    videos_hechos: int
+
+
+def _normalize(s: str) -> str:
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return " ".join(s.lower().split())
+
+
+def _to_int(v) -> int:
+    if v is None or v == "":
+        return 0
+    try:
+        return int(float(str(v).replace(",", ".").strip()))
+    except (ValueError, TypeError):
+        return 0
+
+
+_service_cache = None
+
+
+def _get_service():
+    global _service_cache
+    if _service_cache is None:
+        creds = get_credentials()
+        _service_cache = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    return _service_cache
+
+
+def get_sheet_metadata():
+    svc = _get_service()
+    meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+    return {
+        "title": meta["properties"]["title"],
+        "tabs": [s["properties"]["title"] for s in meta["sheets"]],
+    }
+
+
+def read_packs() -> list[Pack]:
+    svc = _get_service()
+    rng = f"'{PACKS_TAB}'!A{PACKS_HEADER_ROW}:Z"
+    res = svc.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=rng).execute()
+    values = res.get("values", [])
+    if not values:
+        return []
+
+    header = [(h or "").strip().lower() for h in values[0]]
+
+    def col(*names):
+        for n in names:
+            if n.lower() in header:
+                return header.index(n.lower())
+        return None
+
+    i_fecha = col("columna 1", "fecha")
+    i_editor = col("editor")
+    i_cliente = col("cliente")
+    i_pedidos = col("videos pedidos", "pedidos")
+    i_hechos = col("videos hechos", "hechos")
+
+    if i_editor is None or i_cliente is None:
+        raise RuntimeError(f"No encuentro Editor/Cliente. Header: {header}")
+
+    packs: list[Pack] = []
+    for offset, row in enumerate(values[1:], start=1):
+        abs_row = PACKS_HEADER_ROW + offset
+
+        def cell(i):
+            return row[i] if i is not None and i < len(row) else ""
+
+        editor = str(cell(i_editor)).strip()
+        cliente = str(cell(i_cliente)).strip()
+        if not cliente:
+            continue
+
+        packs.append(Pack(
+            row=abs_row,
+            fecha=str(cell(i_fecha)).strip(),
+            editor=editor,
+            cliente=cliente,
+            videos_pedidos=_to_int(cell(i_pedidos)),
+            videos_hechos=_to_int(cell(i_hechos)),
+        ))
+
+    return packs
+
+
+def get_editor_for_client(cliente_drive_name: str, packs: Optional[list[Pack]] = None) -> Optional[str]:
+    """
+    Dado el nombre de una carpeta de cliente en Drive, busca en el Sheet la fila
+    más reciente de ese cliente y devuelve el editor responsable.
+    Match por nombre normalizado (case/acentos/espacios).
+    Si no hay match, retorna None.
+    """
+    if packs is None:
+        packs = read_packs()
+
+    target = _normalize(cliente_drive_name)
+    matches = [p for p in packs if p.editor and _normalize(p.cliente) == target]
+
+    if not matches:
+        # fallback: contiene
+        matches = [p for p in packs if p.editor and target in _normalize(p.cliente)]
+        if not matches:
+            matches = [p for p in packs if p.editor and _normalize(p.cliente) in target]
+
+    if not matches:
+        return None
+
+    # La fila más reciente (mayor row) es la fuente de verdad del editor actual
+    matches.sort(key=lambda p: p.row, reverse=True)
+    return matches[0].editor
+
+
+if __name__ == "__main__":
+    meta = get_sheet_metadata()
+    print(f"📊 Sheet: {meta['title']}")
+    packs = read_packs()
+    print(f"   {len(packs)} packs leídos.\n")
+    # Test resolver editor
+    test_clients = ["Cristina Brox", "Egdylu", "Gamalier", "Melesio", "Jaime", "Inexistente XYZ"]
+    print("Test 'editor del cliente':")
+    for c in test_clients:
+        e = get_editor_for_client(c, packs)
+        print(f"   {c:<25} → {e or '❌ no encontrado'}")

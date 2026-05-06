@@ -1,0 +1,20 @@
+# Credenciales locales — NUNCA subir al repo
+client_secrets.json
+credentials.json
+token.json
+
+# Logs locales (la DB sí se sube, los logs no)
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+.idea/
+.vscode/
