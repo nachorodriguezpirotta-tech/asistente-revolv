@@ -106,6 +106,29 @@ def list_root_folders() -> list[dict]:
     return folders
 
 
+def find_folder_by_name(name: str, all_folders: Optional[list[dict]] = None) -> Optional[dict]:
+    """
+    Busca una carpeta en raíz de Mi Unidad por nombre (con normalización tolerante).
+    Funciona aunque NO tenga subcarpeta /Material/.
+    """
+    if all_folders is None:
+        all_folders = list_root_folders()
+    target = _normalize(name)
+    # Match exacto primero
+    for f in all_folders:
+        if _normalize(f["name"]) == target:
+            return f
+    # Match contiene (uno solo)
+    candidates = [f for f in all_folders if target in _normalize(f["name"])]
+    if len(candidates) == 1:
+        return candidates[0]
+    # Empieza con (uno solo)
+    candidates = [f for f in all_folders if _normalize(f["name"]).startswith(target)]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 def find_raw_subfolder(client_folder_id: str) -> Optional[dict]:
     """Busca la subcarpeta 'Material' (o Raw, Crudos) dentro de la carpeta del cliente."""
     for f in _list_subfolders(client_folder_id):
