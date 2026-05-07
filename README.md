@@ -93,3 +93,4 @@ Actions tab → última corrida → ver output.
 git pull
 sqlite3 tracker.db "SELECT cliente, editor, file_name, detected_at FROM tasks WHERE status='pending'"
 ```
+
