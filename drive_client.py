@@ -269,6 +269,50 @@ def list_material_files(raw_folder_id: str) -> list[dict]:
     return _list_files(raw_folder_id, only_videos=True)
 
 
+def list_crudos_anywhere(client_folder_id: str, client_folder_name: Optional[str] = None) -> list[dict]:
+    """
+    Detecta crudos en CUALQUIER lugar de la carpeta del cliente, sin requerir /Material/.
+
+    Estrategia:
+      1. Si hay subcarpeta Material/Raw/Crudos: archivos ahí son crudos.
+      2. Si hay subcarpetas tipo "mes" (mayo, abril...) con Crudos adentro: capturar también.
+      3. Para archivos en otras subcarpetas y en raíz del cliente: aplicar clasificador
+         (is_likely_crudo) — solo se consideran crudos si el clasificador está SEGURO
+         (NO los ambiguos, para evitar falsos positivos).
+    """
+    from classifier import classify
+
+    crudos: list[dict] = []
+
+    # 1) Subcarpeta directa Material/Raw/Crudos
+    raw = find_raw_subfolder(client_folder_id)
+    if raw:
+        for f in _list_files(raw["id"], only_videos=True):
+            crudos.append(f)
+
+    # 2) Recursivo en subcarpetas: si encuentra otra Material/Raw/Crudos en niveles más profundos
+    for sub in _list_subfolders(client_folder_id):
+        if raw and sub["id"] == raw["id"]:
+            continue
+        if _normalize(sub["name"]) in RAW_SUBFOLDER_NAMES:
+            # debería estar capturado en #1 pero por las dudas
+            for f in _list_files(sub["id"], only_videos=True):
+                crudos.append(f)
+            continue
+        # Buscar subcarpetas anidadas tipo "Mayo/Crudos"
+        for nested in _list_subfolders(sub["id"]):
+            if _normalize(nested["name"]) in RAW_SUBFOLDER_NAMES:
+                for f in _list_files(nested["id"], only_videos=True):
+                    crudos.append(f)
+
+    # 3) Archivos en raíz del cliente: solo los que el clasificador dice CRUDO con seguridad
+    for f in _list_files(client_folder_id, only_videos=True):
+        if classify(f, parent_name=client_folder_name) is False:  # False = crudo seguro
+            crudos.append(f)
+
+    return crudos
+
+
 def list_edited_files(client_folder_id: str, raw_folder_id: Optional[str],
                        client_folder_name: Optional[str] = None) -> list[dict]:
     """

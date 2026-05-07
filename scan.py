@@ -1,29 +1,45 @@
 """
-Scan — corre periódicamente. Detecta archivos nuevos en /Material/ de cada cliente
-y crea tareas pendientes con el editor responsable (consultando el Sheet).
+Scan — corre periódicamente. Detecta:
+  1. Crudos nuevos (en /Material/ o estructuras alternativas) → crea tareas pendientes
+  2. Editados nuevos → cierra tareas (delegado al closer)
 
 Uso:
-    python3 scan.py            # un scan manual
-    python3 scan.py --notify   # crea tareas Y manda mails (placeholder por ahora)
+    python3 scan.py            # un scan
+    python3 scan.py --notify   # crea tareas Y manda mails
 """
 
 import argparse
-from typing import Optional
 
-from drive_client import discover_client_folders, list_material_files
+from drive_client import (
+    discover_client_folders, list_material_files,
+    find_folder_by_name, list_crudos_anywhere,
+    _list_root_items_with_shortcuts,
+)
 from tracker import (
     init_db, upsert_client, add_known_file, is_file_known,
-    create_task, list_pending_tasks, stats,
+    create_task, list_pending_tasks, stats, get_conn,
 )
 from sheets_client import read_packs, get_editor_for_client
 
 
+def _clients_with_pending(conn):
+    rows = conn.execute("SELECT DISTINCT cliente FROM tasks WHERE status='pending'").fetchall()
+    return {r[0].strip() for r in rows}
+
+
+def _clients_already_baselined(conn):
+    """Clientes que ya tienen entradas en known_files (entonces no hace falta baseline)."""
+    rows = conn.execute("SELECT DISTINCT cliente FROM known_files").fetchall()
+    return {r[0].strip() for r in rows}
+
+
 def run(notify: bool = False):
-    print("🔍 SCAN — buscando archivos nuevos en /Material/\n")
+    print("🔍 SCAN — detectando crudos nuevos\n")
     init_db()
 
-    clients = discover_client_folders()
-    print(f"   {len(clients)} clientes con carpeta detectados.")
+    # === FASE 1: clientes con /Material/ (lógica original) ===
+    clients_standard = discover_client_folders()
+    print(f"   {len(clients_standard)} clientes con estructura /Material/ standard.")
 
     print("📋 Leyendo Sheet para mapeo cliente→editor...")
     packs = read_packs()
@@ -32,58 +48,92 @@ def run(notify: bool = False):
     new_tasks = []
     sin_editor = []
 
-    for c in clients:
+    for c in clients_standard:
         upsert_client(c.folder_id, c.cliente, c.raw_folder_id)
         files = list_material_files(c.raw_folder_id)
         for f in files:
             if is_file_known(f["id"]):
                 continue
-            # Archivo NUEVO. Registrarlo y crear tarea.
             size = int(f["size"]) if f.get("size") else None
             add_known_file(
-                file_id=f["id"],
-                cliente=c.cliente,
-                folder_id=c.raw_folder_id,
-                name=f["name"],
-                size=size,
-                created_time=f.get("createdTime"),
+                file_id=f["id"], cliente=c.cliente, folder_id=c.raw_folder_id,
+                name=f["name"], size=size, created_time=f.get("createdTime"),
                 is_baseline=False,
             )
             editor = get_editor_for_client(c.cliente, packs)
             if not editor:
                 sin_editor.append((c.cliente, f["name"]))
             task_id = create_task(c.cliente, editor, f["id"], f["name"])
-            new_tasks.append({
-                "id": task_id,
-                "cliente": c.cliente,
-                "editor": editor,
-                "file": f["name"],
-            })
+            new_tasks.append({"cliente": c.cliente, "editor": editor, "file": f["name"]})
+
+    # === FASE 2: clientes SIN /Material/ pero con tareas pendientes (estructuras alternativas) ===
+    print("🔎 Escaneo generalizado — clientes con tareas pendientes pero sin /Material/...")
+    conn = get_conn()
+    pending_clients = _clients_with_pending(conn)
+    baselined = _clients_already_baselined(conn)
+    standard_names = {c.cliente.strip() for c in clients_standard}
+    conn.close()
+
+    # Solo procesar los que NO están ya cubiertos en fase 1
+    extra_clients = pending_clients - standard_names
+    if extra_clients:
+        print(f"   {len(extra_clients)} clientes a chequear con scan generalizado.")
+        all_root = _list_root_items_with_shortcuts()
+
+        for cliente_name in extra_clients:
+            folder = find_folder_by_name(cliente_name, all_root)
+            if not folder:
+                continue
+            crudos = list_crudos_anywhere(folder["id"], folder.get("name"))
+            if not crudos:
+                continue
+
+            # Si NO hay baseline previa para este cliente: marcar todo como conocido sin tareas
+            first_time = cliente_name not in baselined
+            for f in crudos:
+                if is_file_known(f["id"]):
+                    continue
+                size = int(f["size"]) if f.get("size") else None
+                add_known_file(
+                    file_id=f["id"], cliente=cliente_name, folder_id=folder["id"],
+                    name=f["name"], size=size, created_time=f.get("createdTime"),
+                    is_baseline=first_time,
+                )
+                if first_time:
+                    continue  # baseline: no crear tarea
+                # Archivo realmente nuevo en cliente con baseline previo → crear tarea
+                editor = get_editor_for_client(cliente_name, packs)
+                if not editor:
+                    sin_editor.append((cliente_name, f["name"]))
+                task_id = create_task(cliente_name, editor, f["id"], f["name"])
+                new_tasks.append({"cliente": cliente_name, "editor": editor, "file": f["name"]})
+            if first_time:
+                print(f"   📸 [baseline crudos] {cliente_name}: {len(crudos)} archivos marcados como conocidos")
+    else:
+        print("   (ninguno)")
 
     if not new_tasks:
-        print("✅ Nada nuevo. Todo en orden.")
+        print("\n✅ Nada nuevo. Todo en orden.")
     else:
-        print(f"🆕 {len(new_tasks)} archivos nuevos detectados:\n")
+        print(f"\n🆕 {len(new_tasks)} archivos nuevos detectados:\n")
         for t in new_tasks:
             ed = t["editor"] or "❌ SIN EDITOR"
             print(f"   • [{t['cliente']}] {t['file']}  → {ed}")
 
     if sin_editor:
-        print(f"\n⚠️  {len(sin_editor)} archivos sin editor asignado en Sheet:")
+        print(f"\n⚠️  {len(sin_editor)} archivos sin editor en Sheet:")
         for c, fn in sin_editor:
             print(f"   - {c}: {fn}")
 
-    # CIERRE DE TAREAS: detectar editados nuevos y marcar tareas como hechas
+    # === CIERRE: detectar editados nuevos y marcar tareas como hechas ===
     print("\n🔄 Buscando editados nuevos para cerrar tareas...")
     from closer import run_closer
     closer_summary = run_closer(verbose=True)
     if closer_summary["tareas_cerradas"] > 0:
         print(f"\n✅ {closer_summary['tareas_cerradas']} tareas cerradas automáticamente.")
-    if closer_summary["baseline_runs"] > 0:
-        print(f"📸 Baseline de editados tomado para {closer_summary['baseline_runs']} clientes (primera vez).")
 
     pendings = list_pending_tasks()
-    print(f"\n📊 Total tareas pendientes en DB: {len(pendings)}")
+    print(f"\n📊 Total pendientes en DB: {len(pendings)}")
     print(f"   Stats: {stats()}")
 
     if notify:
@@ -94,6 +144,6 @@ def run(notify: bool = False):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--notify", action="store_true", help="manda mails al detectar nuevos")
+    p.add_argument("--notify", action="store_true")
     args = p.parse_args()
     run(notify=args.notify)
