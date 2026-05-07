@@ -64,10 +64,18 @@ def get_all_data(conn) -> dict:
             "detected_at": r["detected_at"],
         })
 
+    # Generar links únicos por editor (cualquier editor que aparezca acá tiene su link)
+    editor_links = {}
+    for ed in by_editor.keys():
+        if ed.startswith("—"):  # sin editor → no link
+            continue
+        editor_links[ed] = f"?editor={ed}&t={make_token(ed)}"
+
     # Stats
     closed_total = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='done'").fetchone()[0]
     return {
         "by_editor": by_editor,
+        "editor_links": editor_links,
         "stats": {
             "pendientes": sum(len(v) for v in by_editor.values()),
             "editores": len(by_editor),

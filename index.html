@@ -243,12 +243,25 @@ function renderEditor(data) {
 
 function renderAdmin(data) {
     const byEditor = data.by_editor || {};
+    const editorLinks = data.editor_links || {};
     const editores = Object.keys(byEditor).sort((a, b) => byEditor[b].length - byEditor[a].length);
     if (editores.length === 0) {
         content.innerHTML = '<div class="empty">✅ Sin pendientes globales.<br><br><button class="add-btn-main" onclick="addClientToEditorPrompt()">+ Agregar editor con cliente</button></div>';
         return;
     }
-    let html = '';
+
+    // Sección de links únicos por editor
+    let linksHtml = '<details class="editor-block" style="margin-bottom:24px;"><summary style="cursor:pointer; font-size: 16px; font-weight: 600;">🔗 Links únicos por editor (click para mostrar)</summary><div style="margin-top:16px;">';
+    for (const ed of Object.keys(editorLinks).sort()) {
+        const fullUrl = location.origin + editorLinks[ed];
+        linksHtml += `<div style="background: var(--bg-card-2); padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+            <div><strong>${escapeHtml(ed)}</strong> <a href="${fullUrl}" target="_blank" style="color: var(--text-dim); margin-left: 8px;">${escapeHtml(fullUrl)}</a></div>
+            <button onclick="copyLink('${fullUrl}', this)" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;">Copiar</button>
+        </div>`;
+    }
+    linksHtml += '</div></details>';
+
+    let html = linksHtml;
     for (const ed of editores) {
         const items = byEditor[ed];
         html += `<section class="editor-block">
@@ -265,6 +278,18 @@ function renderAdmin(data) {
         html += '</section>';
     }
     content.innerHTML = html;
+}
+
+function copyLink(url, btn) {
+    navigator.clipboard.writeText(url).then(() => {
+        const original = btn.textContent;
+        btn.textContent = '✓ copiado';
+        btn.style.color = 'var(--green)';
+        setTimeout(() => {
+            btn.textContent = original;
+            btn.style.color = '';
+        }, 1500);
+    });
 }
 
 async function addClientToEditor(editor) {
