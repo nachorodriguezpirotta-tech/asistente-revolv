@@ -130,6 +130,17 @@
             background: var(--accent);
             color: white;
         }
+        .tab.tab-new {
+            border: 1px dashed var(--text-dim);
+            background: transparent;
+            color: var(--text-dim);
+            margin-left: 8px;
+        }
+        .tab.tab-new:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: transparent;
+        }
         .editor-block.hidden {
             display: none;
         }
@@ -271,7 +282,7 @@
             </p>
         </div>
         <div class="header-meta">
-            <div>Última actualización: 10:25</div>
+            <div>Última actualización: 10:28</div>
             <button class="refresh-btn" onclick="window.location.reload()">🔄 Recargar</button>
         </div>
     </header>
@@ -283,7 +294,7 @@
         </div>
         <div class="stat-card">
             <div class="stat-label">Editores activos</div>
-            <div class="stat-value">7</div>
+            <div class="stat-value">6</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Clientes monitoreados</div>
@@ -293,7 +304,7 @@
 
     <h2 class="section-title">📦 Pendientes por editor</h2>
     <div class="tabs">
-        <button class="tab active" data-target="all" onclick="filterEditor(this, 'all')">Todos</button><button class="tab" data-target="rami" onclick="filterEditor(this, 'rami')">Rami</button><button class="tab" data-target="benja" onclick="filterEditor(this, 'benja')">Benja</button><button class="tab" data-target="fran" onclick="filterEditor(this, 'fran')">Fran</button><button class="tab" data-target="valen" onclick="filterEditor(this, 'valen')">Valen</button><button class="tab" data-target="santi" onclick="filterEditor(this, 'santi')">Santi</button><button class="tab" data-target="agus" onclick="filterEditor(this, 'agus')">Agus</button><button class="tab" data-target="samu" onclick="filterEditor(this, 'samu')">Samu</button>
+        <button class="tab active" data-target="all" onclick="filterEditor(this, 'all')">Todos</button><button class="tab" data-target="rami" onclick="filterEditor(this, 'rami')">Rami</button><button class="tab" data-target="benja" onclick="filterEditor(this, 'benja')">Benja</button><button class="tab" data-target="fran" onclick="filterEditor(this, 'fran')">Fran</button><button class="tab" data-target="valen" onclick="filterEditor(this, 'valen')">Valen</button><button class="tab" data-target="santi" onclick="filterEditor(this, 'santi')">Santi</button><button class="tab" data-target="agus" onclick="filterEditor(this, 'agus')">Agus</button><button class="tab tab-new" onclick="addEditor()" title="Agregar nuevo editor con su primer cliente pendiente">+ Editor</button>
     </div>
     
             <section class="editor-block" data-editor="rami">
@@ -332,7 +343,7 @@
                     <button class="add-btn" onclick="addClient('Valen')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
-                    <div class="cliente-card" data-task-id="21"><span class="cliente-name">Delfina Orange Power</span><button class="delete-btn" onclick="deleteTask(21, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="20"><span class="cliente-name">Fer Trips</span><button class="delete-btn" onclick="deleteTask(20, this)" title="Marcar como hecho">🗑️</button></div>
+                    <div class="cliente-card" data-task-id="21"><span class="cliente-name">Delfina Orange Power</span><button class="delete-btn" onclick="deleteTask(21, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="20"><span class="cliente-name">Fer Trips</span><button class="delete-btn" onclick="deleteTask(20, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="19"><span class="cliente-name">Natalia Lopez</span><button class="delete-btn" onclick="deleteTask(19, this)" title="Marcar como hecho">🗑️</button></div>
                 </div>
             </section>
         
@@ -356,25 +367,15 @@
                 </div>
             </section>
         
-            <section class="editor-block" data-editor="samu">
-                <header class="editor-header">
-                    <h2>Samu</h2>
-                    <button class="add-btn" onclick="addClient('Samu')" title="Agregar cliente pendiente">+</button>
-                </header>
-                <div class="clientes-grid">
-                    <div class="cliente-card" data-task-id="26"><span class="cliente-name">Maria Capriles</span><button class="delete-btn" onclick="deleteTask(26, this)" title="Marcar como hecho">🗑️</button></div>
-                </div>
-            </section>
-        
 
     <div class="activity-grid">
         <div class="activity-card">
             <h3>🆕 Últimos detectados</h3>
-            <ul><li><strong>Octavian</strong> · Fran <span class="dim">· 07/05 01:05</span></li><li><strong>Daniel Ramirez</strong> · Benja <span class="dim">· 07/05 01:05</span></li><li><strong>Maria Capriles</strong> · Samu <span class="dim">· 06/05 19:14</span></li><li><strong>Sandy Nuñez</strong> · Agus <span class="dim">· 06/05 19:14</span></li><li><strong>Gerardo</strong> · Santi <span class="dim">· 06/05 19:08</span></li><li><strong>Egdylu</strong> · Fran <span class="dim">· 06/05 19:06</span></li><li><strong>The Eye</strong> · Benja <span class="dim">· 06/05 19:06</span></li><li><strong>Fer Trips</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Delfina Orange Power</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Gaetan</strong> · Santi <span class="dim">· 06/05 19:06</span></li></ul>
+            <ul><li><strong>Octavian</strong> · Fran <span class="dim">· 07/05 01:05</span></li><li><strong>Daniel Ramirez</strong> · Benja <span class="dim">· 07/05 01:05</span></li><li><strong>Sandy Nuñez</strong> · Agus <span class="dim">· 06/05 19:14</span></li><li><strong>Gerardo</strong> · Santi <span class="dim">· 06/05 19:08</span></li><li><strong>Egdylu</strong> · Fran <span class="dim">· 06/05 19:06</span></li><li><strong>The Eye</strong> · Benja <span class="dim">· 06/05 19:06</span></li><li><strong>Natalia Lopez</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Fer Trips</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Delfina Orange Power</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Gaetan</strong> · Santi <span class="dim">· 06/05 19:06</span></li></ul>
         </div>
         <div class="activity-card">
             <h3>✅ Últimos cerrados</h3>
-            <ul><li><strong>Octavian</strong> <span class="dim">· 07/05 00:53</span></li><li><strong>Natalia Pereyra</strong> <span class="dim">· 07/05 00:53</span></li><li><strong>Daniel Ramirez</strong> <span class="dim">· 07/05 00:52</span></li><li><strong>Ali Baig</strong> <span class="dim">· 07/05 00:52</span></li><li><strong>Lorena Gz</strong> <span class="dim">· 06/05 23:16</span></li><li><strong>Abraham Torres Díaz</strong> <span class="dim">· 06/05 10:49</span></li><li><strong>Alfredo Alfaro</strong> <span class="dim">· 06/05 10:49</span></li><li><strong>Adriana Pasqualini</strong> <span class="dim">· 06/05 10:49</span></li><li><strong>Abraham Torres Díaz</strong> <span class="dim">· 06/05 10:49</span></li><li><strong>Adriana Pasqualini</strong> <span class="dim">· 06/05 10:49</span></li></ul>
+            <ul><li><strong>Maria Capriles</strong> <span class="dim">· 07/05 07:27</span></li><li><strong>Octavian</strong> <span class="dim">· 07/05 00:53</span></li><li><strong>Natalia Pereyra</strong> <span class="dim">· 07/05 00:53</span></li><li><strong>Daniel Ramirez</strong> <span class="dim">· 07/05 00:52</span></li><li><strong>Ali Baig</strong> <span class="dim">· 07/05 00:52</span></li><li><strong>Lorena Gz</strong> <span class="dim">· 06/05 23:16</span></li><li><strong>Abraham Torres Díaz</strong> <span class="dim">· 06/05 10:49</span></li><li><strong>Alfredo Alfaro</strong> <span class="dim">· 06/05 10:49</span></li><li><strong>Adriana Pasqualini</strong> <span class="dim">· 06/05 10:49</span></li><li><strong>Abraham Torres Díaz</strong> <span class="dim">· 06/05 10:49</span></li></ul>
         </div>
     </div>
 
@@ -399,6 +400,28 @@
                 return;
             }
             // Recargar la página para que aparezca el nuevo cliente
+            window.location.reload();
+        } catch (e) {
+            alert('Error de red: ' + e.message + '\n\nAsegurate de haber abierto desde el ícono del Dock.');
+        }
+    }
+
+    async function addEditor() {
+        const editor = prompt('Nombre del nuevo editor:');
+        if (!editor || !editor.trim()) return;
+        const cliente = prompt('Cliente pendiente para ' + editor.trim() + ':');
+        if (!cliente || !cliente.trim()) return;
+        try {
+            const res = await fetch('/api/task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cliente: cliente.trim(), editor: editor.trim() })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) {
+                alert('No se pudo agregar:\n' + (data.error || ('HTTP ' + res.status)));
+                return;
+            }
             window.location.reload();
         } catch (e) {
             alert('Error de red: ' + e.message + '\n\nAsegurate de haber abierto desde el ícono del Dock.');

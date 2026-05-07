@@ -120,6 +120,8 @@ def build_html(data: dict) -> str:
     for editor in editores_ordenados:
         slug = editor.lower().replace(" ", "-")
         tabs_html += f'<button class="tab" data-target="{slug}" onclick="filterEditor(this, \'{slug}\')">{editor}</button>'
+    # Botón "+ Editor" al final de los tabs
+    tabs_html += '<button class="tab tab-new" onclick="addEditor()" title="Agregar nuevo editor con su primer cliente pendiente">+ Editor</button>'
 
     editor_blocks = []
     for editor in editores_ordenados:
@@ -295,6 +297,17 @@ def build_html(data: dict) -> str:
         .tab.active {{
             background: var(--accent);
             color: white;
+        }}
+        .tab.tab-new {{
+            border: 1px dashed var(--text-dim);
+            background: transparent;
+            color: var(--text-dim);
+            margin-left: 8px;
+        }}
+        .tab.tab-new:hover {{
+            border-color: var(--accent);
+            color: var(--accent);
+            background: transparent;
         }}
         .editor-block.hidden {{
             display: none;
@@ -495,6 +508,28 @@ def build_html(data: dict) -> str:
                 return;
             }}
             // Recargar la página para que aparezca el nuevo cliente
+            window.location.reload();
+        }} catch (e) {{
+            alert('Error de red: ' + e.message + '\\n\\nAsegurate de haber abierto desde el ícono del Dock.');
+        }}
+    }}
+
+    async function addEditor() {{
+        const editor = prompt('Nombre del nuevo editor:');
+        if (!editor || !editor.trim()) return;
+        const cliente = prompt('Cliente pendiente para ' + editor.trim() + ':');
+        if (!cliente || !cliente.trim()) return;
+        try {{
+            const res = await fetch('/api/task', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ cliente: cliente.trim(), editor: editor.trim() }})
+            }});
+            const data = await res.json();
+            if (!res.ok || !data.ok) {{
+                alert('No se pudo agregar:\\n' + (data.error || ('HTTP ' + res.status)));
+                return;
+            }}
             window.location.reload();
         }} catch (e) {{
             alert('Error de red: ' + e.message + '\\n\\nAsegurate de haber abierto desde el ícono del Dock.');
