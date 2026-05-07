@@ -327,24 +327,35 @@ def list_edited_files(client_folder_id: str, raw_folder_id: Optional[str],
     """
     Lista videos editados dentro de la carpeta del cliente, recursivamente.
 
-    Combina dos filtros:
-      1. EXCLUYE subcarpetas de crudos (Material/Raw/Crudos) en cualquier nivel.
-      2. Aplica clasificador de heurísticas: solo cuenta archivos que el clasificador
-         considera 'editados' o 'ambiguos' (no los que son CLARAMENTE crudos por nombre).
+    Lógica:
+      - EXCLUYE subcarpetas de crudos (Material/Raw/Crudos) en cualquier nivel.
+      - En la RAÍZ del cliente:
+          * Si TIENE /Material/: ambiguos en raíz se asumen editados (default permisivo)
+          * Si NO TIENE /Material/: ambiguos en raíz son CRUDOS (no editados),
+            porque ahí es donde el cliente sube material. Solo cuentan los EDITADOS
+            seguros (Video N, Reel N, etc.).
+      - En subcarpetas (Pack/Tanda/Editados/etc): ambiguos cuentan como editados.
 
-    Esto resuelve casos como:
-      - Cliente sin /Material/: crudos sueltos en raíz → se filtran por nombre.
-      - Cliente con estructura mes/Crudos/: ya filtrado por exclusión de subcarpeta.
-      - Editados en carpetas tipo Pack/Tanda/Editados → reconocidos como editados.
+    Esta lógica es coherente con list_crudos_anywhere para evitar que un archivo
+    aparezca como crudo Y editado simultáneamente.
     """
-    from classifier import is_likely_editado
+    from classifier import classify, is_likely_editado
 
+    has_material = raw_folder_id is not None
     edited: list[dict] = []
-    # Videos directos en raíz del cliente — parent es el nombre del cliente mismo
+
+    # Videos directos en raíz del cliente
     direct = _list_files(client_folder_id, only_videos=True)
     for f in direct:
-        if is_likely_editado(f, parent_name=client_folder_name):
+        sig = classify(f, parent_name=client_folder_name)
+        if sig is True:  # editado seguro
             edited.append(f)
+        elif sig is None and has_material:
+            # Ambiguo en cliente CON Material → tratamos como editado (los crudos
+            # están en /Material/, lo que está afuera asumimos editado)
+            edited.append(f)
+        # sig is False (crudo seguro) → no es editado
+        # sig is None y NO has_material → tratado como crudo en list_crudos_anywhere
 
     # Recurrir en subcarpetas (no crudos)
     for sub in _list_subfolders(client_folder_id):
