@@ -66,19 +66,23 @@ def run(notify: bool = False):
             task_id = create_task(c.cliente, editor, f["id"], f["name"])
             new_tasks.append({"cliente": c.cliente, "editor": editor, "file": f["name"]})
 
-    # === FASE 2: clientes SIN /Material/ que el sistema YA conoce ===
-    print("🔎 Escaneo generalizado — clientes sin /Material/ pero conocidos por el sistema...")
+    # === FASE 2: clientes sin /Material/ — incluye conocidos del sistema + del Sheet ===
+    print("🔎 Escaneo generalizado — clientes sin /Material/...")
     conn = get_conn()
     pending_clients = _clients_with_pending(conn)
     baselined = _clients_already_baselined(conn)
-    # Clientes que el closer ya conoce (tienen editados baseline)
     rows = conn.execute("SELECT DISTINCT cliente FROM known_edited_files").fetchall()
     closer_known = {r[0].strip() for r in rows}
     standard_names = {c.cliente.strip() for c in clients_standard}
     conn.close()
 
-    # Procesar TODOS los clientes que el sistema conoce (de cualquier forma) y NO están en fase 1
-    extra_clients = (pending_clients | closer_known) - standard_names
+    # NUEVO: incluir clientes mencionados en el Sheet con editor asignado (activos).
+    # Esto captura clientes 100% nuevos: si Ignacio carga una fila en el Sheet
+    # con un cliente nuevo y editor, el sistema empieza a watcharlo.
+    sheet_clients = {p.cliente.strip() for p in packs if p.cliente.strip() and p.editor}
+
+    # Procesar todos los clientes activos que NO están cubiertos en fase 1
+    extra_clients = (pending_clients | closer_known | sheet_clients) - standard_names
     if extra_clients:
         print(f"   {len(extra_clients)} clientes a chequear con scan generalizado.")
         all_root = _list_root_items_with_shortcuts()
