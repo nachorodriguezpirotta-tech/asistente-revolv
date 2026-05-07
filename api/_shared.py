@@ -73,12 +73,27 @@ def _gh_request(method: str, path: str, body: dict = None) -> dict:
 def fetch_db() -> Tuple[str, str]:
     """
     Descarga tracker.db del repo. Retorna (path_local_temporal, sha_actual).
-    El sha se necesita para hacer un PUT subsecuente sin conflictos.
+
+    GitHub Contents API solo devuelve content base64 hasta 1MB. Para archivos
+    más grandes (la DB pesa ~2MB), hay que usar Accept: application/vnd.github.raw
+    que devuelve el archivo binario completo.
     """
-    data = _gh_request("GET", f"/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{DB_FILE}?ref={GITHUB_BRANCH}")
-    content_b64 = data["content"]
-    sha = data["sha"]
-    raw = base64.b64decode(content_b64)
+    # 1. Obtener sha (metadata)
+    meta = _gh_request("GET", f"/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{DB_FILE}?ref={GITHUB_BRANCH}")
+    sha = meta["sha"]
+
+    # 2. Descargar contenido crudo (no limitado a 1MB)
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{DB_FILE}?ref={GITHUB_BRANCH}"
+    req = urllib.request.Request(url)
+    req.add_header("Accept", "application/vnd.github.raw")
+    if GITHUB_PAT:
+        req.add_header("Authorization", f"Bearer {GITHUB_PAT}")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        raw = resp.read()
+
+    if len(raw) < 1000:
+        raise RuntimeError(f"DB descargada parece vacía o truncada ({len(raw)} bytes)")
+
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
     tmp.write(raw)
     tmp.close()
