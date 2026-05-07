@@ -305,10 +305,19 @@ def list_crudos_anywhere(client_folder_id: str, client_folder_name: Optional[str
                 for f in _list_files(nested["id"], only_videos=True):
                     crudos.append(f)
 
-    # 3) Archivos en raíz del cliente: solo los que el clasificador dice CRUDO con seguridad
+    # 3) Archivos en raíz del cliente.
+    #    - Si el cliente TIENE Material/Raw: solo CRUDOS seguros (los editados van afuera).
+    #    - Si NO tiene Material: incluimos también los AMBIGUOS porque pueden ser crudos
+    #      subidos sueltos (los EDITADOS sí los descartamos por nombre).
+    has_material_subfolder = raw is not None
     for f in _list_files(client_folder_id, only_videos=True):
-        if classify(f, parent_name=client_folder_name) is False:  # False = crudo seguro
+        sig = classify(f, parent_name=client_folder_name)
+        if sig is False:  # crudo seguro
             crudos.append(f)
+        elif sig is None and not has_material_subfolder:
+            # Ambiguo en cliente sin /Material/ → tratamos como crudo
+            crudos.append(f)
+        # sig is True (editado seguro) → ignorar
 
     return crudos
 
