@@ -1,11 +1,20 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
   "buildCommand": null,
+  "installCommand": null,
   "outputDirectory": null,
   "rewrites": [
-    {
-      "source": "/",
-      "destination": "/index.html"
+    { "source": "/", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/data.py": {
+      "memory": 256,
+      "maxDuration": 10
+    },
+    "api/task.py": {
+      "memory": 256,
+      "maxDuration": 10
     }
-  ]
+  }
 }
