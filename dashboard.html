@@ -152,6 +152,29 @@
             font-size: 18px;
             font-weight: 600;
         }
+        .add-btn {
+            background: var(--bg-card-2);
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            font-size: 18px;
+            font-weight: 400;
+            cursor: pointer;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, color 0.15s, transform 0.15s;
+            font-family: inherit;
+            padding: 0;
+        }
+        .add-btn:hover {
+            background: var(--accent);
+            color: white;
+            transform: scale(1.1);
+        }
         .clientes-grid {
             display: grid;
             gap: 8px;
@@ -248,7 +271,7 @@
             </p>
         </div>
         <div class="header-meta">
-            <div>Última actualización: 01:29</div>
+            <div>Última actualización: 01:30</div>
             <button class="refresh-btn" onclick="window.location.reload()">🔄 Recargar</button>
         </div>
     </header>
@@ -256,7 +279,7 @@
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-label">Clientes con pendientes</div>
-            <div class="stat-value pending">17</div>
+            <div class="stat-value pending">18</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Editores activos</div>
@@ -276,15 +299,17 @@
             <section class="editor-block" data-editor="rami">
                 <header class="editor-header">
                     <h2>Rami</h2>
+                    <button class="add-btn" onclick="addClient('Rami')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
-                    <div class="cliente-card" data-task-id="13"><span class="cliente-name">David Hernandez</span><button class="delete-btn" onclick="deleteTask(13, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="15"><span class="cliente-name">Egdylu</span><button class="delete-btn" onclick="deleteTask(15, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="14"><span class="cliente-name">Federico Osorio</span><button class="delete-btn" onclick="deleteTask(14, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="11"><span class="cliente-name">Jose Social Pulse Media</span><button class="delete-btn" onclick="deleteTask(11, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="9"><span class="cliente-name">Liliana Rohenes</span><button class="delete-btn" onclick="deleteTask(9, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="12"><span class="cliente-name">Rafa Elvram</span><button class="delete-btn" onclick="deleteTask(12, this)" title="Marcar como hecho">🗑️</button></div>
+                    <div class="cliente-card" data-task-id="13"><span class="cliente-name">David Hernandez</span><button class="delete-btn" onclick="deleteTask(13, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="15"><span class="cliente-name">Egdylu</span><button class="delete-btn" onclick="deleteTask(15, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="14"><span class="cliente-name">Federico Osorio</span><button class="delete-btn" onclick="deleteTask(14, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="11"><span class="cliente-name">Jose Social Pulse Media</span><button class="delete-btn" onclick="deleteTask(11, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="9"><span class="cliente-name">Liliana Rohenes</span><button class="delete-btn" onclick="deleteTask(9, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="12"><span class="cliente-name">Rafa Elvram</span><button class="delete-btn" onclick="deleteTask(12, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="30"><span class="cliente-name">TestNoExiste</span><button class="delete-btn" onclick="deleteTask(30, this)" title="Marcar como hecho">🗑️</button></div>
                 </div>
             </section>
         
             <section class="editor-block" data-editor="benja">
                 <header class="editor-header">
                     <h2>Benja</h2>
+                    <button class="add-btn" onclick="addClient('Benja')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
                     <div class="cliente-card" data-task-id="29"><span class="cliente-name">Daniel Ramirez</span><button class="delete-btn" onclick="deleteTask(29, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="18"><span class="cliente-name">The Eye</span><button class="delete-btn" onclick="deleteTask(18, this)" title="Marcar como hecho">🗑️</button></div>
@@ -294,6 +319,7 @@
             <section class="editor-block" data-editor="fran">
                 <header class="editor-header">
                     <h2>Fran</h2>
+                    <button class="add-btn" onclick="addClient('Fran')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
                     <div class="cliente-card" data-task-id="24"><span class="cliente-name">Egdylu</span><button class="delete-btn" onclick="deleteTask(24, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="28"><span class="cliente-name">Octavian</span><button class="delete-btn" onclick="deleteTask(28, this)" title="Marcar como hecho">🗑️</button></div>
@@ -303,6 +329,7 @@
             <section class="editor-block" data-editor="valen">
                 <header class="editor-header">
                     <h2>Valen</h2>
+                    <button class="add-btn" onclick="addClient('Valen')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
                     <div class="cliente-card" data-task-id="21"><span class="cliente-name">Delfina Orange Power</span><button class="delete-btn" onclick="deleteTask(21, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="20"><span class="cliente-name">Fer Trips</span><button class="delete-btn" onclick="deleteTask(20, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="19"><span class="cliente-name">Natalia Lopez</span><button class="delete-btn" onclick="deleteTask(19, this)" title="Marcar como hecho">🗑️</button></div>
@@ -312,6 +339,7 @@
             <section class="editor-block" data-editor="santi">
                 <header class="editor-header">
                     <h2>Santi</h2>
+                    <button class="add-btn" onclick="addClient('Santi')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
                     <div class="cliente-card" data-task-id="23"><span class="cliente-name">Gaetan</span><button class="delete-btn" onclick="deleteTask(23, this)" title="Marcar como hecho">🗑️</button></div><div class="cliente-card" data-task-id="25"><span class="cliente-name">Gerardo</span><button class="delete-btn" onclick="deleteTask(25, this)" title="Marcar como hecho">🗑️</button></div>
@@ -321,6 +349,7 @@
             <section class="editor-block" data-editor="agus">
                 <header class="editor-header">
                     <h2>Agus</h2>
+                    <button class="add-btn" onclick="addClient('Agus')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
                     <div class="cliente-card" data-task-id="27"><span class="cliente-name">Sandy Nuñez</span><button class="delete-btn" onclick="deleteTask(27, this)" title="Marcar como hecho">🗑️</button></div>
@@ -330,6 +359,7 @@
             <section class="editor-block" data-editor="samu">
                 <header class="editor-header">
                     <h2>Samu</h2>
+                    <button class="add-btn" onclick="addClient('Samu')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
                     <div class="cliente-card" data-task-id="26"><span class="cliente-name">Maria Capriles</span><button class="delete-btn" onclick="deleteTask(26, this)" title="Marcar como hecho">🗑️</button></div>
@@ -340,7 +370,7 @@
     <div class="activity-grid">
         <div class="activity-card">
             <h3>🆕 Últimos detectados</h3>
-            <ul><li><strong>Octavian</strong> · Fran <span class="dim">· 07/05 01:05</span></li><li><strong>Daniel Ramirez</strong> · Benja <span class="dim">· 07/05 01:05</span></li><li><strong>Maria Capriles</strong> · Samu <span class="dim">· 06/05 19:14</span></li><li><strong>Sandy Nuñez</strong> · Agus <span class="dim">· 06/05 19:14</span></li><li><strong>Gerardo</strong> · Santi <span class="dim">· 06/05 19:08</span></li><li><strong>Egdylu</strong> · Fran <span class="dim">· 06/05 19:06</span></li><li><strong>The Eye</strong> · Benja <span class="dim">· 06/05 19:06</span></li><li><strong>Natalia Lopez</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Fer Trips</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Delfina Orange Power</strong> · Valen <span class="dim">· 06/05 19:06</span></li></ul>
+            <ul><li><strong>TestNoExiste</strong> · Rami <span class="dim">· 07/05 01:30</span></li><li><strong>Octavian</strong> · Fran <span class="dim">· 07/05 01:05</span></li><li><strong>Daniel Ramirez</strong> · Benja <span class="dim">· 07/05 01:05</span></li><li><strong>Maria Capriles</strong> · Samu <span class="dim">· 06/05 19:14</span></li><li><strong>Sandy Nuñez</strong> · Agus <span class="dim">· 06/05 19:14</span></li><li><strong>Gerardo</strong> · Santi <span class="dim">· 06/05 19:08</span></li><li><strong>Egdylu</strong> · Fran <span class="dim">· 06/05 19:06</span></li><li><strong>The Eye</strong> · Benja <span class="dim">· 06/05 19:06</span></li><li><strong>Natalia Lopez</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Fer Trips</strong> · Valen <span class="dim">· 06/05 19:06</span></li></ul>
         </div>
         <div class="activity-card">
             <h3>✅ Últimos cerrados</h3>
@@ -354,6 +384,27 @@
     </footer>
 
     <script>
+    async function addClient(editor) {
+        const cliente = prompt('Agregar cliente pendiente para ' + editor + ':');
+        if (!cliente || !cliente.trim()) return;
+        try {
+            const res = await fetch('/api/task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cliente: cliente.trim(), editor: editor })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) {
+                alert('No se pudo agregar:\n' + (data.error || ('HTTP ' + res.status)));
+                return;
+            }
+            // Recargar la página para que aparezca el nuevo cliente
+            window.location.reload();
+        } catch (e) {
+            alert('Error de red: ' + e.message + '\n\nAsegurate de haber abierto desde el ícono del Dock.');
+        }
+    }
+
     function filterEditor(btn, target) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
