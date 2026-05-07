@@ -29,27 +29,78 @@ def regenerate_dashboard():
     return gen()
 
 
+def _run_git(args: list[str], **kwargs) -> subprocess.CompletedProcess:
+    return subprocess.run([GIT_BIN, "-C", BASE_DIR] + args, capture_output=True, **kwargs)
+
+
 def git_commit_push(message: str):
-    """Commit + push silencioso. Si falla, log pero no rompe."""
-    try:
-        # pull first to avoid rejection
-        subprocess.run([GIT_BIN, "-C", BASE_DIR, "pull", "--rebase", "--autostash"],
-                       check=False, capture_output=True, timeout=30)
-        subprocess.run([GIT_BIN, "-C", BASE_DIR, "add", "tracker.db", "dashboard.html"],
-                       check=True, capture_output=True, timeout=15)
-        # commit puede fallar si no hay cambios (pero eso no es error)
-        result = subprocess.run([GIT_BIN, "-C", BASE_DIR, "commit", "-m", message],
-                                capture_output=True, timeout=15)
-        if result.returncode == 0:
-            subprocess.run([GIT_BIN, "-C", BASE_DIR, "push"],
-                           check=True, capture_output=True, timeout=30)
-            print(f"[git] {message} → pushed")
-        else:
-            print(f"[git] no había cambios para commitear")
-    except subprocess.CalledProcessError as e:
-        print(f"[git] FALLÓ: {e.stderr.decode() if e.stderr else e}", file=sys.stderr)
-    except Exception as e:
-        print(f"[git] error: {e}", file=sys.stderr)
+    """
+    Commit + push robusto contra race conditions con el bot del cron.
+
+    Flujo:
+      1. Add + commit LOCAL (preservar nuestros cambios como commit local).
+      2. Pull con rebase (sincronizar con remote).
+      3. Si hay conflicts en tracker.db/dashboard.html: tomar OURS (nuestro cambio gana).
+      4. Push.
+      5. Si el push falla: retry hasta 3 veces.
+
+    Esto previene el bug donde un pull anticipado pisaba los cambios del usuario
+    antes de commitearlos.
+    """
+    for attempt in range(3):
+        try:
+            # 1. Stage y commit local
+            _run_git(["add", "tracker.db", "dashboard.html"], timeout=15)
+            commit_res = _run_git(["commit", "-m", message], timeout=15)
+            if commit_res.returncode != 0:
+                # Nada que commitear (DB no cambió). Salir silenciosamente.
+                stderr = commit_res.stderr.decode() if commit_res.stderr else ""
+                if "nothing to commit" in stderr or "nothing added" in stderr:
+                    print(f"[git] no había cambios — '{message}' ignorado")
+                    return
+                print(f"[git] commit falló: {stderr}", file=sys.stderr)
+                return
+
+            # 2. Pull con rebase para sincronizar con remote
+            pull_res = _run_git(["pull", "--rebase"], timeout=30)
+
+            # 3. Si rebase falla por conflicts, resolver tomando OURS
+            if pull_res.returncode != 0:
+                stderr = pull_res.stderr.decode() if pull_res.stderr else ""
+                stdout = pull_res.stdout.decode() if pull_res.stdout else ""
+                if "conflict" in (stderr + stdout).lower() or "CONFLICT" in (stderr + stdout):
+                    print(f"[git] conflict en rebase, resolviendo con OURS...")
+                    _run_git(["checkout", "--ours", "tracker.db", "dashboard.html"], timeout=10)
+                    _run_git(["add", "tracker.db", "dashboard.html"], timeout=10)
+                    cont = _run_git(["rebase", "--continue"], timeout=15,
+                                    env={"GIT_EDITOR": "true", **__import__("os").environ})
+                    if cont.returncode != 0:
+                        # Abortar y retry
+                        _run_git(["rebase", "--abort"], timeout=10)
+                        print(f"[git] rebase abortado, retry {attempt + 1}/3", file=sys.stderr)
+                        continue
+                else:
+                    print(f"[git] pull falló sin conflict: {stderr}", file=sys.stderr)
+                    return
+
+            # 4. Push
+            push_res = _run_git(["push"], timeout=30)
+            if push_res.returncode == 0:
+                print(f"[git] '{message}' → pushed (intento {attempt + 1})")
+                return
+
+            # 5. Push falló (alguien pusheó entre nuestro pull y push). Retry.
+            stderr = push_res.stderr.decode() if push_res.stderr else ""
+            print(f"[git] push falló (intento {attempt + 1}): {stderr[:200]}", file=sys.stderr)
+            # Resetear el HEAD local para volver a hacer rebase
+            # (NO destructivo: nuestro cambio en la DB sigue en el commit)
+
+        except subprocess.TimeoutExpired:
+            print(f"[git] timeout en intento {attempt + 1}", file=sys.stderr)
+        except Exception as e:
+            print(f"[git] error inesperado: {e}", file=sys.stderr)
+
+    print(f"[git] FALLÓ tras 3 intentos: '{message}'", file=sys.stderr)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
