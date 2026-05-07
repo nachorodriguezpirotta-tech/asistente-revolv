@@ -140,6 +140,7 @@ def build_html(data: dict) -> str:
             <section class="editor-block" data-editor="{slug}">
                 <header class="editor-header">
                     <h2>{editor}</h2>
+                    <button class="add-btn" onclick="addClient('{editor}')" title="Agregar cliente pendiente">+</button>
                 </header>
                 <div class="clientes-grid">
                     {clientes_html}
@@ -317,6 +318,29 @@ def build_html(data: dict) -> str:
             font-size: 18px;
             font-weight: 600;
         }}
+        .add-btn {{
+            background: var(--bg-card-2);
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            font-size: 18px;
+            font-weight: 400;
+            cursor: pointer;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, color 0.15s, transform 0.15s;
+            font-family: inherit;
+            padding: 0;
+        }}
+        .add-btn:hover {{
+            background: var(--accent);
+            color: white;
+            transform: scale(1.1);
+        }}
         .clientes-grid {{
             display: grid;
             gap: 8px;
@@ -456,6 +480,27 @@ def build_html(data: dict) -> str:
     </footer>
 
     <script>
+    async function addClient(editor) {{
+        const cliente = prompt('Agregar cliente pendiente para ' + editor + ':');
+        if (!cliente || !cliente.trim()) return;
+        try {{
+            const res = await fetch('/api/task', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ cliente: cliente.trim(), editor: editor }})
+            }});
+            const data = await res.json();
+            if (!res.ok || !data.ok) {{
+                alert('No se pudo agregar:\\n' + (data.error || ('HTTP ' + res.status)));
+                return;
+            }}
+            // Recargar la página para que aparezca el nuevo cliente
+            window.location.reload();
+        }} catch (e) {{
+            alert('Error de red: ' + e.message + '\\n\\nAsegurate de haber abierto desde el ícono del Dock.');
+        }}
+    }}
+
     function filterEditor(btn, target) {{
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');

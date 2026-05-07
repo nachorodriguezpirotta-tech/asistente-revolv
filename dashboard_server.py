@@ -109,11 +109,66 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         self.send_error(404)
 
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/api/task":
+            # Crear task manual: body {"cliente": "...", "editor": "..."}
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                cliente = (data.get("cliente") or "").strip()
+                editor = (data.get("editor") or "").strip()
+            except Exception as e:
+                return self._json({"ok": False, "error": f"body inválido: {e}"}, status=400)
+
+            if not cliente or not editor:
+                return self._json({"ok": False, "error": "Falta cliente o editor"}, status=400)
+
+            import time as _t
+            from tracker import now_iso
+            conn = get_conn()
+            # No duplicar si ya hay pending para ese cliente+editor
+            existing = conn.execute(
+                "SELECT id FROM tasks WHERE cliente = ? AND editor = ? AND status = 'pending'",
+                (cliente, editor)
+            ).fetchone()
+            if existing:
+                conn.close()
+                return self._json({"ok": False, "error": f"Ya hay un pendiente de '{cliente}' para {editor}"}, status=409)
+
+            pseudo_id = f"manual:{editor.lower()}:{cliente.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
+            cur = conn.execute("""
+                INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?)
+            """, (cliente, editor, pseudo_id, "(pendiente cargado manualmente)", now_iso(), now_iso()))
+            task_id = cur.lastrowid
+            conn.commit()
+            conn.close()
+            print(f"[create] task #{task_id} → {cliente} / {editor}")
+
+            try:
+                regenerate_dashboard()
+            except Exception as e:
+                print(f"[create] no pude regenerar dashboard: {e}", file=sys.stderr)
+
+            import threading
+            threading.Thread(
+                target=git_commit_push,
+                args=(f"manual: agregada task #{task_id} ({cliente} / {editor})",),
+                daemon=True,
+            ).start()
+
+            return self._json({"ok": True, "task_id": task_id, "cliente": cliente, "editor": editor})
+
+        self.send_error(404)
+
     def do_OPTIONS(self):
         # CORS preflight (por si el browser lo dispara)
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
