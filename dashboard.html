@@ -282,7 +282,7 @@
             </p>
         </div>
         <div class="header-meta">
-            <div>Última actualización: 11:06</div>
+            <div>Última actualización: 11:12</div>
             <button class="refresh-btn" onclick="window.location.reload()">🔄 Recargar</button>
         </div>
     </header>
@@ -290,11 +290,11 @@
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-label">Clientes con pendientes</div>
-            <div class="stat-value pending">14</div>
+            <div class="stat-value pending">15</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Editores activos</div>
-            <div class="stat-value">5</div>
+            <div class="stat-value">6</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Clientes monitoreados</div>
@@ -304,7 +304,7 @@
 
     <h2 class="section-title">📦 Pendientes por editor</h2>
     <div class="tabs">
-        <button class="tab active" data-target="all" onclick="filterEditor(this, 'all')">Todos</button><button class="tab" data-target="rami" onclick="filterEditor(this, 'rami')">Rami</button><button class="tab" data-target="benja" onclick="filterEditor(this, 'benja')">Benja</button><button class="tab" data-target="fran" onclick="filterEditor(this, 'fran')">Fran</button><button class="tab" data-target="valen" onclick="filterEditor(this, 'valen')">Valen</button><button class="tab" data-target="santi" onclick="filterEditor(this, 'santi')">Santi</button><button class="tab tab-new" onclick="addEditor()" title="Agregar nuevo editor con su primer cliente pendiente">+ Editor</button>
+        <button class="tab active" data-target="all" onclick="filterEditor(this, 'all')">Todos</button><button class="tab" data-target="rami" onclick="filterEditor(this, 'rami')">Rami</button><button class="tab" data-target="benja" onclick="filterEditor(this, 'benja')">Benja</button><button class="tab" data-target="fran" onclick="filterEditor(this, 'fran')">Fran</button><button class="tab" data-target="valen" onclick="filterEditor(this, 'valen')">Valen</button><button class="tab" data-target="santi" onclick="filterEditor(this, 'santi')">Santi</button><button class="tab" data-target="jere" onclick="filterEditor(this, 'jere')">Jere</button><button class="tab tab-new" onclick="addEditor()" title="Agregar nuevo editor con su primer cliente pendiente">+ Editor</button>
     </div>
     
             <section class="editor-block" data-editor="rami">
@@ -357,11 +357,21 @@
                 </div>
             </section>
         
+            <section class="editor-block" data-editor="jere">
+                <header class="editor-header">
+                    <h2>Jere</h2>
+                    <button class="add-btn" onclick="addClient('Jere')" title="Agregar cliente pendiente">+</button>
+                </header>
+                <div class="clientes-grid">
+                    <div class="cliente-card" data-task-id="33"><span class="cliente-name">Pavel</span><button class="delete-btn" onclick="deleteTask(33, this)" title="Marcar como hecho">🗑️</button></div>
+                </div>
+            </section>
+        
 
     <div class="activity-grid">
         <div class="activity-card">
             <h3>🆕 Últimos detectados</h3>
-            <ul><li><strong>Octavian</strong> · Fran <span class="dim">· 07/05 01:05</span></li><li><strong>Daniel Ramirez</strong> · Benja <span class="dim">· 07/05 01:05</span></li><li><strong>Gerardo</strong> · Santi <span class="dim">· 06/05 19:08</span></li><li><strong>Egdylu</strong> · Fran <span class="dim">· 06/05 19:06</span></li><li><strong>The Eye</strong> · Benja <span class="dim">· 06/05 19:06</span></li><li><strong>Fer Trips</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Delfina Orange Power</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Gaetan</strong> · Santi <span class="dim">· 06/05 19:06</span></li><li><strong>Liliana Rohenes</strong> · Rami <span class="dim">· 06/05 19:03</span></li><li><strong>Jose Social Pulse Media</strong> · Rami <span class="dim">· 06/05 19:03</span></li></ul>
+            <ul><li><strong>Pavel</strong> · Jere <span class="dim">· 07/05 11:12</span></li><li><strong>Octavian</strong> · Fran <span class="dim">· 07/05 01:05</span></li><li><strong>Daniel Ramirez</strong> · Benja <span class="dim">· 07/05 01:05</span></li><li><strong>Gerardo</strong> · Santi <span class="dim">· 06/05 19:08</span></li><li><strong>Egdylu</strong> · Fran <span class="dim">· 06/05 19:06</span></li><li><strong>The Eye</strong> · Benja <span class="dim">· 06/05 19:06</span></li><li><strong>Fer Trips</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Delfina Orange Power</strong> · Valen <span class="dim">· 06/05 19:06</span></li><li><strong>Gaetan</strong> · Santi <span class="dim">· 06/05 19:06</span></li><li><strong>Liliana Rohenes</strong> · Rami <span class="dim">· 06/05 19:03</span></li></ul>
         </div>
         <div class="activity-card">
             <h3>✅ Últimos cerrados</h3>
