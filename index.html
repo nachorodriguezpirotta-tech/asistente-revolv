@@ -91,6 +91,10 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 12px;
+        }
+        .editor-block h2 > span:first-child {
+            flex: 1;
         }
         .add-mini {
             background: var(--bg-card-2);
@@ -241,14 +245,17 @@ function renderAdmin(data) {
     const byEditor = data.by_editor || {};
     const editores = Object.keys(byEditor).sort((a, b) => byEditor[b].length - byEditor[a].length);
     if (editores.length === 0) {
-        content.innerHTML = '<div class="empty">✅ Sin pendientes globales.</div>';
+        content.innerHTML = '<div class="empty">✅ Sin pendientes globales.<br><br><button class="add-btn-main" onclick="addClientToEditorPrompt()">+ Agregar editor con cliente</button></div>';
         return;
     }
     let html = '';
     for (const ed of editores) {
         const items = byEditor[ed];
         html += `<section class="editor-block">
-            <h2>${escapeHtml(ed)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span></h2>`;
+            <h2>
+                <span>${escapeHtml(ed)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span></span>
+                <button class="add-mini" onclick="addClientToEditor('${escapeHtml(ed).replace(/'/g, '&#39;')}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
+            </h2>`;
         for (const it of items) {
             html += `<div class="cliente-card" data-task-id="${it.id}">
                 <span class="cliente-name">${escapeHtml(it.cliente)}</span>
@@ -258,6 +265,33 @@ function renderAdmin(data) {
         html += '</section>';
     }
     content.innerHTML = html;
+}
+
+async function addClientToEditor(editor) {
+    const cliente = prompt(`Cliente pendiente para ${editor}:`);
+    if (!cliente || !cliente.trim()) return;
+    try {
+        const res = await fetch('/api/task', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                admin: 1, t: TOKEN,
+                target_editor: editor,
+                cliente: cliente.trim(),
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        loadData();
+    } catch (e) {
+        alert('No se pudo agregar:\n' + e.message);
+    }
+}
+
+async function addClientToEditorPrompt() {
+    const editor = prompt('Editor (nombre):');
+    if (!editor || !editor.trim()) return;
+    addClientToEditor(editor.trim());
 }
 
 async function deleteTask(taskId, btn) {
