@@ -118,8 +118,16 @@ def _resolve_shortcut(folder: dict) -> dict:
 _STOPWORDS = {"y", "de", "la", "el", "los", "las", "del", "videos", "video", "reels", "reel"}
 
 
+def _split_camel(s: str) -> str:
+    """Separa CamelCase: 'TheEye' → 'The Eye', 'iPhoneCase' → 'i Phone Case'."""
+    import re as _re
+    return _re.sub(r"([a-z])([A-Z])", r"\1 \2", s)
+
+
 def _tokens(s: str) -> set[str]:
-    """Normaliza y tokeniza un nombre. Tokens >=3 chars y no-stopwords."""
+    """Normaliza y tokeniza un nombre. Tokens >=3 chars y no-stopwords.
+    Maneja CamelCase: 'TheEye' se trata como 'The Eye'."""
+    s = _split_camel(s)
     norm = _normalize(s)
     return {t for t in norm.split() if len(t) >= 3 and t not in _STOPWORDS}
 
@@ -156,25 +164,49 @@ def find_folder_by_name(name: str, all_folders: Optional[list[dict]] = None) -> 
     if len(candidates) == 1:
         return _resolve_shortcut(candidates[0])
 
-    # 4. Tokens compartidos
+    # 4. Tokens compartidos (con matching exacto Y por prefijo común >=4 chars)
     target_tokens = _tokens(name)
     if len(target_tokens) >= 1:
         scored = []
         for f in all_folders:
-            shared = target_tokens & _tokens(f["name"])
-            if shared:
-                scored.append((len(shared), f))
+            f_tokens = _tokens(f["name"])
+            shared = _count_token_overlap(target_tokens, f_tokens)
+            if shared > 0:
+                scored.append((shared, f))
         if scored:
             scored.sort(key=lambda x: -x[0])
             best_score = scored[0][0]
             top = [f for s, f in scored if s == best_score]
-            # Match si hay UN solo ganador y comparte al menos 1 token significativo
-            # (1 token es OK si el target tiene 1 solo token; si tiene varios, requerir 2+)
             min_required = 2 if len(target_tokens) >= 2 else 1
             if len(top) == 1 and best_score >= min_required:
                 return _resolve_shortcut(top[0])
 
     return None
+
+
+def _count_token_overlap(a: set[str], b: set[str]) -> int:
+    """
+    Cuenta cuántos tokens de A 'matchean' con tokens de B.
+    Match = tokens iguales O comparten prefijo de >=4 caracteres.
+    Ej: 'liliana' matchea con 'lili' (prefijo "lili"), 'rohenes' con 'rohe'.
+    """
+    count = 0
+    for ta in a:
+        for tb in b:
+            if ta == tb:
+                count += 1
+                break
+            # Prefijo común >= 4 chars (y al menos uno de los dos tiene >= 4 chars)
+            common_prefix = 0
+            for ca, cb in zip(ta, tb):
+                if ca == cb:
+                    common_prefix += 1
+                else:
+                    break
+            if common_prefix >= 4 and (len(ta) >= 4 or len(tb) >= 4):
+                count += 1
+                break
+    return count
 
 
 def _list_root_items_with_shortcuts() -> list[dict]:
@@ -237,36 +269,56 @@ def list_material_files(raw_folder_id: str) -> list[dict]:
     return _list_files(raw_folder_id, only_videos=True)
 
 
-def list_edited_files(client_folder_id: str, raw_folder_id: Optional[str]) -> list[dict]:
+def list_edited_files(client_folder_id: str, raw_folder_id: Optional[str],
+                       client_folder_name: Optional[str] = None) -> list[dict]:
     """
-    Lista TODOS los videos editados dentro de la carpeta del cliente, recursivamente.
-    EXCLUYE cualquier subcarpeta de crudos en CUALQUIER nivel (Material/Raw/Crudos).
+    Lista videos editados dentro de la carpeta del cliente, recursivamente.
 
-    Esto es importante porque algunos clientes (ej. Liliana Rohenes) organizan por mes,
-    con subcarpetas /mayo/Crudos/ y /mayo/Editados/. No queremos confundir los crudos
-    de un mes con editados nuevos.
+    Combina dos filtros:
+      1. EXCLUYE subcarpetas de crudos (Material/Raw/Crudos) en cualquier nivel.
+      2. Aplica clasificador de heurísticas: solo cuenta archivos que el clasificador
+         considera 'editados' o 'ambiguos' (no los que son CLARAMENTE crudos por nombre).
+
+    Esto resuelve casos como:
+      - Cliente sin /Material/: crudos sueltos en raíz → se filtran por nombre.
+      - Cliente con estructura mes/Crudos/: ya filtrado por exclusión de subcarpeta.
+      - Editados en carpetas tipo Pack/Tanda/Editados → reconocidos como editados.
     """
+    from classifier import is_likely_editado
+
     edited: list[dict] = []
-    # videos directos en raíz del cliente
-    edited.extend(_list_files(client_folder_id, only_videos=True))
-    # recurrir en subcarpetas que NO sean Material/Raw/Crudos
+    # Videos directos en raíz del cliente — parent es el nombre del cliente mismo
+    direct = _list_files(client_folder_id, only_videos=True)
+    for f in direct:
+        if is_likely_editado(f, parent_name=client_folder_name):
+            edited.append(f)
+
+    # Recurrir en subcarpetas (no crudos)
     for sub in _list_subfolders(client_folder_id):
         if raw_folder_id and sub["id"] == raw_folder_id:
             continue
         if _normalize(sub["name"]) in RAW_SUBFOLDER_NAMES:
             continue
-        edited.extend(_list_recursive_videos(sub["id"]))
+        edited.extend(_list_recursive_videos(sub["id"], parent_name=sub["name"]))
     return edited
 
 
-def _list_recursive_videos(folder_id: str) -> list[dict]:
-    """Lista videos recursivamente, EXCLUYENDO subcarpetas tipo Material/Raw/Crudos."""
+def _list_recursive_videos(folder_id: str, parent_name: Optional[str] = None) -> list[dict]:
+    """
+    Lista videos editados recursivamente, EXCLUYENDO subcarpetas Material/Raw/Crudos
+    Y filtrando por clasificador (excluye archivos que parecen crudos por nombre).
+    """
+    from classifier import is_likely_editado
+
     out = []
-    out.extend(_list_files(folder_id, only_videos=True))
+    files = _list_files(folder_id, only_videos=True)
+    for f in files:
+        if is_likely_editado(f, parent_name=parent_name):
+            out.append(f)
     for sub in _list_subfolders(folder_id):
         if _normalize(sub["name"]) in RAW_SUBFOLDER_NAMES:
             continue
-        out.extend(_list_recursive_videos(sub["id"]))
+        out.extend(_list_recursive_videos(sub["id"], parent_name=sub["name"]))
     return out
 
 

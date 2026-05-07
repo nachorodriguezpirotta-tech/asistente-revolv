@@ -91,7 +91,7 @@ def run_closer(verbose: bool = True) -> dict:
         raw = find_raw_subfolder(folder["id"])
         raw_id = raw["id"] if raw else None
 
-        editados = list_edited_files(folder["id"], raw_id)
+        editados = list_edited_files(folder["id"], raw_id, client_folder_name=folder["name"])
         if not editados:
             continue
 
