@@ -6,13 +6,21 @@ Solo permite borrar tasks que pertenezcan al editor del token (o admin).
 """
 
 import json
+import os
+import sys
 import time as _t
+import traceback
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-from _shared import (
-    check_token, with_db, json_response, now_iso,
-)
+# Asegurar que podemos importar _shared.py del mismo directorio
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from _shared import check_token, with_db, json_response, now_iso
+    _IMPORT_ERROR = None
+except Exception as _e:
+    _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
 
 
 class handler(BaseHTTPRequestHandler):

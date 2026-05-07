@@ -15,6 +15,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from typing import Tuple, Optional, Callable
 
 GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "nachorodriguezpirotta-tech")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "asistente-revolv")
@@ -66,7 +67,7 @@ def _gh_request(method: str, path: str, body: dict = None) -> dict:
         raise RuntimeError(f"GitHub API {method} {path} → {e.code}: {body[:300]}") from e
 
 
-def fetch_db() -> tuple[str, str]:
+def fetch_db() -> Tuple[str, str]:
     """
     Descarga tracker.db del repo. Retorna (path_local_temporal, sha_actual).
     El sha se necesita para hacer un PUT subsecuente sin conflictos.

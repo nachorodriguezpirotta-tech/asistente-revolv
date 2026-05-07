@@ -7,13 +7,24 @@ Devuelve JSON con los pendientes:
   Si admin: agrupados por editor.
 """
 
+import json
+import os
+import sys
+import traceback
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-from _shared import (
-    check_token, read_db, json_response, EDITORS, make_token,
-    DASHBOARD_SECRET,
-)
+# Asegurar que podemos importar _shared.py del mismo directorio
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from _shared import (
+        check_token, read_db, json_response, EDITORS, make_token,
+        DASHBOARD_SECRET, GITHUB_PAT,
+    )
+    _IMPORT_ERROR = None
+except Exception as _e:
+    _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
 
 
 def get_editor_data(conn, editor: str) -> dict:
@@ -66,7 +77,29 @@ def get_all_data(conn) -> dict:
 
 
 class handler(BaseHTTPRequestHandler):
+    def _safe_json(self, data, status=200):
+        body = json.dumps(data).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
+        if _IMPORT_ERROR is not None:
+            return self._safe_json({"error": "import error", "detail": _IMPORT_ERROR}, status=500)
+
+        try:
+            return self._do_get_inner()
+        except Exception as e:
+            return self._safe_json({
+                "error": f"{type(e).__name__}: {e}",
+                "trace": traceback.format_exc()[:1500],
+                "github_pat_set": bool(GITHUB_PAT),
+            }, status=500)
+
+    def _do_get_inner(self):
         params = parse_qs(urlparse(self.path).query)
         editor = (params.get("editor", [""])[0] or "").strip()
         admin = params.get("admin", [""])[0]
