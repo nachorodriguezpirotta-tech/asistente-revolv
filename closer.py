@@ -17,6 +17,7 @@ from typing import Optional
 from drive_client import (
     find_folder_by_name, find_raw_subfolder,
     list_root_folders, list_edited_files,
+    _list_root_items_with_shortcuts,
 )
 from tracker import (
     get_conn,
@@ -72,7 +73,7 @@ def run_closer(verbose: bool = True) -> dict:
             print("  (sin clientes con tareas pendientes)")
         return summary
 
-    all_folders = list_root_folders()  # cache una sola vez
+    all_folders = _list_root_items_with_shortcuts()  # incluye shortcuts
 
     for p in pendings:
         cliente = p["cliente"]
