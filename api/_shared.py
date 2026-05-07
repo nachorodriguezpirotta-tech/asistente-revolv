@@ -20,8 +20,11 @@ from typing import Tuple, Optional, Callable
 GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "nachorodriguezpirotta-tech")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "asistente-revolv")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
-GITHUB_PAT = os.environ.get("GITHUB_PAT", "")  # token con permiso repo
-DASHBOARD_SECRET = os.environ.get("DASHBOARD_SECRET", "revolv-default-change-me")
+GITHUB_PAT = os.environ.get("GITHUB_PAT", "")  # token con permiso repo (SÍ va por env var)
+
+# Secret hardcodeado para que el match sea garantizado entre frontend y backend.
+# El repo es privado, así que no es accesible públicamente.
+DASHBOARD_SECRET = "revolv-asistente-2026-x9k2m4nq7p-fixed"
 
 DB_FILE = "tracker.db"
 
