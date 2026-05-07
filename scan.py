@@ -66,19 +66,34 @@ def run(notify: bool = False):
             task_id = create_task(c.cliente, editor, f["id"], f["name"])
             new_tasks.append({"cliente": c.cliente, "editor": editor, "file": f["name"]})
 
-    # === FASE 2: clientes SIN /Material/ pero con tareas pendientes (estructuras alternativas) ===
-    print("🔎 Escaneo generalizado — clientes con tareas pendientes pero sin /Material/...")
+    # === FASE 2: clientes SIN /Material/ que el sistema YA conoce ===
+    print("🔎 Escaneo generalizado — clientes sin /Material/ pero conocidos por el sistema...")
     conn = get_conn()
     pending_clients = _clients_with_pending(conn)
     baselined = _clients_already_baselined(conn)
+    # Clientes que el closer ya conoce (tienen editados baseline)
+    rows = conn.execute("SELECT DISTINCT cliente FROM known_edited_files").fetchall()
+    closer_known = {r[0].strip() for r in rows}
     standard_names = {c.cliente.strip() for c in clients_standard}
     conn.close()
 
-    # Solo procesar los que NO están ya cubiertos en fase 1
-    extra_clients = pending_clients - standard_names
+    # Procesar TODOS los clientes que el sistema conoce (de cualquier forma) y NO están en fase 1
+    extra_clients = (pending_clients | closer_known) - standard_names
     if extra_clients:
         print(f"   {len(extra_clients)} clientes a chequear con scan generalizado.")
         all_root = _list_root_items_with_shortcuts()
+
+        # Threshold: archivos creados hace MENOS de 24hs son "nuevos" en primera corrida
+        from datetime import datetime, timezone, timedelta
+        recent_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
+
+        def _parse_created(s):
+            if not s:
+                return None
+            try:
+                return datetime.fromisoformat(s.replace("Z", "+00:00").split(".")[0] + "+00:00")
+            except Exception:
+                return None
 
         for cliente_name in extra_clients:
             folder = find_folder_by_name(cliente_name, all_root)
@@ -88,27 +103,30 @@ def run(notify: bool = False):
             if not crudos:
                 continue
 
-            # Si NO hay baseline previa para este cliente: marcar todo como conocido sin tareas
             first_time = cliente_name not in baselined
             for f in crudos:
                 if is_file_known(f["id"]):
                     continue
                 size = int(f["size"]) if f.get("size") else None
+                created = _parse_created(f.get("createdTime"))
+
+                # En primera corrida, archivos viejos (>24hs) van a baseline,
+                # archivos recientes se tratan como nuevos (probablemente recién subidos)
+                is_baseline_file = first_time and (not created or created < recent_threshold)
+
                 add_known_file(
                     file_id=f["id"], cliente=cliente_name, folder_id=folder["id"],
                     name=f["name"], size=size, created_time=f.get("createdTime"),
-                    is_baseline=first_time,
+                    is_baseline=is_baseline_file,
                 )
-                if first_time:
-                    continue  # baseline: no crear tarea
-                # Archivo realmente nuevo en cliente con baseline previo → crear tarea
+                if is_baseline_file:
+                    continue  # archivo viejo en primera corrida → baseline silencioso
+                # Archivo nuevo (reciente o cliente con baseline previo) → crear tarea
                 editor = get_editor_for_client(cliente_name, packs)
                 if not editor:
                     sin_editor.append((cliente_name, f["name"]))
-                task_id = create_task(cliente_name, editor, f["id"], f["name"])
+                create_task(cliente_name, editor, f["id"], f["name"])
                 new_tasks.append({"cliente": cliente_name, "editor": editor, "file": f["name"]})
-            if first_time:
-                print(f"   📸 [baseline crudos] {cliente_name}: {len(crudos)} archivos marcados como conocidos")
     else:
         print("   (ninguno)")
 
