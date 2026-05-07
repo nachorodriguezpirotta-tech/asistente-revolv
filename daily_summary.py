@@ -88,7 +88,7 @@ def build_mail(grouped: dict):
         "Resumen de clientes con pendientes:",
         "",
     ]
-    for editor in sorted(grouped.keys()):
+    for editor in sorted(grouped.keys(), key=lambda e: -len(grouped[e])):
         clientes = grouped[editor]
         lines_text.append(f"👤 {editor}")
         for c in clientes:
@@ -99,7 +99,7 @@ def build_mail(grouped: dict):
 
     # HTML
     editor_blocks_html = []
-    for editor in sorted(grouped.keys()):
+    for editor in sorted(grouped.keys(), key=lambda e: -len(grouped[e])):
         clientes = grouped[editor]
         items = "".join(f'<li>{c["cliente"]}</li>' for c in clientes)
         editor_blocks_html.append(
