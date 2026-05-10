@@ -265,8 +265,56 @@ def discover_client_folders() -> list[ClientFolder]:
 
 
 def list_material_files(raw_folder_id: str) -> list[dict]:
-    """Lista archivos (videos) dentro de la carpeta /Material/ de un cliente."""
-    return _list_files(raw_folder_id, only_videos=True)
+    """
+    Lista videos dentro de /Material/ de un cliente.
+
+    Incluye:
+      - Videos directos en /Material/
+      - Videos dentro de subcarpetas de /Material/
+      - Videos dentro de SHORTCUTS a carpetas que estén en /Material/
+        (el cliente puede agregar acceso directo a una carpeta con crudos)
+    """
+    service = get_service()
+    files = []
+
+    # 1. Videos directos
+    files.extend(_list_files(raw_folder_id, only_videos=True))
+
+    # 2. Subcarpetas (recursivo)
+    for sub in _list_subfolders(raw_folder_id):
+        files.extend(_list_recursive_videos_all(sub["id"]))
+
+    # 3. Shortcuts a carpetas → seguir al target
+    res = service.files().list(
+        q=f"'{raw_folder_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.shortcut'",
+        fields="files(id, name, shortcutDetails)",
+        pageSize=100,
+    ).execute()
+    for sc in res.get("files", []):
+        details = sc.get("shortcutDetails", {})
+        target_id = details.get("targetId")
+        target_mime = details.get("targetMimeType")
+        if target_id and target_mime == "application/vnd.google-apps.folder":
+            files.extend(_list_recursive_videos_all(target_id))
+        elif target_id and (target_mime or "").startswith("video/"):
+            # shortcut directo a un video (poco común pero posible)
+            try:
+                f = service.files().get(fileId=target_id,
+                                        fields="id, name, mimeType, size, createdTime, modifiedTime").execute()
+                files.append(f)
+            except Exception:
+                pass
+
+    return files
+
+
+def _list_recursive_videos_all(folder_id: str) -> list[dict]:
+    """Lista TODOS los videos recursivamente (sin filtrar por crudo/editado)."""
+    out = []
+    out.extend(_list_files(folder_id, only_videos=True))
+    for sub in _list_subfolders(folder_id):
+        out.extend(_list_recursive_videos_all(sub["id"]))
+    return out
 
 
 def estimate_pending_videos(raw_folder_id: Optional[str], client_folder_id: Optional[str] = None) -> int:
@@ -297,9 +345,20 @@ def estimate_pending_videos(raw_folder_id: Optional[str], client_folder_id: Opti
             return 1 if recent else 0
         return 0
 
-    # 1. Subcarpetas dentro de /Material/ = 1 video cada una
+    # 1. Subcarpetas dentro de /Material/ = 1 video cada una (incluye shortcuts a carpetas)
     subfolders = _list_subfolders(raw_folder_id)
-    sub_count = len(subfolders)
+    # Shortcuts a carpetas: cada uno cuenta como 1 video lógico también
+    service = get_service()
+    sc_res = service.files().list(
+        q=f"'{raw_folder_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.shortcut'",
+        fields="files(id, name, shortcutDetails)",
+        pageSize=100,
+    ).execute()
+    shortcuts_to_folders = [
+        sc for sc in sc_res.get("files", [])
+        if sc.get("shortcutDetails", {}).get("targetMimeType") == "application/vnd.google-apps.folder"
+    ]
+    sub_count = len(subfolders) + len(shortcuts_to_folders)
 
     # 2. Archivos sueltos en raíz de /Material/ → agrupar por sesión temporal
     files = _list_files(raw_folder_id, only_videos=True)

@@ -84,6 +84,9 @@ def init_db():
         conn.execute("ALTER TABLE tasks ADD COLUMN completed_by_file_id TEXT")
     if "pending_count" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN pending_count INTEGER NOT NULL DEFAULT 1")
+    if "count_locked" not in cols:
+        # Si el usuario editó el count desde el dashboard, no sobrescribir con estimaciones del scan
+        conn.execute("ALTER TABLE tasks ADD COLUMN count_locked INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -231,19 +234,38 @@ def increment_pending_count(cliente: str, editor: Optional[str]) -> bool:
     return n > 0
 
 
-def set_pending_count(cliente: str, editor: Optional[str], count: int) -> int:
-    """Setea pending_count manualmente. Retorna cuántas filas afectó."""
+def set_pending_count(cliente: str, editor: Optional[str], count: int, lock: bool = False) -> int:
+    """
+    Setea pending_count. Si lock=True, marca count_locked=1 (no será sobrescrito por scan).
+    Retorna cuántas filas afectó.
+    """
     conn = get_conn()
+    locked_val = 1 if lock else None
     if editor:
-        n = conn.execute("""
-            UPDATE tasks SET pending_count = ?
-            WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'
-        """, (count, cliente, editor)).rowcount
+        if lock:
+            n = conn.execute("""
+                UPDATE tasks SET pending_count=?, count_locked=1
+                WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'
+            """, (count, cliente, editor)).rowcount
+        else:
+            # Solo actualizar si NO está locked
+            n = conn.execute("""
+                UPDATE tasks SET pending_count=?
+                WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'
+                AND COALESCE(count_locked, 0) = 0
+            """, (count, cliente, editor)).rowcount
     else:
-        n = conn.execute("""
-            UPDATE tasks SET pending_count = ?
-            WHERE TRIM(cliente)=TRIM(?) AND status='pending'
-        """, (count, cliente)).rowcount
+        if lock:
+            n = conn.execute("""
+                UPDATE tasks SET pending_count=?, count_locked=1
+                WHERE TRIM(cliente)=TRIM(?) AND status='pending'
+            """, (count, cliente)).rowcount
+        else:
+            n = conn.execute("""
+                UPDATE tasks SET pending_count=?
+                WHERE TRIM(cliente)=TRIM(?) AND status='pending'
+                AND COALESCE(count_locked, 0) = 0
+            """, (count, cliente)).rowcount
     conn.commit()
     conn.close()
     return n

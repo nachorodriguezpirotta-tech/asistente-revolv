@@ -87,15 +87,16 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
 
 
 def _set_pending_count_op(conn, cliente, editor, count):
-    """Setea pending_count para una task pending de cliente+editor."""
+    """Setea pending_count para una task pending de cliente+editor Y MARCA count_locked=1
+    para que el scan automático no lo sobrescriba."""
     if editor:
         rows = conn.execute(
-            "UPDATE tasks SET pending_count=? WHERE TRIM(cliente)=? AND editor=? AND status='pending'",
+            "UPDATE tasks SET pending_count=?, count_locked=1 WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
             (count, cliente, editor),
         )
     else:
         rows = conn.execute(
-            "UPDATE tasks SET pending_count=? WHERE TRIM(cliente)=? AND status='pending'",
+            "UPDATE tasks SET pending_count=?, count_locked=1 WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
             (count, cliente),
         )
     return rows.rowcount
