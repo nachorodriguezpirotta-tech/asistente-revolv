@@ -40,6 +40,24 @@ CLIENT_NICKNAMES_BY_EDITOR = {
 }
 
 
+# Emails de editores: cuando se setea, el editor también recibe sus mails
+# (los mails siguen yendo a Ignacio adicionalmente).
+EDITOR_EMAILS = {
+    "Benja": "Guillermobenjaminrojas@gmail.com",
+    # Sumar más cuando Ignacio pase otros mails
+}
+
+
+def get_editor_email(editor: str):
+    """Devuelve el mail del editor si está configurado, None si no."""
+    if not editor:
+        return None
+    for k, v in EDITOR_EMAILS.items():
+        if _normalize(k) == _normalize(editor):
+            return v
+    return None
+
+
 def resolve_nickname_static(text: str, editor: str = None) -> str:
     """
     Resuelve un apodo conocido al nombre real del cliente.

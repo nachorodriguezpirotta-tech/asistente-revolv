@@ -134,20 +134,30 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
 
     print(f"📧 {len(grouped)} mails a mandar (1 por cliente):\n")
 
+    from aliases import get_editor_email
+
     for (cliente, editor, folder_id), items in grouped.items():
         subject, body_text, body_html = _build_mail(cliente, editor, items, folder_id)
         task_ids = [it["task_id"] for it in items]
+        editor_email = get_editor_email(editor)
+        destinatarios = [to]
+        if editor_email and editor_email.lower() != to.lower():
+            destinatarios.append(editor_email)
 
-        print(f"   → [{cliente}] {len(items)} archivos · editor: {editor or '—'} · destinatario: {to}")
+        print(f"   → [{cliente}] {len(items)} archivos · editor: {editor or '—'} · destinatarios: {destinatarios}")
         if dry_run:
             print(f"     (dry-run, no se envía)")
             continue
-        try:
-            msg_id = send_mail(to=to, subject=subject, body_text=body_text, body_html=body_html)
+        any_sent = False
+        for dest in destinatarios:
+            try:
+                msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html)
+                print(f"     ✅ enviado a {dest} · msg_id={msg_id}")
+                any_sent = True
+            except Exception as e:
+                print(f"     ❌ falló a {dest}: {e}")
+        if any_sent:
             mark_mail_sent(task_ids)
-            print(f"     ✅ enviado · msg_id={msg_id}")
-        except Exception as e:
-            print(f"     ❌ error: {e}")
 
     if dry_run:
         print("\n(dry-run, ningún mail se envió, ningún task se marcó)")

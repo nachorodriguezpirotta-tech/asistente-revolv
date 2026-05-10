@@ -123,21 +123,79 @@ def build_mail(grouped: dict):
     return subject, text, html
 
 
+def build_mail_para_editor(editor: str, clientes: list):
+    """Mail con SOLO los pendientes de UN editor. Para mandarle al editor."""
+    fecha = _fecha_humana()
+    if not clientes:
+        subject = f"📋 Sin pendientes hoy — {fecha}"
+        text = f"Hola {editor},\n\nNo tenés pendientes hoy. ✅\n\n— Asistente Revolv"
+        html = f"<html><body style='font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;'><h2>📋 Sin pendientes hoy — {fecha}</h2><p>Hola {editor},</p><p>No tenés pendientes. ✅</p><hr><p style='color:#888;font-size:12px;'>— Asistente Revolv</p></body></html>"
+        return subject, text, html
+
+    subject = f"📋 Tus pendientes del día — {fecha}"
+    lines = [f"Hola {editor},", "", "Estos son tus clientes con pendientes hoy:", ""]
+    for c in clientes:
+        lines.append(f"  • {c['cliente']}")
+    lines.append("")
+    lines.append("— Asistente Revolv")
+    text = "\n".join(lines)
+
+    items = "".join(f"<li>{c['cliente']}</li>" for c in clientes)
+    html = f"""
+    <html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;line-height:1.5;">
+    <h2 style="margin-bottom:4px;">📋 Tus pendientes</h2>
+    <p style="margin-top:0;color:#555;">{fecha}</p>
+    <p>Hola {editor},</p>
+    <p>Estos son tus clientes con pendientes hoy:</p>
+    <ul style="line-height:1.7;">{items}</ul>
+    <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+    <p style="color:#888;font-size:12px;">— Asistente Revolv</p>
+    </body></html>
+    """
+    return subject, text, html
+
+
 def run(dry_run: bool = False):
+    from aliases import EDITOR_EMAILS, get_editor_email
+
     grouped = get_pending_grouped()
     subject, text, html = build_mail(grouped)
 
-    print(f"Asunto: {subject}")
-    print("---")
-    print(text)
+    print(f"=== Mail ADMIN (Ignacio): {subject}")
+    print(text[:200] + "..." if len(text) > 200 else text)
     print("---")
 
     if dry_run:
-        print("(dry-run, no se envía)")
-        return
+        print("(dry-run, no se envía nada)")
+    else:
+        # 1. Mail completo a Ignacio (admin)
+        try:
+            msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html)
+            print(f"✅ Admin: msg_id={msg_id} → {TEST_EMAIL}")
+        except Exception as e:
+            print(f"❌ Admin: {e}")
 
-    msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html)
-    print(f"✅ Mail enviado. msg_id={msg_id}  destinatario={TEST_EMAIL}")
+    # 2. Mail individual a cada editor con su mail configurado
+    print("\n=== Mails individuales a editores ===")
+    for editor, email in EDITOR_EMAILS.items():
+        # Buscar el editor en grouped con normalización flexible
+        from aliases import _normalize as _norm
+        editor_clientes = []
+        for ed_key, clientes in grouped.items():
+            if _norm(ed_key) == _norm(editor):
+                editor_clientes = clientes
+                break
+
+        ed_subject, ed_text, ed_html = build_mail_para_editor(editor, editor_clientes)
+        print(f"   → {editor} ({email}): {len(editor_clientes)} cliente(s)")
+        if dry_run:
+            print("     (dry-run)")
+            continue
+        try:
+            msg_id = send_mail(to=email, subject=ed_subject, body_text=ed_text, body_html=ed_html)
+            print(f"     ✅ msg_id={msg_id}")
+        except Exception as e:
+            print(f"     ❌ {e}")
 
 
 if __name__ == "__main__":
