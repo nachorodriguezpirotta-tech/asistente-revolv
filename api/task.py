@@ -41,10 +41,10 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
     if not cliente_input:
         return cliente_input
 
-    # 1. Diccionario estático
+    # 1. Diccionario estático (con prioridad para apodos editor-específicos)
     try:
         from aliases import resolve_nickname_static
-        nick = resolve_nickname_static(cliente_input)
+        nick = resolve_nickname_static(cliente_input, editor=editor)
         if nick != cliente_input:
             return nick
     except Exception:

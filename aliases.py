@@ -18,20 +18,46 @@ CLIENT_ALIASES = {
 }
 
 
-# Apodos conocidos: cuando Ignacio escribe el apodo en el dashboard, se resuelve al cliente real.
-# Sirve para clientes que NO están en la DB local todavía (ej. cliente nuevo del Sheet).
+# Apodos universales: válidos para cualquier editor.
 CLIENT_NICKNAMES = {
     "delfi": "Delfina Orange Power",
     "pao": "Paola Maqueda",
-    # Agregar más cuando aparezcan
+    "cris": "Cristhian Fonseca",
+    "roger": "Roger Marti",
+    "jorge": "Jorge y Darien",
+    # Agregar más universales acá
 }
 
 
-def resolve_nickname_static(text: str) -> str:
-    """Resuelve un apodo conocido al nombre real. Si no es apodo, devuelve el original."""
+# Apodos que dependen del editor (mismo apodo, distinto cliente según quién edita).
+# Clave: (apodo normalizado, editor normalizado)
+CLIENT_NICKNAMES_BY_EDITOR = {
+    ("rafa", "benja"): "Rafa Rojas",
+    ("rafa", "rami"): "Rafa Elvram",
+    ("rafa", "ramiro"): "Rafa Elvram",
+    # Agregar más casos editor-específicos
+}
+
+
+def resolve_nickname_static(text: str, editor: str = None) -> str:
+    """
+    Resuelve un apodo conocido al nombre real del cliente.
+    Si el editor está dado, primero busca en CLIENT_NICKNAMES_BY_EDITOR.
+    Si no encuentra, busca en CLIENT_NICKNAMES (universal).
+    Si no es apodo conocido, devuelve el original.
+    """
     if not text:
         return text
     norm = _normalize(text)
+
+    # 1. Buscar en dict editor-específico
+    if editor:
+        norm_editor = _normalize(editor)
+        key = (norm, norm_editor)
+        if key in CLIENT_NICKNAMES_BY_EDITOR:
+            return CLIENT_NICKNAMES_BY_EDITOR[key]
+
+    # 2. Buscar en universal
     return CLIENT_NICKNAMES.get(norm, text)
 
 
