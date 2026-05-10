@@ -26,6 +26,7 @@ CLIENT_NICKNAMES = {
     "roger": "Roger Marti",
     "jorge": "Jorge y Darien",
     "angel": "Electro Angel",
+    "dani": "Daniel Ramirez",
     # Agregar más universales acá
 }
 
