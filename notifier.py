@@ -173,8 +173,12 @@ def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int
         cliente = c["cliente"]
         editor = c.get("editor") or "—"
         file_name = c["file_name"]
+        file_id = c.get("file_id")
         new_count = c.get("new_count", 0)
         closed = c.get("closed", False)
+
+        # Link al video editado en Drive
+        video_url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else None
 
         if closed:
             subject = f"✅ {editor} completó {cliente}"
@@ -186,11 +190,14 @@ def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int
             estado_text = f"{editor} entregó 1 video de {cliente}.\nQuedan {new_count} video{plural} pendiente{plural}."
             estado_html = f"<p>{editor} entregó 1 video de <strong>{cliente}</strong>. Quedan <strong>{new_count} video{plural}</strong> pendiente{plural}.</p>"
 
+        link_text = f"\n🎬 Ver video: {video_url}\n" if video_url else ""
+        link_html = f'<p style="margin: 20px 0;"><a href="{video_url}" style="background:#ff4747;color:white;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:600;">🎬 Ver video en Drive</a></p>' if video_url else ""
+
         text = f"""Buenas,
 
 {estado_text}
 
-Archivo detectado: {file_name}
+Archivo: {file_name}{link_text}
 
 — Asistente Revolv
 """
@@ -198,7 +205,8 @@ Archivo detectado: {file_name}
 <html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;line-height:1.5;">
 <h2>{subject}</h2>
 {estado_html}
-<p style="color:#666;font-size:13px;">Archivo detectado: <code>{file_name}</code></p>
+<p style="color:#666;font-size:13px;">Archivo: <code>{file_name}</code></p>
+{link_html}
 <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
 <p style="color:#888;font-size:12px;">— Asistente Revolv</p>
 </body></html>

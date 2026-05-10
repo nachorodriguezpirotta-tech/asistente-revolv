@@ -143,6 +143,7 @@ def run_closer(verbose: bool = True) -> dict:
                         "cliente": cliente,
                         "editor": result["editor"] or client_editor,
                         "file_name": f["name"],
+                        "file_id": f["id"],
                         "new_count": result["new_count"],
                         "closed": result["closed"],
                     })
