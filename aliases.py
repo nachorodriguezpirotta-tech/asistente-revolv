@@ -44,6 +44,9 @@ CLIENT_NICKNAMES_BY_EDITOR = {
 # (los mails siguen yendo a Ignacio adicionalmente).
 EDITOR_EMAILS = {
     "Benja": "Guillermobenjaminrojas@gmail.com",
+    "Fran": "francoelagar@gmail.com",
+    "Rami": "ramirolema00@gmail.com",
+    "Valen": "valencoto12@gmail.com",
     # Sumar más cuando Ignacio pase otros mails
 }
 
