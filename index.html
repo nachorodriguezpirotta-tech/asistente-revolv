@@ -57,6 +57,50 @@
             font-weight: 600;
             font-size: 16px;
         }
+        .progress-widget {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .progress-label { color: var(--text-dim); font-size: 13px; }
+        .progress-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text);
+            cursor: pointer;
+        }
+        .progress-value:hover { color: var(--accent); }
+        .progress-bar {
+            background: var(--bg-card-2);
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            flex: 1;
+            margin: 0 16px;
+            max-width: 200px;
+        }
+        .progress-fill {
+            background: var(--accent);
+            height: 100%;
+            transition: width 0.3s;
+        }
+        .progress-edit-input {
+            background: var(--bg);
+            border: 1px solid var(--accent);
+            color: var(--text);
+            font-size: 18px;
+            font-weight: 700;
+            padding: 4px 8px;
+            border-radius: 4px;
+            width: 60px;
+            text-align: center;
+            font-family: inherit;
+        }
         button {
             font-family: inherit;
             cursor: pointer;
@@ -244,13 +288,31 @@ function render(data) {
     }
 }
 
+function renderProgressWidget(progress, editorName) {
+    if (!progress) return '';
+    const pct = progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
+    return `
+    <div class="progress-widget">
+        <div>
+            <div class="progress-label">Progreso del pack</div>
+            <div>
+                <span class="progress-value" onclick="editProgress('${editorName}', ${progress.current}, ${progress.total}, this, 'current')" title="Click para editar">${progress.current}</span>
+                <span style="color: var(--text-dim); font-size: 20px;">/</span>
+                <span class="progress-value" onclick="editProgress('${editorName}', ${progress.current}, ${progress.total}, this, 'total')" title="Click para editar el total">${progress.total}</span>
+            </div>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" style="width: ${pct}%"></div></div>
+    </div>`;
+}
+
 function renderEditor(data) {
     const items = data.pendientes || [];
+    let html = renderProgressWidget(data.progress, EDITOR);
     if (items.length === 0) {
-        content.innerHTML = '<div class="empty">✅ No tenés pendientes.</div>';
+        content.innerHTML = html + '<div class="empty">✅ No tenés pendientes.</div>';
         return;
     }
-    let html = `<section class="editor-block"><h2>${escapeHtml(EDITOR)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length} ${items.length === 1 ? 'cliente' : 'clientes'}</span></h2>`;
+    html += `<section class="editor-block"><h2>${escapeHtml(EDITOR)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length} ${items.length === 1 ? 'cliente' : 'clientes'}</span></h2>`;
     for (const it of items) {
         const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
         const videos = it.videos || 1;
@@ -309,6 +371,58 @@ function renderAdmin(data) {
         html += '</section>';
     }
     content.innerHTML = html;
+}
+
+function editProgress(editorName, currentCurrent, currentTotal, spanEl, field) {
+    if (spanEl.classList.contains('editing')) return;
+    const initial = field === 'current' ? currentCurrent : currentTotal;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.value = initial;
+    input.className = 'progress-edit-input';
+    spanEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let saved = false;
+    const save = async () => {
+        if (saved) return;
+        saved = true;
+        const newVal = parseInt(input.value, 10);
+        if (isNaN(newVal) || newVal < 0) {
+            input.replaceWith(spanEl);
+            return;
+        }
+        const newCurrent = field === 'current' ? newVal : currentCurrent;
+        const newTotal = field === 'total' ? newVal : currentTotal;
+        const body = {
+            progress: 1,
+            editor: editorName,
+            current: newCurrent,
+            total: newTotal,
+            t: TOKEN,
+        };
+        if (IS_ADMIN) body.admin = 1;
+        try {
+            const res = await fetch('/api/task', {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+            loadData();
+        } catch (e) {
+            alert('No se pudo actualizar:\n' + e.message);
+            input.replaceWith(spanEl);
+        }
+    };
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') input.blur();
+        if (ev.key === 'Escape') { saved = true; input.replaceWith(spanEl); }
+    });
 }
 
 function editCount(cliente, editor, currentValue, spanEl) {

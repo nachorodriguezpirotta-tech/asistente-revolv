@@ -230,8 +230,10 @@ class handler(BaseHTTPRequestHandler):
             return json_response(self, {"error": str(e)[:200]}, status=500)
 
     def do_PATCH(self):
-        """PATCH /api/task → body: {cliente, editor, count, t, [admin]}
-        Setea el pending_count de una task pendiente."""
+        """PATCH /api/task → 2 modos:
+           - Modo "task": body {cliente, editor, count, t, [admin]} → setea pending_count
+           - Modo "progress": body {progress: 1, editor, current, total, t, [admin]} → setea editor_progress
+        """
         try:
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
@@ -241,8 +243,44 @@ class handler(BaseHTTPRequestHandler):
 
         token = (body.get("t") or "").strip()
         editor = (body.get("editor") or "").strip()
-        cliente = (body.get("cliente") or "").strip()
         is_admin = body.get("admin") == 1
+
+        # MODO PROGRESS: editar editor_progress (current/total del pack)
+        if body.get("progress") == 1:
+            if is_admin:
+                if not check_token("ADMIN", token):
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+            else:
+                if not editor or not check_token(editor, token):
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+            if not editor:
+                return json_response(self, {"error": "falta editor"}, status=400)
+            try:
+                current = int(body.get("current", 0))
+                total = int(body.get("total", 0))
+            except (TypeError, ValueError):
+                return json_response(self, {"error": "current/total deben ser números"}, status=400)
+            if current < 0 or total < 0:
+                return json_response(self, {"error": "valores >= 0"}, status=400)
+
+            def op_prog(conn):
+                conn.execute("""
+                    INSERT INTO editor_progress (editor, current, total, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(editor) DO UPDATE SET
+                        current=excluded.current,
+                        total=excluded.total,
+                        updated_at=excluded.updated_at
+                """, (editor, current, total, now_iso()))
+
+            try:
+                with_db(op_prog, message=f"manual: progress {editor} = {current}/{total}")
+                return json_response(self, {"ok": True, "editor": editor, "current": current, "total": total})
+            except Exception as e:
+                return json_response(self, {"error": str(e)[:200]}, status=500)
+
+        # MODO TASK: editar pending_count
+        cliente = (body.get("cliente") or "").strip()
         try:
             count = int(body.get("count", 1))
         except (TypeError, ValueError):

@@ -38,6 +38,16 @@ def get_editor_data(conn, editor: str) -> dict:
            ORDER BY TRIM(cliente)""",
         (editor,),
     ).fetchall()
+
+    # Progreso del pack (X/N) si está configurado para este editor
+    prog_row = conn.execute(
+        "SELECT current, total FROM editor_progress WHERE editor = ?",
+        (editor,),
+    ).fetchone()
+    progress = None
+    if prog_row:
+        progress = {"current": prog_row["current"], "total": prog_row["total"]}
+
     return {
         "editor": editor,
         "pendientes": [
@@ -49,6 +59,7 @@ def get_editor_data(conn, editor: str) -> dict:
             }
             for r in rows
         ],
+        "progress": progress,
     }
 
 
@@ -78,11 +89,16 @@ def get_all_data(conn) -> dict:
             continue
         editor_links[ed] = f"?editor={ed}&t={make_token(ed)}"
 
+    # Progress de cada editor que lo tenga configurado
+    prog_rows = conn.execute("SELECT editor, current, total FROM editor_progress").fetchall()
+    editor_progress = {r["editor"]: {"current": r["current"], "total": r["total"]} for r in prog_rows}
+
     # Stats
     closed_total = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='done'").fetchone()[0]
     return {
         "by_editor": by_editor,
         "editor_links": editor_links,
+        "editor_progress": editor_progress,
         "stats": {
             "pendientes": sum(len(v) for v in by_editor.values()),
             "editores": len(by_editor),

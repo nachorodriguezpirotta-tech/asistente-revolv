@@ -87,6 +87,21 @@ def init_db():
     if "count_locked" not in cols:
         # Si el usuario editó el count desde el dashboard, no sobrescribir con estimaciones del scan
         conn.execute("ALTER TABLE tasks ADD COLUMN count_locked INTEGER NOT NULL DEFAULT 0")
+
+    # Tabla de progreso por editor (contador de packs grandes tipo X/60)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS editor_progress (
+            editor TEXT PRIMARY KEY,
+            current INTEGER NOT NULL DEFAULT 0,
+            total INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT
+        )
+    """)
+    # Seed inicial: Benja con 0/60
+    conn.execute("""
+        INSERT OR IGNORE INTO editor_progress (editor, current, total, updated_at)
+        VALUES ('Benja', 0, 60, ?)
+    """, (datetime.now().isoformat(timespec='seconds'),))
     conn.commit()
     conn.close()
 
