@@ -23,6 +23,69 @@ except Exception as _e:
     _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
 
 
+def _normalize(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return " ".join(s.lower().split())
+
+
+def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
+    """
+    Resuelve un apodo al nombre real del cliente. Estrategia:
+      1. Diccionario estático de apodos (delfi → Delfina Orange Power)
+      2. Match exacto en tasks del editor
+      3. Match parcial (contains/startswith) en clientes conocidos del editor
+      4. Match por prefijo común (≥3 chars) en tokens
+    """
+    if not cliente_input:
+        return cliente_input
+
+    # 1. Diccionario estático
+    try:
+        from aliases import resolve_nickname_static
+        nick = resolve_nickname_static(cliente_input)
+        if nick != cliente_input:
+            return nick
+    except Exception:
+        pass
+
+    norm = _normalize(cliente_input)
+
+    # Buscar entre clientes conocidos del editor (en tasks)
+    rows = conn.execute(
+        "SELECT DISTINCT TRIM(cliente) as cliente FROM tasks WHERE editor = ?",
+        (editor,),
+    ).fetchall()
+    known = {r["cliente"] for r in rows if r["cliente"]}
+
+    # 2. Match exacto
+    for k in known:
+        if _normalize(k) == norm:
+            return k
+
+    # 3. Match parcial: cliente conocido contiene el apodo
+    contains = [k for k in known if norm in _normalize(k)]
+    if len(contains) == 1:
+        return contains[0]
+
+    starts = [k for k in known if _normalize(k).startswith(norm)]
+    if len(starts) == 1:
+        return starts[0]
+
+    # 4. Prefijo común con algún token
+    fuzzy = []
+    for k in known:
+        for token in _normalize(k).split():
+            if len(token) >= 3 and (token.startswith(norm) or norm.startswith(token)) and min(len(token), len(norm)) >= 3:
+                fuzzy.append(k)
+                break
+    if len(set(fuzzy)) == 1:
+        return fuzzy[0]
+
+    return cliente_input
+
+
 def _set_pending_count_op(conn, cliente, editor, count):
     """Setea pending_count para una task pending de cliente+editor."""
     if editor:
@@ -67,19 +130,20 @@ class handler(BaseHTTPRequestHandler):
             if not check_token(editor, token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
-        pseudo_id = f"manual:{editor.lower()}:{cliente.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
-
         def op(conn):
+            # Resolver apodo: si el usuario escribió 'delfi', buscar el cliente real
+            cliente_resuelto = resolve_nickname(conn, cliente, editor)
             existing = conn.execute(
-                "SELECT id FROM tasks WHERE cliente = ? AND editor = ? AND status = 'pending'",
-                (cliente, editor),
+                "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                (cliente_resuelto, editor),
             ).fetchone()
             if existing:
                 raise ValueError("duplicado")
+            pseudo_id = f"manual:{editor.lower()}:{cliente_resuelto.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
             conn.execute(
-                """INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
-                (cliente, editor, pseudo_id, "(pendiente cargado manualmente)", now_iso(), now_iso()),
+                """INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, 1)""",
+                (cliente_resuelto, editor, pseudo_id, "(pendiente cargado manualmente)", now_iso(), now_iso()),
             )
 
         try:
@@ -113,15 +177,17 @@ class handler(BaseHTTPRequestHandler):
             deleted = {"count": 0, "cliente": cliente, "editor": target_editor}
 
             def op_cliente(conn):
+                cli = resolve_nickname(conn, cliente, target_editor) if target_editor else cliente
+                deleted["cliente"] = cli
                 if target_editor:
                     rows = conn.execute(
-                        "DELETE FROM tasks WHERE TRIM(cliente)=? AND editor=? AND status='pending'",
-                        (cliente, target_editor),
+                        "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                        (cli, target_editor),
                     )
                 else:
                     rows = conn.execute(
-                        "DELETE FROM tasks WHERE TRIM(cliente)=? AND status='pending'",
-                        (cliente,),
+                        "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+                        (cli,),
                     )
                 deleted["count"] = rows.rowcount
 
@@ -196,7 +262,8 @@ class handler(BaseHTTPRequestHandler):
         updated = {"count": 0}
 
         def op(conn):
-            updated["count"] = _set_pending_count_op(conn, cliente, target_editor, count)
+            cliente_resuelto = resolve_nickname(conn, cliente, target_editor) if target_editor else cliente
+            updated["count"] = _set_pending_count_op(conn, cliente_resuelto, target_editor, count)
 
         try:
             with_db(op, message=f"manual: count={count} para {cliente}" + (f" / {target_editor}" if target_editor else ""))

@@ -18,6 +18,23 @@ CLIENT_ALIASES = {
 }
 
 
+# Apodos conocidos: cuando Ignacio escribe el apodo en el dashboard, se resuelve al cliente real.
+# Sirve para clientes que NO están en la DB local todavía (ej. cliente nuevo del Sheet).
+CLIENT_NICKNAMES = {
+    "delfi": "Delfina Orange Power",
+    "pao": "Paola Maqueda",
+    # Agregar más cuando aparezcan
+}
+
+
+def resolve_nickname_static(text: str) -> str:
+    """Resuelve un apodo conocido al nombre real. Si no es apodo, devuelve el original."""
+    if not text:
+        return text
+    norm = _normalize(text)
+    return CLIENT_NICKNAMES.get(norm, text)
+
+
 def _normalize(s: str) -> str:
     s = unicodedata.normalize("NFD", s)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
