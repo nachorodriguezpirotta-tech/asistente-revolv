@@ -22,6 +22,7 @@ from tracker import (
     set_pending_count,
 )
 from sheets_client import read_packs, get_editor_for_client
+from aliases import resolve_alias
 
 
 def _clients_with_pending(conn):
@@ -51,7 +52,9 @@ def run(notify: bool = False):
     sin_editor = []
 
     for c in clients_standard:
-        upsert_client(c.folder_id, c.cliente, c.raw_folder_id)
+        # Resolver alias: si la carpeta de Drive tiene nombre distinto al cliente real
+        cliente_real = resolve_alias(c.cliente)
+        upsert_client(c.folder_id, cliente_real, c.raw_folder_id)
         files = list_material_files(c.raw_folder_id)
         had_new_file = False
         for f in files:
@@ -60,26 +63,25 @@ def run(notify: bool = False):
             had_new_file = True
             size = int(f["size"]) if f.get("size") else None
             add_known_file(
-                file_id=f["id"], cliente=c.cliente, folder_id=c.raw_folder_id,
+                file_id=f["id"], cliente=cliente_real, folder_id=c.raw_folder_id,
                 name=f["name"], size=size, created_time=f.get("createdTime"),
                 is_baseline=False,
             )
-            editor = get_editor_for_client(c.cliente, packs)
-            # Si ya hay pending del mismo cliente+editor: no crear task nueva
-            if has_pending_for_client_editor(c.cliente, editor):
+            editor = get_editor_for_client(cliente_real, packs)
+            if has_pending_for_client_editor(cliente_real, editor):
                 continue
             if not editor:
-                sin_editor.append((c.cliente, f["name"]))
-            create_task(c.cliente, editor, f["id"], f["name"])
-            new_tasks.append({"cliente": c.cliente, "editor": editor, "file": f["name"]})
+                sin_editor.append((cliente_real, f["name"]))
+            create_task(cliente_real, editor, f["id"], f["name"])
+            new_tasks.append({"cliente": cliente_real, "editor": editor, "file": f["name"]})
 
-        # Re-estimar pending_count con heurística (subcarpetas + sesiones temporales)
-        if had_new_file or has_pending_for_client_editor(c.cliente, None):
-            editor_for_client = get_editor_for_client(c.cliente, packs)
-            if has_pending_for_client_editor(c.cliente, editor_for_client):
+        # Re-estimar pending_count
+        if had_new_file or has_pending_for_client_editor(cliente_real, None):
+            editor_for_client = get_editor_for_client(cliente_real, packs)
+            if has_pending_for_client_editor(cliente_real, editor_for_client):
                 estimated = estimate_pending_videos(c.raw_folder_id, c.folder_id)
                 if estimated > 0:
-                    set_pending_count(c.cliente, editor_for_client, estimated)
+                    set_pending_count(cliente_real, editor_for_client, estimated)
 
     # === FASE 2: clientes sin /Material/ — incluye conocidos del sistema + del Sheet ===
     print("🔎 Escaneo generalizado — clientes sin /Material/...")
@@ -167,16 +169,16 @@ def run(notify: bool = False):
             print(f"   - {c}: {fn}")
 
     # === RE-ESTIMAR pending_count para clientes con /Material/ ===
-    # Asegura que el conteo sea coherente aunque los archivos cambien entre corridas
     print("\n📊 Re-estimando contadores de videos pendientes...")
     refreshed = 0
     for c in clients_standard:
-        editor_for_client = get_editor_for_client(c.cliente, packs)
-        if not has_pending_for_client_editor(c.cliente, editor_for_client):
+        cliente_real = resolve_alias(c.cliente)
+        editor_for_client = get_editor_for_client(cliente_real, packs)
+        if not has_pending_for_client_editor(cliente_real, editor_for_client):
             continue
         estimated = estimate_pending_videos(c.raw_folder_id, c.folder_id)
         if estimated > 0:
-            set_pending_count(c.cliente, editor_for_client, estimated)
+            set_pending_count(cliente_real, editor_for_client, estimated)
             refreshed += 1
     if refreshed:
         print(f"   {refreshed} contadores actualizados.")

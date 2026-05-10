@@ -26,6 +26,7 @@ from tracker import (
     close_oldest_pending, count_pending_for_client,
     close_all_pending_for_client,
 )
+from aliases import resolve_alias, reverse_alias
 
 
 def _parse_iso(s: Optional[str]) -> Optional[datetime]:
@@ -84,6 +85,12 @@ def run_closer(verbose: bool = True) -> dict:
         summary["clientes_chequeados"] += 1
 
         folder = find_folder_by_name(cliente, all_folders)
+        if not folder:
+            # Probar con aliases inversos: capaz la carpeta de Drive se llama distinto
+            for alias_drive_name in reverse_alias(cliente):
+                folder = find_folder_by_name(alias_drive_name, all_folders)
+                if folder:
+                    break
         if not folder:
             summary["carpetas_no_encontradas"].append(cliente)
             if verbose:
