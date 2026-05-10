@@ -157,10 +157,12 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
 
 def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int:
     """
-    Manda mails de notificación cuando se cierran tareas.
+    Manda mails cuando se entrega un video.
 
-    `cierres` viene del closer = [{"cliente", "editor", "file_name", "count"}, ...]
-    1 mail por cierre. Por ahora todos van a TEST_EMAIL (Ignacio).
+    Cada cierre = un editado entregado. El mail varía si quedan más pendientes
+    o si completó todo (count llegó a 0).
+
+    `cierres` = [{"cliente", "editor", "file_name", "new_count", "closed"}, ...]
     """
     if not cierres:
         return 0
@@ -171,24 +173,32 @@ def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int
         cliente = c["cliente"]
         editor = c.get("editor") or "—"
         file_name = c["file_name"]
-        count = c.get("count", 1)
+        new_count = c.get("new_count", 0)
+        closed = c.get("closed", False)
 
-        subject = f"✅ {editor} entregó {cliente}"
+        if closed:
+            subject = f"✅ {editor} completó {cliente}"
+            estado_text = f"{editor} entregó el último video de {cliente}. Cliente cerrado en el dashboard."
+            estado_html = f"<p>{editor} entregó el <strong>último video</strong> de <strong>{cliente}</strong>. Cliente cerrado en el dashboard.</p>"
+        else:
+            plural = "s" if new_count != 1 else ""
+            subject = f"📹 {editor} entregó 1 video de {cliente} ({new_count} restante{plural})"
+            estado_text = f"{editor} entregó 1 video de {cliente}.\nQuedan {new_count} video{plural} pendiente{plural}."
+            estado_html = f"<p>{editor} entregó 1 video de <strong>{cliente}</strong>. Quedan <strong>{new_count} video{plural}</strong> pendiente{plural}.</p>"
 
         text = f"""Buenas,
 
-{editor} terminó la entrega de {cliente}.
-Archivo detectado: {file_name}
+{estado_text}
 
-Las tareas pendientes de {cliente} se cerraron solas en el dashboard.
+Archivo detectado: {file_name}
 
 — Asistente Revolv
 """
         html = f"""<!DOCTYPE html>
 <html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;line-height:1.5;">
-<h2>✅ {editor} entregó <strong>{cliente}</strong></h2>
-<p>Archivo detectado: <code>{file_name}</code></p>
-<p style="color:#666;font-size:13px;">Las tareas pendientes de <strong>{cliente}</strong> se cerraron automáticamente en el dashboard.</p>
+<h2>{subject}</h2>
+{estado_html}
+<p style="color:#666;font-size:13px;">Archivo detectado: <code>{file_name}</code></p>
 <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
 <p style="color:#888;font-size:12px;">— Asistente Revolv</p>
 </body></html>

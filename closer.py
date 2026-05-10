@@ -24,7 +24,7 @@ from tracker import (
     is_edited_known, add_known_edited_file,
     edited_baseline_done,
     close_oldest_pending, count_pending_for_client,
-    close_all_pending_for_client,
+    close_all_pending_for_client, decrement_pending_count,
 )
 from aliases import resolve_alias, reverse_alias
 
@@ -133,23 +133,21 @@ def run_closer(verbose: bool = True) -> dict:
             if verbose:
                 print(f"  📸 [baseline] {cliente}: {len(baseline_files)} viejos + {len(new_files)} nuevos detectados")
 
-            # Procesar los nuevos (más viejos primero). El PRIMER editado nuevo cierra
-            # TODAS las pending del cliente (porque conceptualmente es 1 entrega).
+            # Procesar los nuevos (más viejos primero). Cada editado nuevo descuenta 1
+            # del contador. Cuando llega a 0, se cierra el cliente.
             new_files.sort(key=lambda f: _parse_iso(f.get("createdTime")) or datetime.min)
-            client_closed_once = False
             for f in new_files:
-                closed_count = 0
-                if not client_closed_once and count_pending_for_client(cliente) > 0:
-                    closed_count = close_all_pending_for_client(cliente, completed_by_file_id=f["id"])
-                    if closed_count:
-                        summary["tareas_cerradas"] += closed_count
-                        summary["cierres"].append({
-                            "cliente": cliente,
-                            "editor": client_editor,
-                            "file_name": f["name"],
-                            "count": closed_count,
-                        })
-                        client_closed_once = True
+                result = decrement_pending_count(cliente, completed_by_file_id=f["id"])
+                if result["task_id"] is not None:
+                    summary["cierres"].append({
+                        "cliente": cliente,
+                        "editor": result["editor"] or client_editor,
+                        "file_name": f["name"],
+                        "new_count": result["new_count"],
+                        "closed": result["closed"],
+                    })
+                    if result["closed"]:
+                        summary["tareas_cerradas"] += 1
                 size = int(f["size"]) if f.get("size") else None
                 add_known_edited_file(
                     file_id=f["id"], cliente=cliente, folder_id="(varias)",
@@ -158,22 +156,30 @@ def run_closer(verbose: bool = True) -> dict:
                 )
                 summary["nuevos_editados"] += 1
                 if verbose:
-                    action = f"cerró {closed_count} pending(s)" if closed_count else "sin pending"
+                    if result["task_id"] is None:
+                        action = "sin pending"
+                    elif result["closed"]:
+                        action = f"cerró cliente (count llegó a 0)"
+                    else:
+                        action = f"descontó 1 → {result['new_count']} restantes"
                     print(f"  ✅ [{cliente}] editado nuevo: {f['name']} → {action}")
             continue
 
-        # Cliente con baseline previo: el primer editado nuevo cierra TODAS las pendings.
-        client_closed_once = False
+        # Cliente con baseline previo: cada editado nuevo descuenta 1 del contador.
         for f in editados:
             if is_edited_known(f["id"]):
                 continue
-            closed_count = 0
-            if not client_closed_once and count_pending_for_client(cliente) > 0:
-                closed_count = close_all_pending_for_client(cliente, completed_by_file_id=f["id"])
-                if closed_count:
-                    summary["tareas_cerradas"] += closed_count
-                    summary["cierres"].append((cliente, f["name"], closed_count))
-                    client_closed_once = True
+            result = decrement_pending_count(cliente, completed_by_file_id=f["id"])
+            if result["task_id"] is not None:
+                summary["cierres"].append({
+                    "cliente": cliente,
+                    "editor": result["editor"] or client_editor,
+                    "file_name": f["name"],
+                    "new_count": result["new_count"],
+                    "closed": result["closed"],
+                })
+                if result["closed"]:
+                    summary["tareas_cerradas"] += 1
             size = int(f["size"]) if f.get("size") else None
             add_known_edited_file(
                 file_id=f["id"], cliente=cliente, folder_id="(varias)",
@@ -182,7 +188,12 @@ def run_closer(verbose: bool = True) -> dict:
             )
             summary["nuevos_editados"] += 1
             if verbose:
-                action = f"cerró {closed_count} pending(s)" if closed_count else "sin pending"
+                if result["task_id"] is None:
+                    action = "sin pending"
+                elif result["closed"]:
+                    action = f"cerró cliente (count llegó a 0)"
+                else:
+                    action = f"descontó 1 → {result['new_count']} restantes"
                 print(f"  ✅ [{cliente}] editado nuevo: {f['name']} → {action}")
 
     return summary

@@ -277,6 +277,44 @@ def close_all_pending_for_client(cliente: str, completed_by_file_id: str) -> int
     return n
 
 
+def decrement_pending_count(cliente: str, completed_by_file_id: str) -> dict:
+    """
+    Decrementa pending_count en 1. Si llega a 0, marca la task como done.
+    Retorna: {'task_id', 'new_count', 'closed': bool}
+    Si NO había task pending, retorna {'task_id': None, ...}
+    """
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT id, COALESCE(pending_count, 1) as cnt, editor FROM tasks
+        WHERE TRIM(cliente)=TRIM(?) AND status='pending'
+        ORDER BY detected_at ASC LIMIT 1
+    """, (cliente,)).fetchone()
+    if not row:
+        conn.close()
+        return {"task_id": None, "new_count": 0, "closed": False, "editor": None}
+
+    task_id = row["id"]
+    editor = row["editor"]
+    new_count = (row["cnt"] or 1) - 1
+
+    if new_count <= 0:
+        conn.execute("""
+            UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?, pending_count=0
+            WHERE id=?
+        """, (now_iso(), completed_by_file_id, task_id))
+        result = {"task_id": task_id, "new_count": 0, "closed": True, "editor": editor}
+    else:
+        conn.execute("""
+            UPDATE tasks SET pending_count=?
+            WHERE id=?
+        """, (new_count, task_id))
+        result = {"task_id": task_id, "new_count": new_count, "closed": False, "editor": editor}
+
+    conn.commit()
+    conn.close()
+    return result
+
+
 # ─── TAREAS ───────────────────────────────────────────────────────────────────
 
 def list_pending_tasks() -> list[sqlite3.Row]:
