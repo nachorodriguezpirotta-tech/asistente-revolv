@@ -288,26 +288,31 @@ function render(data) {
     }
 }
 
-function renderProgressWidget(progress, editorName) {
-    if (!progress) return '';
-    const pct = progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
+function renderProgressWidget(p, editorName) {
+    const pct = p.total > 0 ? Math.min(100, (p.current / p.total) * 100) : 0;
+    const labelEsc = escapeHtml(p.label).replace(/'/g, '&#39;');
     return `
     <div class="progress-widget">
         <div>
-            <div class="progress-label">Progreso del pack</div>
+            <div class="progress-label">${escapeHtml(p.label)}</div>
             <div>
-                <span class="progress-value" onclick="editProgress('${editorName}', ${progress.current}, ${progress.total}, this, 'current')" title="Click para editar">${progress.current}</span>
+                <span class="progress-value" onclick="editProgress('${editorName}', '${labelEsc}', ${p.current}, ${p.total}, this, 'current')" title="Click para editar">${p.current}</span>
                 <span style="color: var(--text-dim); font-size: 20px;">/</span>
-                <span class="progress-value" onclick="editProgress('${editorName}', ${progress.current}, ${progress.total}, this, 'total')" title="Click para editar el total">${progress.total}</span>
+                <span class="progress-value" onclick="editProgress('${editorName}', '${labelEsc}', ${p.current}, ${p.total}, this, 'total')" title="Click para editar el total">${p.total}</span>
             </div>
         </div>
         <div class="progress-bar"><div class="progress-fill" style="width: ${pct}%"></div></div>
     </div>`;
 }
 
+function renderAllProgresses(progresses, editorName) {
+    if (!progresses || progresses.length === 0) return '';
+    return progresses.map(p => renderProgressWidget(p, editorName)).join('');
+}
+
 function renderEditor(data) {
     const items = data.pendientes || [];
-    let html = renderProgressWidget(data.progress, EDITOR);
+    let html = renderAllProgresses(data.progresses, EDITOR);
     if (items.length === 0) {
         content.innerHTML = html + '<div class="empty">✅ No tenés pendientes.</div>';
         return;
@@ -348,15 +353,20 @@ function renderAdmin(data) {
     }
     linksHtml += '</div></details>';
 
+    const editorProgresses = data.editor_progresses || {};
     let html = linksHtml;
     for (const ed of editores) {
         const items = byEditor[ed];
         const edEsc = escapeHtml(ed).replace(/'/g, '&#39;');
+        // Si el editor tiene progresses configurados, mostrarlos
+        const edProgresses = editorProgresses[ed] || [];
+        const progHtml = renderAllProgresses(edProgresses, ed);
         html += `<section class="editor-block">
             <h2>
                 <span>${escapeHtml(ed)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span></span>
                 <button class="add-mini" onclick="addClientToEditor('${edEsc}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
-            </h2>`;
+            </h2>
+            ${progHtml}`;
         for (const it of items) {
             const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
             const videos = it.videos || 1;
@@ -373,7 +383,7 @@ function renderAdmin(data) {
     content.innerHTML = html;
 }
 
-function editProgress(editorName, currentCurrent, currentTotal, spanEl, field) {
+function editProgress(editorName, label, currentCurrent, currentTotal, spanEl, field) {
     if (spanEl.classList.contains('editing')) return;
     const initial = field === 'current' ? currentCurrent : currentTotal;
     const input = document.createElement('input');
@@ -399,6 +409,7 @@ function editProgress(editorName, currentCurrent, currentTotal, spanEl, field) {
         const body = {
             progress: 1,
             editor: editorName,
+            label: label,
             current: newCurrent,
             total: newTotal,
             t: TOKEN,

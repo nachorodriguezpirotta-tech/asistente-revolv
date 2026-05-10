@@ -255,6 +255,7 @@ class handler(BaseHTTPRequestHandler):
                     return json_response(self, {"error": "unauthorized"}, status=401)
             if not editor:
                 return json_response(self, {"error": "falta editor"}, status=400)
+            label = (body.get("label") or "Básicos").strip()
             try:
                 current = int(body.get("current", 0))
                 total = int(body.get("total", 0))
@@ -265,17 +266,17 @@ class handler(BaseHTTPRequestHandler):
 
             def op_prog(conn):
                 conn.execute("""
-                    INSERT INTO editor_progress (editor, current, total, updated_at)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(editor) DO UPDATE SET
+                    INSERT INTO editor_progress (editor, label, current, total, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(editor, label) DO UPDATE SET
                         current=excluded.current,
                         total=excluded.total,
                         updated_at=excluded.updated_at
-                """, (editor, current, total, now_iso()))
+                """, (editor, label, current, total, now_iso()))
 
             try:
-                with_db(op_prog, message=f"manual: progress {editor} = {current}/{total}")
-                return json_response(self, {"ok": True, "editor": editor, "current": current, "total": total})
+                with_db(op_prog, message=f"manual: progress {editor}/{label} = {current}/{total}")
+                return json_response(self, {"ok": True, "editor": editor, "label": label, "current": current, "total": total})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 

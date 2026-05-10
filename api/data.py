@@ -39,14 +39,15 @@ def get_editor_data(conn, editor: str) -> dict:
         (editor,),
     ).fetchall()
 
-    # Progreso del pack (X/N) si está configurado para este editor
-    prog_row = conn.execute(
-        "SELECT current, total FROM editor_progress WHERE editor = ?",
+    # Progresos del editor (múltiples labels, ej. "Básicos" y "Avanzados")
+    prog_rows = conn.execute(
+        "SELECT label, current, total FROM editor_progress WHERE editor = ? ORDER BY label",
         (editor,),
-    ).fetchone()
-    progress = None
-    if prog_row:
-        progress = {"current": prog_row["current"], "total": prog_row["total"]}
+    ).fetchall()
+    progresses = [
+        {"label": r["label"], "current": r["current"], "total": r["total"]}
+        for r in prog_rows
+    ]
 
     return {
         "editor": editor,
@@ -59,7 +60,7 @@ def get_editor_data(conn, editor: str) -> dict:
             }
             for r in rows
         ],
-        "progress": progress,
+        "progresses": progresses,
     }
 
 
@@ -89,16 +90,22 @@ def get_all_data(conn) -> dict:
             continue
         editor_links[ed] = f"?editor={ed}&t={make_token(ed)}"
 
-    # Progress de cada editor que lo tenga configurado
-    prog_rows = conn.execute("SELECT editor, current, total FROM editor_progress").fetchall()
-    editor_progress = {r["editor"]: {"current": r["current"], "total": r["total"]} for r in prog_rows}
+    # Progresses por editor (cada editor puede tener varios labels)
+    prog_rows = conn.execute(
+        "SELECT editor, label, current, total FROM editor_progress ORDER BY editor, label"
+    ).fetchall()
+    editor_progresses = {}
+    for r in prog_rows:
+        editor_progresses.setdefault(r["editor"], []).append({
+            "label": r["label"], "current": r["current"], "total": r["total"]
+        })
 
     # Stats
     closed_total = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='done'").fetchone()[0]
     return {
         "by_editor": by_editor,
         "editor_links": editor_links,
-        "editor_progress": editor_progress,
+        "editor_progresses": editor_progresses,
         "stats": {
             "pendientes": sum(len(v) for v in by_editor.values()),
             "editores": len(by_editor),

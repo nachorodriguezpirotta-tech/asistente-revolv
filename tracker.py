@@ -88,20 +88,55 @@ def init_db():
         # Si el usuario editó el count desde el dashboard, no sobrescribir con estimaciones del scan
         conn.execute("ALTER TABLE tasks ADD COLUMN count_locked INTEGER NOT NULL DEFAULT 0")
 
-    # Tabla de progreso por editor (contador de packs grandes tipo X/60)
+    # Tabla de progreso por editor — soporta MÚLTIPLES contadores por editor.
+    # Migración si existe versión vieja sin columna 'label':
+    has_progress_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='editor_progress'"
+    ).fetchone()
+    if has_progress_table:
+        prog_cols = [r[1] for r in conn.execute("PRAGMA table_info(editor_progress)").fetchall()]
+        if "label" not in prog_cols:
+            # Backup data, recrear tabla con label
+            old_rows = conn.execute("SELECT editor, current, total FROM editor_progress").fetchall()
+            conn.execute("DROP TABLE editor_progress")
+            conn.execute("""
+                CREATE TABLE editor_progress (
+                    editor TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    current INTEGER NOT NULL DEFAULT 0,
+                    total INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT,
+                    PRIMARY KEY (editor, label)
+                )
+            """)
+            now = datetime.now().isoformat(timespec='seconds')
+            for editor, current, total in old_rows:
+                conn.execute(
+                    "INSERT INTO editor_progress (editor, label, current, total, updated_at) VALUES (?, 'Básicos', ?, ?, ?)",
+                    (editor, current, total, now),
+                )
+    else:
+        conn.execute("""
+            CREATE TABLE editor_progress (
+                editor TEXT NOT NULL,
+                label TEXT NOT NULL,
+                current INTEGER NOT NULL DEFAULT 0,
+                total INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT,
+                PRIMARY KEY (editor, label)
+            )
+        """)
+
+    # Seed: Benja con dos contadores
+    now = datetime.now().isoformat(timespec='seconds')
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS editor_progress (
-            editor TEXT PRIMARY KEY,
-            current INTEGER NOT NULL DEFAULT 0,
-            total INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT
-        )
-    """)
-    # Seed inicial: Benja con 0/60
+        INSERT OR IGNORE INTO editor_progress (editor, label, current, total, updated_at)
+        VALUES ('Benja', 'Básicos', 0, 60, ?)
+    """, (now,))
     conn.execute("""
-        INSERT OR IGNORE INTO editor_progress (editor, current, total, updated_at)
-        VALUES ('Benja', 0, 60, ?)
-    """, (datetime.now().isoformat(timespec='seconds'),))
+        INSERT OR IGNORE INTO editor_progress (editor, label, current, total, updated_at)
+        VALUES ('Benja', 'Avanzados', 0, 30, ?)
+    """, (now,))
     conn.commit()
     conn.close()
 
