@@ -18,6 +18,7 @@ from drive_client import (
 from tracker import (
     init_db, upsert_client, add_known_file, is_file_known,
     create_task, list_pending_tasks, stats, get_conn,
+    has_pending_for_client_editor,
 )
 from sheets_client import read_packs, get_editor_for_client
 
@@ -61,9 +62,13 @@ def run(notify: bool = False):
                 is_baseline=False,
             )
             editor = get_editor_for_client(c.cliente, packs)
+            # Deduplicar: si ya hay una task pending del mismo cliente+editor, NO crear otra.
+            # El archivo se registra en known_files pero no genera task nueva.
+            if has_pending_for_client_editor(c.cliente, editor):
+                continue
             if not editor:
                 sin_editor.append((c.cliente, f["name"]))
-            task_id = create_task(c.cliente, editor, f["id"], f["name"])
+            create_task(c.cliente, editor, f["id"], f["name"])
             new_tasks.append({"cliente": c.cliente, "editor": editor, "file": f["name"]})
 
     # === FASE 2: clientes sin /Material/ — incluye conocidos del sistema + del Sheet ===
@@ -125,8 +130,10 @@ def run(notify: bool = False):
                 )
                 if is_baseline_file:
                     continue  # archivo viejo en primera corrida → baseline silencioso
-                # Archivo nuevo (reciente o cliente con baseline previo) → crear tarea
+                # Archivo nuevo → crear tarea (con deduplicación por cliente+editor)
                 editor = get_editor_for_client(cliente_name, packs)
+                if has_pending_for_client_editor(cliente_name, editor):
+                    continue  # ya hay pending del mismo cliente+editor, no duplicar
                 if not editor:
                     sin_editor.append((cliente_name, f["name"]))
                 create_task(cliente_name, editor, f["id"], f["name"])
@@ -153,6 +160,11 @@ def run(notify: bool = False):
     closer_summary = run_closer(verbose=True)
     if closer_summary["tareas_cerradas"] > 0:
         print(f"\n✅ {closer_summary['tareas_cerradas']} tareas cerradas automáticamente.")
+        if notify and closer_summary["cierres"]:
+            print("📧 Mandando mails de cierre...")
+            from notifier import send_completion_mails
+            sent = send_completion_mails(closer_summary["cierres"])
+            print(f"   {sent} mails de cierre enviados.")
 
     pendings = list_pending_tasks()
     print(f"\n📊 Total pendientes en DB: {len(pendings)}")

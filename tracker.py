@@ -205,8 +205,36 @@ def close_oldest_pending(cliente: str, completed_by_file_id: str) -> Optional[in
 
 def count_pending_for_client(cliente: str) -> int:
     conn = get_conn()
-    n = conn.execute("SELECT COUNT(*) FROM tasks WHERE cliente=? AND status='pending'",
+    n = conn.execute("SELECT COUNT(*) FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
                      (cliente,)).fetchone()[0]
+    conn.close()
+    return n
+
+
+def has_pending_for_client_editor(cliente: str, editor: Optional[str]) -> bool:
+    conn = get_conn()
+    if editor:
+        row = conn.execute(
+            "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1",
+            (cliente, editor)
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1",
+            (cliente,)
+        ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def close_all_pending_for_client(cliente: str, completed_by_file_id: str) -> int:
+    """Marca como 'done' TODAS las tareas pendientes de un cliente. Retorna cuántas cerró."""
+    conn = get_conn()
+    n = conn.execute("""
+        UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?
+        WHERE TRIM(cliente)=TRIM(?) AND status='pending'
+    """, (now_iso(), completed_by_file_id, cliente)).rowcount
+    conn.commit()
     conn.close()
     return n
 

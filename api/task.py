@@ -79,13 +79,11 @@ class handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         params = parse_qs(urlparse(self.path).query)
-        try:
-            task_id = int(params.get("id", ["0"])[0])
-        except ValueError:
-            return json_response(self, {"error": "id inválido"}, status=400)
-        editor = (params.get("editor", [""])[0] or "").strip()
         token = (params.get("t", [""])[0] or "").strip()
+        editor = (params.get("editor", [""])[0] or "").strip()
+        cliente = (params.get("cliente", [""])[0] or "").strip()
         is_admin = params.get("admin", [""])[0] == "1"
+        task_id_str = params.get("id", [""])[0]
 
         if is_admin:
             if not check_token("ADMIN", token):
@@ -94,10 +92,39 @@ class handler(BaseHTTPRequestHandler):
             if not editor or not check_token(editor, token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
-        # Verificar que la task pertenece al editor (a menos que sea admin)
+        # MODO CLIENTE: borrar TODAS las tasks pending de un cliente (+ editor opcional)
+        if cliente:
+            target_editor = editor if not is_admin else (editor or None)
+            deleted = {"count": 0, "cliente": cliente, "editor": target_editor}
+
+            def op_cliente(conn):
+                if target_editor:
+                    rows = conn.execute(
+                        "DELETE FROM tasks WHERE TRIM(cliente)=? AND editor=? AND status='pending'",
+                        (cliente, target_editor),
+                    )
+                else:
+                    rows = conn.execute(
+                        "DELETE FROM tasks WHERE TRIM(cliente)=? AND status='pending'",
+                        (cliente,),
+                    )
+                deleted["count"] = rows.rowcount
+
+            try:
+                with_db(op_cliente, message=f"manual: borradas tasks de {cliente}" + (f" / {target_editor}" if target_editor else ""))
+                return json_response(self, {"ok": True, **deleted})
+            except Exception as e:
+                return json_response(self, {"error": str(e)[:200]}, status=500)
+
+        # MODO TASK: borrar una task específica por id (compatibilidad con código viejo)
+        try:
+            task_id = int(task_id_str)
+        except ValueError:
+            return json_response(self, {"error": "falta id o cliente"}, status=400)
+
         captured = {"cliente": None, "editor": None}
 
-        def op(conn):
+        def op_id(conn):
             row = conn.execute("SELECT id, cliente, editor FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if not row:
                 raise ValueError("notfound")
@@ -108,7 +135,7 @@ class handler(BaseHTTPRequestHandler):
             conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
         try:
-            with_db(op, message=f"manual: borrada task #{task_id}")
+            with_db(op_id, message=f"manual: borrada task #{task_id}")
             return json_response(self, {"ok": True, "task_id": task_id, **captured})
         except ValueError as e:
             err = str(e)

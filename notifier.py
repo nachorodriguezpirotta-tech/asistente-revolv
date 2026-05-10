@@ -153,6 +153,56 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
         print("\n(dry-run, ningún mail se envió, ningún task se marcó)")
 
 
+# ─── MAILS DE CIERRE (cuando se entrega un editado) ──────────────────────────
+
+def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int:
+    """
+    Manda mails de notificación cuando se cierran tareas.
+
+    `cierres` viene del closer = [{"cliente", "editor", "file_name", "count"}, ...]
+    1 mail por cierre. Por ahora todos van a TEST_EMAIL (Ignacio).
+    """
+    if not cierres:
+        return 0
+
+    to = recipient or TEST_EMAIL
+    sent = 0
+    for c in cierres:
+        cliente = c["cliente"]
+        editor = c.get("editor") or "—"
+        file_name = c["file_name"]
+        count = c.get("count", 1)
+
+        subject = f"✅ {editor} entregó {cliente}"
+
+        text = f"""Buenas,
+
+{editor} terminó la entrega de {cliente}.
+Archivo detectado: {file_name}
+
+Las tareas pendientes de {cliente} se cerraron solas en el dashboard.
+
+— Asistente Revolv
+"""
+        html = f"""<!DOCTYPE html>
+<html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;line-height:1.5;">
+<h2>✅ {editor} entregó <strong>{cliente}</strong></h2>
+<p>Archivo detectado: <code>{file_name}</code></p>
+<p style="color:#666;font-size:13px;">Las tareas pendientes de <strong>{cliente}</strong> se cerraron automáticamente en el dashboard.</p>
+<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+<p style="color:#888;font-size:12px;">— Asistente Revolv</p>
+</body></html>
+"""
+        try:
+            msg_id = send_mail(to=to, subject=subject, body_text=text, body_html=html)
+            print(f"  ✅ mail cierre enviado: {editor} → {cliente} (msg_id={msg_id})")
+            sent += 1
+        except Exception as e:
+            print(f"  ❌ falló mail cierre [{cliente}]: {e}")
+
+    return sent
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--dry-run", action="store_true", help="muestra qué mandaría sin enviar")

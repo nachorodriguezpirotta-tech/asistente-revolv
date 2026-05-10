@@ -230,11 +230,12 @@ function renderEditor(data) {
         content.innerHTML = '<div class="empty">✅ No tenés pendientes.</div>';
         return;
     }
-    let html = `<section class="editor-block"><h2>${escapeHtml(EDITOR)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length} ${items.length === 1 ? 'pendiente' : 'pendientes'}</span></h2>`;
+    let html = `<section class="editor-block"><h2>${escapeHtml(EDITOR)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length} ${items.length === 1 ? 'cliente' : 'clientes'}</span></h2>`;
     for (const it of items) {
-        html += `<div class="cliente-card" data-task-id="${it.id}">
+        const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
+        html += `<div class="cliente-card">
             <span class="cliente-name">${escapeHtml(it.cliente)}</span>
-            <button class="delete-btn" onclick="deleteTask(${it.id}, this)" title="Marcar como hecho">🗑️</button>
+            <button class="delete-btn" onclick="deleteCliente('${clienteEsc}', null, this)" title="Marcar como hecho">🗑️</button>
         </div>`;
     }
     html += '</section>';
@@ -264,15 +265,17 @@ function renderAdmin(data) {
     let html = linksHtml;
     for (const ed of editores) {
         const items = byEditor[ed];
+        const edEsc = escapeHtml(ed).replace(/'/g, '&#39;');
         html += `<section class="editor-block">
             <h2>
                 <span>${escapeHtml(ed)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span></span>
-                <button class="add-mini" onclick="addClientToEditor('${escapeHtml(ed).replace(/'/g, '&#39;')}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
+                <button class="add-mini" onclick="addClientToEditor('${edEsc}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
             </h2>`;
         for (const it of items) {
-            html += `<div class="cliente-card" data-task-id="${it.id}">
+            const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
+            html += `<div class="cliente-card">
                 <span class="cliente-name">${escapeHtml(it.cliente)}</span>
-                <button class="delete-btn" onclick="deleteTask(${it.id}, this)" title="Marcar como hecho">🗑️</button>
+                <button class="delete-btn" onclick="deleteCliente('${clienteEsc}', '${edEsc}', this)" title="Marcar como hecho">🗑️</button>
             </div>`;
         }
         html += '</section>';
@@ -319,15 +322,22 @@ async function addClientToEditorPrompt() {
     addClientToEditor(editor.trim());
 }
 
-async function deleteTask(taskId, btn) {
-    if (!confirm('¿Marcar este pendiente como hecho?')) return;
+async function deleteCliente(cliente, editor, btn) {
+    if (!confirm(`¿Marcar como hecho TODOS los pendientes de ${cliente}?`)) return;
     btn.disabled = true;
     const card = btn.closest('.cliente-card');
-    const url = IS_ADMIN
-        ? `/api/task?id=${taskId}&admin=1&t=${encodeURIComponent(TOKEN)}`
-        : `/api/task?id=${taskId}&editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`;
+    const params = new URLSearchParams({
+        cliente: cliente,
+        t: TOKEN,
+    });
+    if (IS_ADMIN) {
+        params.set('admin', '1');
+        if (editor) params.set('editor', editor);
+    } else {
+        params.set('editor', EDITOR);
+    }
     try {
-        const res = await fetch(url, { method: 'DELETE' });
+        const res = await fetch('/api/task?' + params.toString(), { method: 'DELETE' });
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
         card.classList.add('removing');

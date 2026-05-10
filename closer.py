@@ -24,6 +24,7 @@ from tracker import (
     is_edited_known, add_known_edited_file,
     edited_baseline_done,
     close_oldest_pending, count_pending_for_client,
+    close_all_pending_for_client,
 )
 
 
@@ -41,16 +42,17 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
 
 
 def _get_clients_with_pending() -> list[dict]:
-    """Devuelve [{cliente, oldest_pending_at}] para todos los clientes con tareas pending."""
+    """Devuelve [{cliente, oldest_pending_at, editor}] para todos los clientes con tareas pending."""
     conn = get_conn()
     rows = conn.execute("""
-        SELECT cliente, MIN(detected_at) as oldest
+        SELECT TRIM(cliente) as cliente, MIN(detected_at) as oldest,
+               (SELECT editor FROM tasks t2 WHERE TRIM(t2.cliente)=TRIM(tasks.cliente) AND t2.status='pending' LIMIT 1) as editor
         FROM tasks
         WHERE status = 'pending'
-        GROUP BY cliente
+        GROUP BY TRIM(cliente)
     """).fetchall()
     conn.close()
-    return [{"cliente": r["cliente"], "oldest_pending_at": r["oldest"]} for r in rows]
+    return [{"cliente": r["cliente"], "oldest_pending_at": r["oldest"], "editor": r["editor"]} for r in rows]
 
 
 def run_closer(verbose: bool = True) -> dict:
@@ -78,6 +80,7 @@ def run_closer(verbose: bool = True) -> dict:
     for p in pendings:
         cliente = p["cliente"]
         oldest_pending = _parse_iso(p["oldest_pending_at"])
+        client_editor = p.get("editor") or "—"
         summary["clientes_chequeados"] += 1
 
         folder = find_folder_by_name(cliente, all_folders)
@@ -123,46 +126,56 @@ def run_closer(verbose: bool = True) -> dict:
             if verbose:
                 print(f"  📸 [baseline] {cliente}: {len(baseline_files)} viejos + {len(new_files)} nuevos detectados")
 
-            # Procesar los nuevos (más viejos primero) y cerrar tareas
+            # Procesar los nuevos (más viejos primero). El PRIMER editado nuevo cierra
+            # TODAS las pending del cliente (porque conceptualmente es 1 entrega).
             new_files.sort(key=lambda f: _parse_iso(f.get("createdTime")) or datetime.min)
+            client_closed_once = False
             for f in new_files:
-                closed_id = None
-                if count_pending_for_client(cliente) > 0:
-                    closed_id = close_oldest_pending(cliente, completed_by_file_id=f["id"])
-                    if closed_id:
-                        summary["tareas_cerradas"] += 1
-                        summary["cierres"].append((cliente, f["name"], closed_id))
+                closed_count = 0
+                if not client_closed_once and count_pending_for_client(cliente) > 0:
+                    closed_count = close_all_pending_for_client(cliente, completed_by_file_id=f["id"])
+                    if closed_count:
+                        summary["tareas_cerradas"] += closed_count
+                        summary["cierres"].append({
+                            "cliente": cliente,
+                            "editor": client_editor,
+                            "file_name": f["name"],
+                            "count": closed_count,
+                        })
+                        client_closed_once = True
                 size = int(f["size"]) if f.get("size") else None
                 add_known_edited_file(
                     file_id=f["id"], cliente=cliente, folder_id="(varias)",
                     name=f["name"], size=size, created_time=f.get("createdTime"),
-                    is_baseline=False, closed_task_id=closed_id,
+                    is_baseline=False, closed_task_id=None,
                 )
                 summary["nuevos_editados"] += 1
                 if verbose:
-                    action = f"cerró task #{closed_id}" if closed_id else "sin pending"
+                    action = f"cerró {closed_count} pending(s)" if closed_count else "sin pending"
                     print(f"  ✅ [{cliente}] editado nuevo: {f['name']} → {action}")
             continue
 
-        # Cliente con baseline previo: lógica normal
+        # Cliente con baseline previo: el primer editado nuevo cierra TODAS las pendings.
+        client_closed_once = False
         for f in editados:
             if is_edited_known(f["id"]):
                 continue
-            closed_id = None
-            if count_pending_for_client(cliente) > 0:
-                closed_id = close_oldest_pending(cliente, completed_by_file_id=f["id"])
-                if closed_id:
-                    summary["tareas_cerradas"] += 1
-                    summary["cierres"].append((cliente, f["name"], closed_id))
+            closed_count = 0
+            if not client_closed_once and count_pending_for_client(cliente) > 0:
+                closed_count = close_all_pending_for_client(cliente, completed_by_file_id=f["id"])
+                if closed_count:
+                    summary["tareas_cerradas"] += closed_count
+                    summary["cierres"].append((cliente, f["name"], closed_count))
+                    client_closed_once = True
             size = int(f["size"]) if f.get("size") else None
             add_known_edited_file(
                 file_id=f["id"], cliente=cliente, folder_id="(varias)",
                 name=f["name"], size=size, created_time=f.get("createdTime"),
-                is_baseline=False, closed_task_id=closed_id,
+                is_baseline=False, closed_task_id=None,
             )
             summary["nuevos_editados"] += 1
             if verbose:
-                action = f"cerró task #{closed_id}" if closed_id else "sin pending"
+                action = f"cerró {closed_count} pending(s)" if closed_count else "sin pending"
                 print(f"  ✅ [{cliente}] editado nuevo: {f['name']} → {action}")
 
     return summary
