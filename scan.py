@@ -18,7 +18,7 @@ from drive_client import (
 from tracker import (
     init_db, upsert_client, add_known_file, is_file_known,
     create_task, list_pending_tasks, stats, get_conn,
-    has_pending_for_client_editor,
+    has_pending_for_client_editor, increment_pending_count,
 )
 from sheets_client import read_packs, get_editor_for_client
 
@@ -62,9 +62,9 @@ def run(notify: bool = False):
                 is_baseline=False,
             )
             editor = get_editor_for_client(c.cliente, packs)
-            # Deduplicar: si ya hay una task pending del mismo cliente+editor, NO crear otra.
-            # El archivo se registra en known_files pero no genera task nueva.
+            # Si ya hay pending del mismo cliente+editor: incrementar el contador, no crear task nueva
             if has_pending_for_client_editor(c.cliente, editor):
+                increment_pending_count(c.cliente, editor)
                 continue
             if not editor:
                 sin_editor.append((c.cliente, f["name"]))
@@ -133,7 +133,8 @@ def run(notify: bool = False):
                 # Archivo nuevo → crear tarea (con deduplicación por cliente+editor)
                 editor = get_editor_for_client(cliente_name, packs)
                 if has_pending_for_client_editor(cliente_name, editor):
-                    continue  # ya hay pending del mismo cliente+editor, no duplicar
+                    increment_pending_count(cliente_name, editor)
+                    continue
                 if not editor:
                     sin_editor.append((cliente_name, f["name"]))
                 create_task(cliente_name, editor, f["id"], f["name"])

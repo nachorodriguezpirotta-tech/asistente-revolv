@@ -23,6 +23,21 @@ except Exception as _e:
     _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
 
 
+def _set_pending_count_op(conn, cliente, editor, count):
+    """Setea pending_count para una task pending de cliente+editor."""
+    if editor:
+        rows = conn.execute(
+            "UPDATE tasks SET pending_count=? WHERE TRIM(cliente)=? AND editor=? AND status='pending'",
+            (count, cliente, editor),
+        )
+    else:
+        rows = conn.execute(
+            "UPDATE tasks SET pending_count=? WHERE TRIM(cliente)=? AND status='pending'",
+            (count, cliente),
+        )
+    return rows.rowcount
+
+
 class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
@@ -147,10 +162,52 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             return json_response(self, {"error": str(e)[:200]}, status=500)
 
+    def do_PATCH(self):
+        """PATCH /api/task → body: {cliente, editor, count, t, [admin]}
+        Setea el pending_count de una task pendiente."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+            body = json.loads(raw)
+        except Exception as e:
+            return json_response(self, {"error": f"body inválido: {e}"}, status=400)
+
+        token = (body.get("t") or "").strip()
+        editor = (body.get("editor") or "").strip()
+        cliente = (body.get("cliente") or "").strip()
+        is_admin = body.get("admin") == 1
+        try:
+            count = int(body.get("count", 1))
+        except (TypeError, ValueError):
+            return json_response(self, {"error": "count debe ser número"}, status=400)
+        if count < 0:
+            return json_response(self, {"error": "count debe ser >= 0"}, status=400)
+
+        if is_admin:
+            if not check_token("ADMIN", token):
+                return json_response(self, {"error": "unauthorized"}, status=401)
+        else:
+            if not editor or not check_token(editor, token):
+                return json_response(self, {"error": "unauthorized"}, status=401)
+        if not cliente:
+            return json_response(self, {"error": "falta cliente"}, status=400)
+
+        target_editor = editor if (not is_admin or editor) else None
+        updated = {"count": 0}
+
+        def op(conn):
+            updated["count"] = _set_pending_count_op(conn, cliente, target_editor, count)
+
+        try:
+            with_db(op, message=f"manual: count={count} para {cliente}" + (f" / {target_editor}" if target_editor else ""))
+            return json_response(self, {"ok": True, "cliente": cliente, "editor": target_editor, "count": count, "affected": updated["count"]})
+        except Exception as e:
+            return json_response(self, {"error": str(e)[:200]}, status=500)
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "POST, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 

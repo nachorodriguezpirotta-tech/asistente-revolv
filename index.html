@@ -127,6 +127,26 @@
             transform: translateX(20px);
         }
         .cliente-name { font-weight: 500; }
+        .cliente-count {
+            color: var(--text-dim);
+            font-size: 13px;
+            margin-left: 10px;
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 6px;
+            transition: background 0.15s;
+        }
+        .cliente-count:hover { background: var(--bg-card); color: var(--text); }
+        .cliente-count.editing {
+            background: var(--bg);
+            border: 1px solid var(--accent);
+            outline: none;
+            color: var(--text);
+            width: 50px;
+            text-align: center;
+            font-family: inherit;
+        }
+        .cliente-meta { display: flex; align-items: center; flex: 1; }
         .delete-btn {
             background: transparent;
             border: none;
@@ -233,8 +253,12 @@ function renderEditor(data) {
     let html = `<section class="editor-block"><h2>${escapeHtml(EDITOR)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length} ${items.length === 1 ? 'cliente' : 'clientes'}</span></h2>`;
     for (const it of items) {
         const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
+        const videos = it.videos || 1;
         html += `<div class="cliente-card">
-            <span class="cliente-name">${escapeHtml(it.cliente)}</span>
+            <span class="cliente-meta">
+                <span class="cliente-name">${escapeHtml(it.cliente)}</span>
+                <span class="cliente-count" onclick="editCount('${clienteEsc}', null, ${videos}, this)" title="Click para editar">${videos} video${videos !== 1 ? 's' : ''}</span>
+            </span>
             <button class="delete-btn" onclick="deleteCliente('${clienteEsc}', null, this)" title="Marcar como hecho">🗑️</button>
         </div>`;
     }
@@ -273,14 +297,83 @@ function renderAdmin(data) {
             </h2>`;
         for (const it of items) {
             const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
+            const videos = it.videos || 1;
             html += `<div class="cliente-card">
-                <span class="cliente-name">${escapeHtml(it.cliente)}</span>
+                <span class="cliente-meta">
+                    <span class="cliente-name">${escapeHtml(it.cliente)}</span>
+                    <span class="cliente-count" onclick="editCount('${clienteEsc}', '${edEsc}', ${videos}, this)" title="Click para editar">${videos} video${videos !== 1 ? 's' : ''}</span>
+                </span>
                 <button class="delete-btn" onclick="deleteCliente('${clienteEsc}', '${edEsc}', this)" title="Marcar como hecho">🗑️</button>
             </div>`;
         }
         html += '</section>';
     }
     content.innerHTML = html;
+}
+
+function editCount(cliente, editor, currentValue, spanEl) {
+    if (spanEl.classList.contains('editing')) return;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.value = currentValue;
+    input.className = 'cliente-count editing';
+    spanEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let saved = false;
+    const save = async () => {
+        if (saved) return;
+        saved = true;
+        const newCount = parseInt(input.value, 10);
+        if (isNaN(newCount) || newCount < 0 || newCount === currentValue) {
+            // Revert
+            input.replaceWith(spanEl);
+            return;
+        }
+        // Si pone 0 → es como borrar
+        if (newCount === 0) {
+            if (!confirm(`¿Marcar todo ${cliente} como hecho?`)) {
+                input.replaceWith(spanEl);
+                return;
+            }
+            const params = new URLSearchParams({ cliente, t: TOKEN });
+            if (IS_ADMIN) { params.set('admin', '1'); if (editor) params.set('editor', editor); }
+            else { params.set('editor', EDITOR); }
+            try {
+                await fetch('/api/task?' + params, { method: 'DELETE' });
+                loadData();
+            } catch (e) { alert(e.message); input.replaceWith(spanEl); }
+            return;
+        }
+        // PATCH
+        const body = {
+            cliente, count: newCount, t: TOKEN,
+        };
+        if (IS_ADMIN) { body.admin = 1; if (editor) body.editor = editor; }
+        else { body.editor = EDITOR; }
+        try {
+            const res = await fetch('/api/task', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+            // Actualizar UI sin recargar
+            spanEl.textContent = newCount + ' video' + (newCount !== 1 ? 's' : '');
+            input.replaceWith(spanEl);
+        } catch (e) {
+            alert('No se pudo actualizar:\n' + e.message);
+            input.replaceWith(spanEl);
+        }
+    };
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') input.blur();
+        if (ev.key === 'Escape') { saved = true; input.replaceWith(spanEl); }
+    });
 }
 
 function copyLink(url, btn) {

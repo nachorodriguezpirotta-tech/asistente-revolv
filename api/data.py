@@ -28,9 +28,10 @@ except Exception as _e:
 
 
 def get_editor_data(conn, editor: str) -> dict:
-    # Agrupar por cliente: 1 entry por cliente, con conteo de tasks asociadas
+    # 1 entry por cliente con la suma de pending_count (videos pendientes)
     rows = conn.execute(
-        """SELECT cliente, MIN(id) as id, COUNT(*) as count, MIN(detected_at) as oldest
+        """SELECT cliente, MIN(id) as id, SUM(COALESCE(pending_count, 1)) as videos,
+                  MIN(detected_at) as oldest
            FROM tasks
            WHERE editor = ? AND status = 'pending'
            GROUP BY TRIM(cliente)
@@ -41,9 +42,9 @@ def get_editor_data(conn, editor: str) -> dict:
         "editor": editor,
         "pendientes": [
             {
-                "id": r["id"],  # id de la task más vieja (para referencia)
+                "id": r["id"],
                 "cliente": r["cliente"].strip(),
-                "count": r["count"],
+                "videos": r["videos"] or 1,
                 "detected_at": r["oldest"],
             }
             for r in rows
@@ -52,10 +53,9 @@ def get_editor_data(conn, editor: str) -> dict:
 
 
 def get_all_data(conn) -> dict:
-    # Agrupar por cliente+editor: 1 entry por combinación
     rows = conn.execute(
         """SELECT editor, TRIM(cliente) as cliente, MIN(id) as id,
-                  COUNT(*) as count, MIN(detected_at) as oldest
+                  SUM(COALESCE(pending_count, 1)) as videos, MIN(detected_at) as oldest
            FROM tasks
            WHERE status = 'pending'
            GROUP BY editor, TRIM(cliente)
@@ -67,7 +67,7 @@ def get_all_data(conn) -> dict:
         by_editor.setdefault(ed, []).append({
             "id": r["id"],
             "cliente": r["cliente"],
-            "count": r["count"],
+            "videos": r["videos"] or 1,
             "detected_at": r["oldest"],
         })
 

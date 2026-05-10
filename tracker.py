@@ -82,6 +82,8 @@ def init_db():
     cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
     if "completed_by_file_id" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN completed_by_file_id TEXT")
+    if "pending_count" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN pending_count INTEGER NOT NULL DEFAULT 1")
     conn.commit()
     conn.close()
 
@@ -207,6 +209,42 @@ def count_pending_for_client(cliente: str) -> int:
     conn = get_conn()
     n = conn.execute("SELECT COUNT(*) FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
                      (cliente,)).fetchone()[0]
+    conn.close()
+    return n
+
+
+def increment_pending_count(cliente: str, editor: Optional[str]) -> bool:
+    """Suma 1 al pending_count de la task pending de cliente+editor. Retorna True si encontró."""
+    conn = get_conn()
+    if editor:
+        n = conn.execute("""
+            UPDATE tasks SET pending_count = COALESCE(pending_count, 1) + 1
+            WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'
+        """, (cliente, editor)).rowcount
+    else:
+        n = conn.execute("""
+            UPDATE tasks SET pending_count = COALESCE(pending_count, 1) + 1
+            WHERE TRIM(cliente)=TRIM(?) AND status='pending'
+        """, (cliente,)).rowcount
+    conn.commit()
+    conn.close()
+    return n > 0
+
+
+def set_pending_count(cliente: str, editor: Optional[str], count: int) -> int:
+    """Setea pending_count manualmente. Retorna cuántas filas afectó."""
+    conn = get_conn()
+    if editor:
+        n = conn.execute("""
+            UPDATE tasks SET pending_count = ?
+            WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'
+        """, (count, cliente, editor)).rowcount
+    else:
+        n = conn.execute("""
+            UPDATE tasks SET pending_count = ?
+            WHERE TRIM(cliente)=TRIM(?) AND status='pending'
+        """, (count, cliente)).rowcount
+    conn.commit()
     conn.close()
     return n
 
