@@ -13,12 +13,13 @@ import argparse
 from drive_client import (
     discover_client_folders, list_material_files,
     find_folder_by_name, list_crudos_anywhere,
-    _list_root_items_with_shortcuts,
+    _list_root_items_with_shortcuts, estimate_pending_videos,
 )
 from tracker import (
     init_db, upsert_client, add_known_file, is_file_known,
     create_task, list_pending_tasks, stats, get_conn,
     has_pending_for_client_editor, increment_pending_count,
+    set_pending_count,
 )
 from sheets_client import read_packs, get_editor_for_client
 
@@ -52,9 +53,11 @@ def run(notify: bool = False):
     for c in clients_standard:
         upsert_client(c.folder_id, c.cliente, c.raw_folder_id)
         files = list_material_files(c.raw_folder_id)
+        had_new_file = False
         for f in files:
             if is_file_known(f["id"]):
                 continue
+            had_new_file = True
             size = int(f["size"]) if f.get("size") else None
             add_known_file(
                 file_id=f["id"], cliente=c.cliente, folder_id=c.raw_folder_id,
@@ -62,14 +65,21 @@ def run(notify: bool = False):
                 is_baseline=False,
             )
             editor = get_editor_for_client(c.cliente, packs)
-            # Si ya hay pending del mismo cliente+editor: incrementar el contador, no crear task nueva
+            # Si ya hay pending del mismo cliente+editor: no crear task nueva
             if has_pending_for_client_editor(c.cliente, editor):
-                increment_pending_count(c.cliente, editor)
                 continue
             if not editor:
                 sin_editor.append((c.cliente, f["name"]))
             create_task(c.cliente, editor, f["id"], f["name"])
             new_tasks.append({"cliente": c.cliente, "editor": editor, "file": f["name"]})
+
+        # Re-estimar pending_count con heurística (subcarpetas + sesiones temporales)
+        if had_new_file or has_pending_for_client_editor(c.cliente, None):
+            editor_for_client = get_editor_for_client(c.cliente, packs)
+            if has_pending_for_client_editor(c.cliente, editor_for_client):
+                estimated = estimate_pending_videos(c.raw_folder_id, c.folder_id)
+                if estimated > 0:
+                    set_pending_count(c.cliente, editor_for_client, estimated)
 
     # === FASE 2: clientes sin /Material/ — incluye conocidos del sistema + del Sheet ===
     print("🔎 Escaneo generalizado — clientes sin /Material/...")
@@ -133,7 +143,8 @@ def run(notify: bool = False):
                 # Archivo nuevo → crear tarea (con deduplicación por cliente+editor)
                 editor = get_editor_for_client(cliente_name, packs)
                 if has_pending_for_client_editor(cliente_name, editor):
-                    increment_pending_count(cliente_name, editor)
+                    # Cliente sin /Material/: no incrementar automáticamente
+                    # (el usuario puede editar el count manualmente en el dashboard)
                     continue
                 if not editor:
                     sin_editor.append((cliente_name, f["name"]))
@@ -154,6 +165,21 @@ def run(notify: bool = False):
         print(f"\n⚠️  {len(sin_editor)} archivos sin editor en Sheet:")
         for c, fn in sin_editor:
             print(f"   - {c}: {fn}")
+
+    # === RE-ESTIMAR pending_count para clientes con /Material/ ===
+    # Asegura que el conteo sea coherente aunque los archivos cambien entre corridas
+    print("\n📊 Re-estimando contadores de videos pendientes...")
+    refreshed = 0
+    for c in clients_standard:
+        editor_for_client = get_editor_for_client(c.cliente, packs)
+        if not has_pending_for_client_editor(c.cliente, editor_for_client):
+            continue
+        estimated = estimate_pending_videos(c.raw_folder_id, c.folder_id)
+        if estimated > 0:
+            set_pending_count(c.cliente, editor_for_client, estimated)
+            refreshed += 1
+    if refreshed:
+        print(f"   {refreshed} contadores actualizados.")
 
     # === CIERRE: detectar editados nuevos y marcar tareas como hechas ===
     print("\n🔄 Buscando editados nuevos para cerrar tareas...")

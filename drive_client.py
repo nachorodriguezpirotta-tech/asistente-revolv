@@ -269,6 +269,58 @@ def list_material_files(raw_folder_id: str) -> list[dict]:
     return _list_files(raw_folder_id, only_videos=True)
 
 
+def estimate_pending_videos(raw_folder_id: Optional[str], client_folder_id: Optional[str] = None) -> int:
+    """
+    Estima cuántos videos lógicos hay esperando entrega.
+
+    Heurística:
+      - Cada subcarpeta dentro de /Material/ = 1 video (cliente organiza así)
+      - Archivos sueltos en raíz de /Material/ → agrupados por sesión temporal
+        (mismos archivos subidos dentro de ±1 hora = 1 video)
+      - Si NO hay /Material/ pero el cliente tiene archivos en raíz: 1 video
+        (asumimos que es 1 entrega pendiente)
+    """
+    from datetime import datetime, timedelta
+
+    def _parse(s):
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00").split(".")[0] + "+00:00")
+        except Exception:
+            return None
+
+    if not raw_folder_id:
+        # Sin /Material/: si hay actividad reciente en raíz del cliente, asumimos 1 video
+        if client_folder_id:
+            recent = _list_files(client_folder_id, only_videos=True)
+            return 1 if recent else 0
+        return 0
+
+    # 1. Subcarpetas dentro de /Material/ = 1 video cada una
+    subfolders = _list_subfolders(raw_folder_id)
+    sub_count = len(subfolders)
+
+    # 2. Archivos sueltos en raíz de /Material/ → agrupar por sesión temporal
+    files = _list_files(raw_folder_id, only_videos=True)
+    times = sorted(
+        [t for t in (_parse(f.get("createdTime")) for f in files) if t is not None]
+    )
+    sessions = 0
+    last_t = None
+    for t in times:
+        if last_t is None or (t - last_t) > timedelta(hours=1):
+            sessions += 1
+        last_t = t
+
+    # Si hay archivos sin createdTime, contar al menos 1 sesión
+    files_without_time = sum(1 for f in files if not f.get("createdTime"))
+    if files_without_time and sessions == 0:
+        sessions = 1
+
+    return sub_count + sessions
+
+
 def list_crudos_anywhere(client_folder_id: str, client_folder_name: Optional[str] = None) -> list[dict]:
     """
     Detecta crudos en CUALQUIER lugar de la carpeta del cliente, sin requerir /Material/.
