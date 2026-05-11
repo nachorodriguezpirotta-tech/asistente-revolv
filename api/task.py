@@ -179,26 +179,45 @@ class handler(BaseHTTPRequestHandler):
 
             def op_cliente(conn):
                 from datetime import datetime, timedelta
-                cli = resolve_nickname(conn, cliente, target_editor) if target_editor else cliente
-                deleted["cliente"] = cli
+                # Intentar con el nombre tal cual primero
                 if target_editor:
                     rows = conn.execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                        (cli, target_editor),
+                        (cliente, target_editor),
                     )
                 else:
                     rows = conn.execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
-                        (cli,),
+                        (cliente,),
                     )
-                deleted["count"] = rows.rowcount
+                count_deleted = rows.rowcount
+                cli = cliente
+                # Si no encontró nada, fallback al resolved (por si vino apodo)
+                if count_deleted == 0 and target_editor:
+                    resolved = resolve_nickname(conn, cliente, target_editor)
+                    if resolved != cliente:
+                        rows = conn.execute(
+                            "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                            (resolved, target_editor),
+                        )
+                        count_deleted = rows.rowcount
+                        cli = resolved
+                deleted["cliente"] = cli
+                deleted["count"] = count_deleted
                 # Bloquear re-creación automática del cliente por 24 horas
+                # Bloquear AMBOS nombres por si vino apodo
                 blocked_until = (datetime.now() + timedelta(hours=24)).isoformat(timespec="seconds")
                 conn.execute("""
                     INSERT INTO client_blocks (cliente, editor, blocked_until)
                     VALUES (TRIM(?), ?, ?)
                     ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until
                 """, (cli, target_editor or "", blocked_until))
+                if cli != cliente:
+                    conn.execute("""
+                        INSERT INTO client_blocks (cliente, editor, blocked_until)
+                        VALUES (TRIM(?), ?, ?)
+                        ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until
+                    """, (cliente, target_editor or "", blocked_until))
 
             try:
                 with_db(op_cliente, message=f"manual: borradas tasks de {cliente}" + (f" / {target_editor}" if target_editor else ""))
@@ -310,8 +329,14 @@ class handler(BaseHTTPRequestHandler):
         updated = {"count": 0}
 
         def op(conn):
-            cliente_resuelto = resolve_nickname(conn, cliente, target_editor) if target_editor else cliente
-            updated["count"] = _set_pending_count_op(conn, cliente_resuelto, target_editor, count)
+            # En PATCH NO resolvemos apodo: la task ya existe con el nombre como está.
+            # Si no se encuentra con el nombre tal cual, fallback al resolved (por si vino apodo).
+            n = _set_pending_count_op(conn, cliente, target_editor, count)
+            if n == 0 and target_editor:
+                resolved = resolve_nickname(conn, cliente, target_editor)
+                if resolved != cliente:
+                    n = _set_pending_count_op(conn, resolved, target_editor, count)
+            updated["count"] = n
 
         try:
             with_db(op, message=f"manual: count={count} para {cliente}" + (f" / {target_editor}" if target_editor else ""))
