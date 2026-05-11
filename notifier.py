@@ -184,11 +184,21 @@ def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int
         editor = c.get("editor") or "—"
         file_name = c["file_name"]
         file_id = c.get("file_id")
+        client_folder_id = c.get("client_folder_id")
         new_count = c.get("new_count", 0)
         closed = c.get("closed", False)
 
-        # Link al video editado en Drive
-        video_url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else None
+        # Link a la CARPETA del cliente (tenés acceso garantizado vía tu Drive).
+        # El link directo al file_id no funciona si el archivo es propiedad del cliente.
+        if client_folder_id:
+            video_url = f"https://drive.google.com/drive/folders/{client_folder_id}"
+            video_label = f"Ver carpeta de {cliente}"
+        elif file_id:
+            video_url = f"https://drive.google.com/file/d/{file_id}/view"
+            video_label = "Ver video en Drive"
+        else:
+            video_url = None
+            video_label = None
 
         if closed:
             subject = f"✅ {editor} completó {cliente}"
@@ -200,8 +210,8 @@ def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int
             estado_text = f"{editor} entregó 1 video de {cliente}.\nQuedan {new_count} video{plural} pendiente{plural}."
             estado_html = f"<p>{editor} entregó 1 video de <strong>{cliente}</strong>. Quedan <strong>{new_count} video{plural}</strong> pendiente{plural}.</p>"
 
-        link_text = f"\n🎬 Ver video: {video_url}\n" if video_url else ""
-        link_html = f'<p style="margin: 20px 0;"><a href="{video_url}" style="background:#ff4747;color:white;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:600;">🎬 Ver video en Drive</a></p>' if video_url else ""
+        link_text = f"\n📁 {video_label}: {video_url}\n" if video_url else ""
+        link_html = f'<p style="margin: 20px 0;"><a href="{video_url}" style="background:#ff4747;color:white;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:600;">📁 {video_label}</a></p>' if video_url else ""
 
         text = f"""Buenas,
 
