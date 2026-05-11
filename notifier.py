@@ -185,12 +185,16 @@ def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int
         file_name = c["file_name"]
         file_id = c.get("file_id")
         client_folder_id = c.get("client_folder_id")
+        edited_folder_id = c.get("edited_folder_id")
         new_count = c.get("new_count", 0)
         closed = c.get("closed", False)
 
-        # Link a la CARPETA del cliente (tenés acceso garantizado vía tu Drive).
-        # El link directo al file_id no funciona si el archivo es propiedad del cliente.
-        if client_folder_id:
+        # Link a la CARPETA específica donde está el editado (ej. Mayo/Editados, Pack 1).
+        # Tenemos varios fallbacks por si una opción no está disponible:
+        if edited_folder_id:
+            video_url = f"https://drive.google.com/drive/folders/{edited_folder_id}"
+            video_label = "Ver carpeta del editado"
+        elif client_folder_id:
             video_url = f"https://drive.google.com/drive/folders/{client_folder_id}"
             video_label = f"Ver carpeta de {cliente}"
         elif file_id:

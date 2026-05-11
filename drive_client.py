@@ -67,7 +67,8 @@ def _list_subfolders(parent_id: str) -> list[dict]:
 
 
 def _list_files(parent_id: str, only_videos: bool = False) -> list[dict]:
-    """Lista archivos directos (no recursivo) de una carpeta."""
+    """Lista archivos directos (no recursivo) de una carpeta.
+    Cada file incluye `_parent_id` con el folder_id desde el que se listó (para tracking)."""
     service = get_service()
     files = []
     page_token = None
@@ -78,7 +79,9 @@ def _list_files(parent_id: str, only_videos: bool = False) -> list[dict]:
             pageSize=200,
             pageToken=page_token,
         ).execute()
-        files.extend(res.get("files", []))
+        for f in res.get("files", []):
+            f["_parent_id"] = parent_id  # tracking: carpeta donde encontramos este archivo
+            files.append(f)
         page_token = res.get("nextPageToken")
         if not page_token:
             break

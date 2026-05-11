@@ -144,6 +144,8 @@ def run_closer(verbose: bool = True) -> dict:
                         "editor": result["editor"] or client_editor,
                         "file_name": f["name"],
                         "file_id": f["id"],
+                        # Carpeta donde está el editado (Pack X / Tanda Y / Mayo/Editados / etc.)
+                        "edited_folder_id": f.get("_parent_id"),
                         "client_folder_id": folder["id"],
                         "new_count": result["new_count"],
                         "closed": result["closed"],
