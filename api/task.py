@@ -178,6 +178,7 @@ class handler(BaseHTTPRequestHandler):
             deleted = {"count": 0, "cliente": cliente, "editor": target_editor}
 
             def op_cliente(conn):
+                from datetime import datetime, timedelta
                 cli = resolve_nickname(conn, cliente, target_editor) if target_editor else cliente
                 deleted["cliente"] = cli
                 if target_editor:
@@ -191,6 +192,13 @@ class handler(BaseHTTPRequestHandler):
                         (cli,),
                     )
                 deleted["count"] = rows.rowcount
+                # Bloquear re-creación automática del cliente por 24 horas
+                blocked_until = (datetime.now() + timedelta(hours=24)).isoformat(timespec="seconds")
+                conn.execute("""
+                    INSERT INTO client_blocks (cliente, editor, blocked_until)
+                    VALUES (TRIM(?), ?, ?)
+                    ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until
+                """, (cli, target_editor or "", blocked_until))
 
             try:
                 with_db(op_cliente, message=f"manual: borradas tasks de {cliente}" + (f" / {target_editor}" if target_editor else ""))

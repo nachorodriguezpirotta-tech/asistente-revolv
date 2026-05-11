@@ -19,7 +19,7 @@ from tracker import (
     init_db, upsert_client, add_known_file, is_file_known,
     create_task, list_pending_tasks, stats, get_conn,
     has_pending_for_client_editor, increment_pending_count,
-    set_pending_count,
+    set_pending_count, is_client_blocked,
 )
 from sheets_client import read_packs, get_editor_for_client
 from aliases import resolve_alias
@@ -69,6 +69,9 @@ def run(notify: bool = False):
             )
             editor = get_editor_for_client(cliente_real, packs)
             if has_pending_for_client_editor(cliente_real, editor):
+                continue
+            # NO recrear si el cliente está bloqueado (borrado manualmente reciente)
+            if is_client_blocked(cliente_real, editor):
                 continue
             if not editor:
                 sin_editor.append((cliente_real, f["name"]))
@@ -145,8 +148,9 @@ def run(notify: bool = False):
                 # Archivo nuevo → crear tarea (con deduplicación por cliente+editor)
                 editor = get_editor_for_client(cliente_name, packs)
                 if has_pending_for_client_editor(cliente_name, editor):
-                    # Cliente sin /Material/: no incrementar automáticamente
-                    # (el usuario puede editar el count manualmente en el dashboard)
+                    continue
+                # NO recrear si el cliente está bloqueado (borrado manualmente reciente)
+                if is_client_blocked(cliente_name, editor):
                     continue
                 if not editor:
                     sin_editor.append((cliente_name, f["name"]))

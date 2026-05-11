@@ -88,6 +88,17 @@ def init_db():
         # Si el usuario editó el count desde el dashboard, no sobrescribir con estimaciones del scan
         conn.execute("ALTER TABLE tasks ADD COLUMN count_locked INTEGER NOT NULL DEFAULT 0")
 
+    # Tabla de "bloqueos de cliente": cuando el usuario borra un cliente manualmente,
+    # NO se debe re-crear automáticamente hasta que pase un tiempo (24 horas).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS client_blocks (
+            cliente TEXT NOT NULL,
+            editor TEXT,
+            blocked_until TEXT NOT NULL,
+            PRIMARY KEY (cliente, editor)
+        )
+    """)
+
     # Tabla de progreso por editor — soporta MÚLTIPLES contadores por editor.
     # Migración si existe versión vieja sin columna 'label':
     has_progress_table = conn.execute(
@@ -347,6 +358,41 @@ def close_all_pending_for_client(cliente: str, completed_by_file_id: str) -> int
     conn.commit()
     conn.close()
     return n
+
+
+def block_client(cliente: str, editor: Optional[str], hours: int = 24):
+    """
+    Marca un cliente como 'no re-crear automáticamente' por X horas.
+    Útil cuando el usuario borra manual y no quiere que vuelva a aparecer.
+    """
+    from datetime import datetime, timedelta
+    blocked_until = (datetime.now() + timedelta(hours=hours)).isoformat(timespec="seconds")
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO client_blocks (cliente, editor, blocked_until)
+        VALUES (TRIM(?), ?, ?)
+        ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until
+    """, (cliente, editor or "", blocked_until))
+    conn.commit()
+    conn.close()
+
+
+def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
+    """Devuelve True si el cliente+editor tiene un bloqueo activo (no expirado)."""
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT blocked_until FROM client_blocks
+        WHERE TRIM(cliente)=TRIM(?) AND (editor=? OR editor='' OR editor IS NULL)
+    """, (cliente, editor or "")).fetchone()
+    conn.close()
+    if not row:
+        return False
+    from datetime import datetime
+    try:
+        until = datetime.fromisoformat(row["blocked_until"])
+        return datetime.now() < until
+    except Exception:
+        return False
 
 
 def decrement_pending_count(cliente: str, completed_by_file_id: str) -> dict:
