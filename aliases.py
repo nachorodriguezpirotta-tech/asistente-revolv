@@ -52,6 +52,11 @@ EDITOR_EMAILS = {
 }
 
 
+# Lista canónica de editores que SIEMPRE aparecen en el dashboard admin,
+# aunque no tengan pendientes en ese momento.
+EDITORS_LIST = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu", "Jere"]
+
+
 def get_editor_email(editor: str):
     """Devuelve el mail del editor si está configurado, None si no."""
     if not editor:

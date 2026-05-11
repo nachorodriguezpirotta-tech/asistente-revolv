@@ -83,6 +83,15 @@ def get_all_data(conn) -> dict:
             "detected_at": r["oldest"],
         })
 
+    # Asegurar que TODOS los editores canónicos aparezcan, aunque no tengan pendientes
+    try:
+        from aliases import EDITORS_LIST
+        for ed in EDITORS_LIST:
+            if ed not in by_editor:
+                by_editor[ed] = []
+    except Exception:
+        pass
+
     # Generar links únicos por editor (cualquier editor que aparezca acá tiene su link)
     editor_links = {}
     for ed in by_editor.keys():

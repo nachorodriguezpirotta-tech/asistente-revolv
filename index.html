@@ -336,7 +336,15 @@ function renderEditor(data) {
 function renderAdmin(data) {
     const byEditor = data.by_editor || {};
     const editorLinks = data.editor_links || {};
-    const editores = Object.keys(byEditor).sort((a, b) => byEditor[b].length - byEditor[a].length);
+    // Orden: primero editores CON pendientes (más cantidad arriba), después vacíos alfabéticos
+    const editores = Object.keys(byEditor).sort((a, b) => {
+        const la = byEditor[a].length;
+        const lb = byEditor[b].length;
+        if (la === 0 && lb > 0) return 1;
+        if (lb === 0 && la > 0) return -1;
+        if (la === 0 && lb === 0) return a.localeCompare(b);
+        return lb - la;
+    });
     if (editores.length === 0) {
         content.innerHTML = '<div class="empty">✅ Sin pendientes globales.<br><br><button class="add-btn-main" onclick="addClientToEditorPrompt()">+ Agregar editor con cliente</button></div>';
         return;
@@ -358,12 +366,12 @@ function renderAdmin(data) {
     for (const ed of editores) {
         const items = byEditor[ed];
         const edEsc = escapeHtml(ed).replace(/'/g, '&#39;');
-        // Si el editor tiene progresses configurados, mostrarlos
         const edProgresses = editorProgresses[ed] || [];
         const progHtml = renderAllProgresses(edProgresses, ed);
+        const countLabel = items.length === 0 ? '<span style="color: var(--text-dim); font-weight: 400; font-size: 13px; font-style: italic;">sin pendientes</span>' : `<span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span>`;
         html += `<section class="editor-block">
             <h2>
-                <span>${escapeHtml(ed)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span></span>
+                <span>${escapeHtml(ed)} ${countLabel}</span>
                 <button class="add-mini" onclick="addClientToEditor('${edEsc}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
             </h2>
             ${progHtml}`;
