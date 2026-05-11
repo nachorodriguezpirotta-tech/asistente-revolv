@@ -20,9 +20,16 @@ _service_cache = None
 
 
 def _get_service():
+    """Servicio de Gmail. Prefiere credenciales DEDICADAS para mandar mails
+    (cuenta separada asistente.revolv@gmail.com) si están disponibles.
+    Si no, usa las credenciales normales (cuenta personal)."""
     global _service_cache
     if _service_cache is None:
-        creds = get_credentials()
+        try:
+            from auth_mail import get_mail_credentials
+            creds = get_mail_credentials()
+        except Exception:
+            creds = get_credentials()
         _service_cache = build("gmail", "v1", credentials=creds, cache_discovery=False)
     return _service_cache
 
