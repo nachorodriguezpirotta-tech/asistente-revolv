@@ -57,6 +57,15 @@ EDITOR_EMAILS = {
 EDITORS_LIST = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu", "Jere"]
 
 
+# Carpetas extra donde se entregan editados para ciertos clientes.
+# Útil cuando el editor sube editados a una carpeta DISTINTA a la del cliente.
+# Cliente → folder_id donde se entregan.
+CLIENT_DELIVERY_FOLDERS = {
+    "Rafa Elvram": "1PUIRQ80fV9ZffdhDnOz4sUJLCLr6bjDH",  # "Editados Nacho abril 2026"
+    # Agregar más casos cuando aparezcan
+}
+
+
 def get_editor_email(editor: str):
     """Devuelve el mail del editor si está configurado, None si no."""
     if not editor:

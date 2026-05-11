@@ -26,7 +26,7 @@ from tracker import (
     close_oldest_pending, count_pending_for_client,
     close_all_pending_for_client, decrement_pending_count,
 )
-from aliases import resolve_alias, reverse_alias
+from aliases import resolve_alias, reverse_alias, CLIENT_DELIVERY_FOLDERS, _normalize as _alias_norm
 
 
 def _parse_iso(s: Optional[str]) -> Optional[datetime]:
@@ -102,6 +102,18 @@ def run_closer(verbose: bool = True) -> dict:
         raw_id = raw["id"] if raw else None
 
         editados = list_edited_files(folder["id"], raw_id, client_folder_name=folder["name"])
+
+        # Si el cliente tiene una carpeta de entregas EXTRA configurada, sumar esos archivos
+        delivery_folder_id = None
+        for k, v in CLIENT_DELIVERY_FOLDERS.items():
+            if _alias_norm(k) == _alias_norm(cliente):
+                delivery_folder_id = v
+                break
+        if delivery_folder_id:
+            from drive_client import _list_files
+            extra = _list_files(delivery_folder_id, only_videos=True)
+            editados.extend(extra)
+
         if not editados:
             continue
 
