@@ -341,9 +341,20 @@ function renderClientes(data) {
     html += renderClientTable(data.ghost_clients, 'ghost');
   }
 
-  // TODOS los clientes
-  html += `<div class="section-title">Todos los clientes (${data.clients.length})</div>`;
-  html += `<div id="all-clients-container">${renderClientTable(data.clients, 'all')}</div>`;
+  // TODOS los clientes — ordenados: primero los que tienen pending (desc), después el resto
+  const sortedClients = [...data.clients].sort((a, b) => {
+    const ap = a.pending_videos || 0;
+    const bp = b.pending_videos || 0;
+    if (bp !== ap) return bp - ap;  // más pendientes arriba
+    // Empate: los activos arriba (orden status: hot > active > cold > ghost > unknown)
+    const statusOrder = { hot: 0, active: 1, cold: 2, ghost: 3, unknown: 4 };
+    const sa = statusOrder[a.status] ?? 5;
+    const sb = statusOrder[b.status] ?? 5;
+    if (sa !== sb) return sa - sb;
+    return a.cliente.localeCompare(b.cliente);
+  });
+  html += `<div class="section-title">Todos los clientes (${data.clients.length}) — pendientes primero</div>`;
+  html += `<div id="all-clients-container">${renderClientTable(sortedClients, 'all')}</div>`;
 
   content.innerHTML = html;
 }
