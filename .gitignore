@@ -8,6 +8,10 @@ token_mail.json
 logs/
 *.log
 
+# SQLite WAL temporales (no commitear, se regeneran)
+tracker.db-shm
+tracker.db-wal
+
 # Python
 __pycache__/
 *.pyc
