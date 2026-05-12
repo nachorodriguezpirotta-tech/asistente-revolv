@@ -8,6 +8,18 @@ Uso:
     python3 scan.py --notify   # crea tareas Y manda mails
 """
 
+import os
+import sys
+
+# === KILL SWITCH ===
+# Si existe el archivo .scan_disabled en el repo, el scan no ejecuta nada.
+# Sirve para parar de emergencia sin tocar el cron ni el workflow.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if os.path.exists(os.path.join(_HERE, ".scan_disabled")):
+    print("🛑 KILL SWITCH activo (.scan_disabled existe en repo). Scan deshabilitado.")
+    print("   Para reactivar: borrar el archivo .scan_disabled y commitear.")
+    sys.exit(0)
+
 import argparse
 
 from drive_client import (
