@@ -107,27 +107,165 @@ def get_editor_stats(conn, editor: str, now: datetime) -> dict:
     }
 
 
+def get_editor_pending_detail(conn, editor: str) -> list:
+    """Lista detallada de los pending del editor: cliente, count, días esperando, file_name."""
+    rows = conn.execute(
+        """SELECT TRIM(cliente) as cliente,
+                  SUM(COALESCE(pending_count, 1)) as videos,
+                  MIN(detected_at) as detected_at,
+                  MIN(id) as id,
+                  GROUP_CONCAT(file_name, ' | ') as files
+           FROM tasks
+           WHERE editor = ? AND status = 'pending'
+           GROUP BY TRIM(cliente)
+           ORDER BY detected_at ASC""",
+        (editor,),
+    ).fetchall()
+    now = datetime.now()
+    out = []
+    for r in rows:
+        det = _parse_iso(r["detected_at"])
+        days = round((now - det).total_seconds() / 86400, 1) if det else 0
+        files = (r["files"] or "")[:200]  # cortar largo
+        out.append({
+            "id": r["id"],
+            "cliente": r["cliente"],
+            "videos": int(r["videos"]),
+            "days_waiting": days,
+            "first_file": files.split(" | ")[0] if files else "",
+        })
+    return out
+
+
+def get_client_stats(conn, cliente: str, now: datetime) -> dict:
+    """Métricas de un cliente individual."""
+    week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
+    month_ago = (now - timedelta(days=30)).isoformat(timespec="seconds")
+    quarter_ago = (now - timedelta(days=90)).isoformat(timespec="seconds")
+
+    # Crudos subidos por cliente (de known_files)
+    crudos_week = conn.execute(
+        "SELECT COUNT(*) FROM known_files WHERE TRIM(cliente) = ? AND first_seen_at >= ? AND is_baseline = 0",
+        (cliente, week_ago),
+    ).fetchone()[0]
+    crudos_month = conn.execute(
+        "SELECT COUNT(*) FROM known_files WHERE TRIM(cliente) = ? AND first_seen_at >= ? AND is_baseline = 0",
+        (cliente, month_ago),
+    ).fetchone()[0]
+
+    # Editados entregados (de known_edited_files)
+    editados_week = conn.execute(
+        "SELECT COUNT(*) FROM known_edited_files WHERE TRIM(cliente) = ? AND first_seen_at >= ? AND is_baseline = 0",
+        (cliente, week_ago),
+    ).fetchone()[0]
+    editados_month = conn.execute(
+        "SELECT COUNT(*) FROM known_edited_files WHERE TRIM(cliente) = ? AND first_seen_at >= ? AND is_baseline = 0",
+        (cliente, month_ago),
+    ).fetchone()[0]
+
+    # Pendiente actual
+    pending = conn.execute(
+        "SELECT COALESCE(SUM(COALESCE(pending_count, 1)), 0), MIN(editor) FROM tasks WHERE TRIM(cliente) = ? AND status = 'pending'",
+        (cliente,),
+    ).fetchone()
+    pending_videos = int(pending[0] or 0)
+    editor = pending[1]
+
+    # Último crudo subido + último editado entregado
+    last_crudo = conn.execute(
+        "SELECT MAX(first_seen_at) FROM known_files WHERE TRIM(cliente) = ?", (cliente,),
+    ).fetchone()[0]
+    last_editado = conn.execute(
+        "SELECT MAX(first_seen_at) FROM known_edited_files WHERE TRIM(cliente) = ?", (cliente,),
+    ).fetchone()[0]
+
+    days_since_crudo = None
+    if last_crudo:
+        d = _parse_iso(last_crudo)
+        if d:
+            days_since_crudo = round((now - d).total_seconds() / 86400, 1)
+
+    days_since_editado = None
+    if last_editado:
+        d = _parse_iso(last_editado)
+        if d:
+            days_since_editado = round((now - d).total_seconds() / 86400, 1)
+
+    # Health: ghost si >60 días sin crudos, activo si subió en últimos 30 días
+    if days_since_crudo is None:
+        status = "unknown"
+    elif days_since_crudo > 60:
+        status = "ghost"  # candidato a churn
+    elif days_since_crudo <= 7:
+        status = "hot"  # subiendo activamente
+    elif days_since_crudo <= 30:
+        status = "active"
+    else:
+        status = "cold"
+
+    return {
+        "cliente": cliente,
+        "editor": editor,
+        "crudos_week": int(crudos_week),
+        "crudos_month": int(crudos_month),
+        "editados_week": int(editados_week),
+        "editados_month": int(editados_month),
+        "pending_videos": pending_videos,
+        "days_since_crudo": days_since_crudo,
+        "days_since_editado": days_since_editado,
+        "status": status,
+    }
+
+
 def _build_stats(conn):
     now = datetime.now()
+    # === EDITORES ===
     stats_per_editor = [get_editor_stats(conn, editor, now) for editor in EDITORS]
+    # Detalle de pending por editor (lazy: solo si el front lo pide via param, pero por simplicidad lo incluyo)
+    pending_detail = {ed: get_editor_pending_detail(conn, ed) for ed in EDITORS}
+
     total_pending_videos = sum(s["pending_videos"] for s in stats_per_editor)
     total_pending_clientes = sum(s["pending_clientes"] for s in stats_per_editor)
     total_delivered_week = sum(s["delivered_week"] for s in stats_per_editor)
     total_delivered_month = sum(s["delivered_month"] for s in stats_per_editor)
     top_delivered_week = sorted(stats_per_editor, key=lambda x: -x["delivered_week"])[:3]
     critical_editors = [s for s in stats_per_editor if s["health"] == "critical"]
+
+    # === CLIENTES ===
+    # Tomamos TODOS los clientes que aparecen en known_files o known_edited_files
+    client_rows = conn.execute(
+        """SELECT DISTINCT TRIM(cliente) as cliente FROM (
+              SELECT cliente FROM known_files
+              UNION SELECT cliente FROM known_edited_files
+              UNION SELECT cliente FROM tasks WHERE status='pending'
+           ) WHERE cliente IS NOT NULL AND cliente != ''"""
+    ).fetchall()
+    clients_stats = [get_client_stats(conn, r["cliente"], now) for r in client_rows]
+
+    # Ordenamientos útiles
+    top_active = sorted(clients_stats, key=lambda x: -x["crudos_month"])[:10]
+    ghost_clients = [c for c in clients_stats if c["status"] == "ghost"][:20]
+    hot_clients = [c for c in clients_stats if c["status"] == "hot"]
+
     return {
         "ok": True,
         "now": now.isoformat(timespec="seconds"),
         "by_editor": stats_per_editor,
+        "pending_detail": pending_detail,
         "totals": {
             "pending_videos": total_pending_videos,
             "pending_clientes": total_pending_clientes,
             "delivered_week": total_delivered_week,
             "delivered_month": total_delivered_month,
+            "clientes_activos": len([c for c in clients_stats if c["status"] in ("hot", "active")]),
+            "clientes_ghost": len(ghost_clients),
         },
         "top_delivered_week": [s["editor"] for s in top_delivered_week if s["delivered_week"] > 0],
         "critical_editors": [s["editor"] for s in critical_editors],
+        "clients": clients_stats,
+        "top_active_clients": top_active,
+        "ghost_clients": ghost_clients,
+        "hot_clients_count": len(hot_clients),
     }
 
 

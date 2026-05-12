@@ -16,9 +16,7 @@
   }
   h1 { margin: 0; font-size: 22px; font-weight: 600; }
   .subtitle { font-size: 13px; color: #8a93a3; margin-top: 4px; }
-  .back-link {
-    font-size: 13px; color: #8a93a3; text-decoration: none;
-  }
+  .back-link { font-size: 13px; color: #8a93a3; text-decoration: none; }
   .back-link:hover { color: #e8eaed; }
   .updated { font-size: 11px; color: #5a6478; }
   .loading, .error {
@@ -26,32 +24,47 @@
   }
   .error { color: #ff7676; white-space: pre-wrap; }
 
-  /* TOTALES ARRIBA */
+  /* TABS */
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 20px;
+    border-bottom: 1px solid #2a2f3a;
+  }
+  .tab {
+    padding: 10px 18px; background: transparent; border: none; color: #8a93a3;
+    cursor: pointer; font-size: 14px; font-weight: 500; font-family: inherit;
+    border-bottom: 2px solid transparent;
+  }
+  .tab:hover { color: #e8eaed; }
+  .tab.active { color: #e8eaed; border-bottom-color: #4ade80; }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* TOTALES */
   .totals {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    gap: 12px; margin-bottom: 28px;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 24px;
   }
   .totals .card {
-    background: #1a1e27; border-radius: 10px; padding: 16px 18px;
+    background: #1a1e27; border-radius: 10px; padding: 14px 16px;
     border: 1px solid #2a2f3a;
   }
   .totals .label {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
     color: #8a93a3; margin-bottom: 6px;
   }
-  .totals .value {
-    font-size: 28px; font-weight: 700; color: #e8eaed;
-  }
+  .totals .value { font-size: 26px; font-weight: 700; color: #e8eaed; }
   .totals .extra { font-size: 12px; color: #5a6478; margin-top: 4px; }
 
-  /* TABLA EDITORES */
+  /* TABLAS */
   table {
     width: 100%; border-collapse: collapse; background: #1a1e27;
     border-radius: 10px; overflow: hidden; border: 1px solid #2a2f3a;
+    margin-bottom: 24px;
   }
   th, td {
-    padding: 14px 16px; text-align: left; font-size: 13px;
+    padding: 12px 14px; text-align: left; font-size: 13px;
     border-bottom: 1px solid #2a2f3a;
   }
   th {
@@ -59,48 +72,98 @@
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
   }
   tr:last-child td { border-bottom: none; }
-  tr:hover td { background: #1f2430; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: #1f2430; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  td.editor-name { font-weight: 600; color: #e8eaed; }
+  td.name { font-weight: 600; color: #e8eaed; }
+
+  /* DETAIL ROW (expanded pending por editor) */
+  tr.detail-row { background: #14171f; display: none; }
+  tr.detail-row.open { display: table-row; }
+  tr.detail-row td { padding: 0; }
+  .pending-list {
+    padding: 12px 24px; font-size: 12px;
+  }
+  .pending-list .item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid #2a2f3a;
+  }
+  .pending-list .item:last-child { border-bottom: none; }
+  .pending-list .client-name { font-weight: 600; color: #e8eaed; }
+  .pending-list .meta { color: #8a93a3; font-size: 11px; margin-left: 12px; }
+  .pending-list .days {
+    padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+  }
+  .pending-list .days.critical { background: #3a1a1a; color: #f87171; }
+  .pending-list .days.warning { background: #3a2e10; color: #fbbf24; }
+  .pending-list .days.ok { background: #1a2e1a; color: #4ade80; }
+
+  /* HEALTH DOTS */
   .health {
-    display: inline-block; width: 10px; height: 10px;
+    display: inline-block; width: 9px; height: 9px;
     border-radius: 50%; margin-right: 8px; vertical-align: middle;
   }
-  .health.ok { background: #4ade80; }
-  .health.warning { background: #fbbf24; }
-  .health.critical { background: #f87171; }
-  .badge-critical {
-    background: #3a1a1a; color: #f87171; padding: 2px 8px;
-    border-radius: 4px; font-size: 11px; font-weight: 600;
-  }
+  .health.ok, .health.hot { background: #4ade80; }
+  .health.warning, .health.active { background: #fbbf24; }
+  .health.critical, .health.ghost { background: #f87171; }
+  .health.cold { background: #8a93a3; }
+  .health.unknown { background: #5a6478; }
+
+  .badge-critical { background: #3a1a1a; color: #f87171; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-hot { background: #1a2e1a; color: #4ade80; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-ghost { background: #2a201a; color: #d4a070; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
   .badge-empty { color: #5a6478; font-style: italic; }
+
   .alert-banner {
     background: #3a1a1a; border-left: 4px solid #f87171;
     padding: 12px 16px; border-radius: 6px; margin-bottom: 20px;
     font-size: 13px;
   }
-  .top-list {
-    display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;
+  .info-banner {
+    background: #1a2a3a; border-left: 4px solid #60a5fa;
+    padding: 12px 16px; border-radius: 6px; margin-bottom: 20px;
+    font-size: 13px;
   }
-  .top-list .editor-chip {
+  .top-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .top-list .chip {
     background: #2d3445; padding: 3px 10px; border-radius: 12px;
     font-size: 12px; font-weight: 500;
   }
-  .top-list .editor-chip:nth-child(1) { background: #3a3210; color: #fbbf24; }
-  .top-list .editor-chip:nth-child(2) { background: #2a2d34; color: #c0c8d4; }
-  .top-list .editor-chip:nth-child(3) { background: #2a201a; color: #d4a070; }
+  .top-list .chip:nth-child(1) { background: #3a3210; color: #fbbf24; }
+  .top-list .chip:nth-child(2) { background: #2a2d34; color: #c0c8d4; }
+  .top-list .chip:nth-child(3) { background: #2a201a; color: #d4a070; }
+
+  .section-title {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #8a93a3; margin: 28px 0 10px; font-weight: 600;
+  }
+  .filter-row {
+    display: flex; gap: 8px; margin-bottom: 12px; align-items: center;
+    flex-wrap: wrap;
+  }
+  .filter-row input, .filter-row select {
+    background: #1a1e27; color: #e8eaed; border: 1px solid #2a2f3a;
+    padding: 6px 10px; border-radius: 6px; font-size: 13px;
+    font-family: inherit;
+  }
+  .filter-row label { font-size: 12px; color: #8a93a3; }
 </style>
 </head>
 <body>
   <div class="header">
     <div>
       <h1>📊 Stats Asistente Revolv</h1>
-      <div class="subtitle" id="subtitle">Productividad y métricas por editor</div>
+      <div class="subtitle">Productividad y métricas — editores y clientes</div>
     </div>
     <div style="text-align:right;">
       <a href="javascript:goBack()" class="back-link">← Dashboard</a>
       <div class="updated">Actualizado: <span id="updated">—</span></div>
     </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="editores">👥 Editores</button>
+    <button class="tab" data-tab="clientes">🎬 Clientes</button>
   </div>
 
   <div id="content">
@@ -113,9 +176,21 @@ const TOKEN = params.get('t') || '';
 const content = document.getElementById('content');
 const updatedSpan = document.getElementById('updated');
 
+let LAST_DATA = null;
+let ACTIVE_TAB = 'editores';
+
 function goBack() {
   location.href = `/?admin=1&t=${encodeURIComponent(TOKEN)}`;
 }
+
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    ACTIVE_TAB = t.dataset.tab;
+    if (LAST_DATA) renderActiveTab();
+  });
+});
 
 if (!TOKEN) {
   content.innerHTML = '<div class="error">Falta token. Pedile a Ignacio el link correcto.</div>';
@@ -124,23 +199,29 @@ if (!TOKEN) {
 }
 
 async function loadStats() {
-  content.innerHTML = '<div class="loading">Cargando métricas…</div>';
+  if (!LAST_DATA) content.innerHTML = '<div class="loading">Cargando métricas…</div>';
   try {
     const res = await fetch(`/api/stats?admin=1&t=${encodeURIComponent(TOKEN)}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-    render(data);
+    LAST_DATA = data;
+    renderActiveTab();
     updatedSpan.textContent = new Date().toLocaleTimeString();
   } catch (e) {
     content.innerHTML = `<div class="error">No pude cargar:\n${e.message}</div>`;
   }
 }
 
-function render(data) {
+function renderActiveTab() {
+  if (ACTIVE_TAB === 'editores') renderEditores(LAST_DATA);
+  else renderClientes(LAST_DATA);
+}
+
+// ──────────────────── EDITORES ────────────────────
+function renderEditores(data) {
   const t = data.totals;
   let html = '';
 
-  // Banner si hay críticos
   if (data.critical_editors && data.critical_editors.length > 0) {
     html += `<div class="alert-banner">
       🚨 <strong>${data.critical_editors.length} editor(es) con pending hace +7 días:</strong>
@@ -148,27 +229,14 @@ function render(data) {
     </div>`;
   }
 
-  // Totales arriba
   html += `<div class="totals">
-    <div class="card">
-      <div class="label">Pendientes ahora</div>
-      <div class="value">${t.pending_videos}</div>
-      <div class="extra">${t.pending_clientes} clientes</div>
-    </div>
-    <div class="card">
-      <div class="label">Entregados 7 días</div>
-      <div class="value">${t.delivered_week}</div>
-      <div class="extra">${t.delivered_month} en 30 días</div>
-    </div>
-    <div class="card">
-      <div class="label">🏆 Top de la semana</div>
-      <div class="top-list">
-        ${(data.top_delivered_week || []).map(e => `<span class="editor-chip">${e}</span>`).join('') || '<span class="badge-empty">sin entregas aún</span>'}
-      </div>
+    <div class="card"><div class="label">Pendientes</div><div class="value">${t.pending_videos}</div><div class="extra">${t.pending_clientes} clientes</div></div>
+    <div class="card"><div class="label">Entregados 7d</div><div class="value">${t.delivered_week}</div><div class="extra">${t.delivered_month} en 30d</div></div>
+    <div class="card"><div class="label">🏆 Top semana</div>
+      <div class="top-list">${(data.top_delivered_week || []).map(e => `<span class="chip">${e}</span>`).join('') || '<span class="badge-empty">sin entregas</span>'}</div>
     </div>
   </div>`;
 
-  // Tabla por editor
   html += `<table>
     <thead><tr>
       <th>Editor</th>
@@ -192,22 +260,148 @@ function render(data) {
           ? `<span class="badge-critical">${s.oldest_pending_days} d</span>`
           : `${s.oldest_pending_days} días`)
       : '<span class="badge-empty">—</span>';
-    html += `<tr>
-      <td class="editor-name"><span class="health ${s.health}"></span>${s.editor}</td>
+    html += `<tr class="clickable" onclick="togglePending('${s.editor}')">
+      <td class="name"><span class="health ${s.health}"></span>${s.editor} <span style="color:#5a6478; font-weight:normal; font-size:11px;">▼</span></td>
       <td class="num">${s.pending_videos}</td>
       <td class="num">${s.pending_clientes}</td>
       <td class="num">${s.delivered_week || '<span class="badge-empty">0</span>'}</td>
       <td class="num">${s.delivered_month || '<span class="badge-empty">0</span>'}</td>
       <td class="num">${turn}</td>
       <td class="num">${oldest}</td>
-    </tr>`;
+    </tr>
+    <tr class="detail-row" id="detail-${s.editor}"><td colspan="7">${renderPendingList(data.pending_detail[s.editor] || [])}</td></tr>`;
   }
   html += `</tbody></table>`;
 
   content.innerHTML = html;
 }
 
-// Auto-refresh cada 60s
+function renderPendingList(items) {
+  if (!items || items.length === 0) {
+    return `<div class="pending-list"><span class="badge-empty">Sin pendientes 🎉</span></div>`;
+  }
+  let html = '<div class="pending-list">';
+  for (const it of items) {
+    const daysClass = it.days_waiting >= 7 ? 'critical' : it.days_waiting >= 3 ? 'warning' : 'ok';
+    html += `<div class="item">
+      <div>
+        <span class="client-name">${it.cliente}</span>
+        <span class="meta">${it.videos} video${it.videos !== 1 ? 's' : ''}${it.first_file && it.first_file !== '(pendiente cargado manualmente)' ? ' · ' + it.first_file.slice(0, 50) : ''}</span>
+      </div>
+      <span class="days ${daysClass}">${it.days_waiting}d esperando</span>
+    </div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function togglePending(editor) {
+  const row = document.getElementById('detail-' + editor);
+  if (row) row.classList.toggle('open');
+}
+
+// ──────────────────── CLIENTES ────────────────────
+function renderClientes(data) {
+  const t = data.totals;
+  let html = '';
+
+  if (data.ghost_clients && data.ghost_clients.length > 0) {
+    html += `<div class="info-banner">
+      👻 <strong>${data.ghost_clients.length} cliente(s) inactivos +60 días</strong> — posible churn, revisar abajo.
+    </div>`;
+  }
+
+  html += `<div class="totals">
+    <div class="card"><div class="label">Clientes activos</div><div class="value">${t.clientes_activos || 0}</div><div class="extra">subieron en últimos 30d</div></div>
+    <div class="card"><div class="label">🔥 Hot esta semana</div><div class="value">${data.hot_clients_count || 0}</div><div class="extra">subieron en últimos 7d</div></div>
+    <div class="card"><div class="label">👻 Fantasma</div><div class="value">${t.clientes_ghost || 0}</div><div class="extra">+60d sin subir nada</div></div>
+  </div>`;
+
+  // Filtros
+  html += `<div class="filter-row">
+    <label>Filtrar:</label>
+    <input type="text" id="client-filter" placeholder="nombre cliente o editor..." onkeyup="filterClientTable()">
+    <select id="status-filter" onchange="filterClientTable()">
+      <option value="">Todos</option>
+      <option value="hot">🔥 Hot (7d)</option>
+      <option value="active">Active (30d)</option>
+      <option value="cold">Cold (30-60d)</option>
+      <option value="ghost">👻 Ghost (+60d)</option>
+    </select>
+    <span class="badge-empty" id="filter-count" style="margin-left:auto;"></span>
+  </div>`;
+
+  // TOP 10 más activos
+  html += `<div class="section-title">🏆 Top 10 más activos (últimos 30 días)</div>`;
+  html += renderClientTable(data.top_active_clients || [], 'top-active');
+
+  // GHOST clients
+  if (data.ghost_clients && data.ghost_clients.length > 0) {
+    html += `<div class="section-title">👻 Ghost — candidatos a churn</div>`;
+    html += renderClientTable(data.ghost_clients, 'ghost');
+  }
+
+  // TODOS los clientes
+  html += `<div class="section-title">Todos los clientes (${data.clients.length})</div>`;
+  html += `<div id="all-clients-container">${renderClientTable(data.clients, 'all')}</div>`;
+
+  content.innerHTML = html;
+}
+
+function renderClientTable(clients, id) {
+  if (!clients || clients.length === 0) return '<div class="badge-empty" style="padding:12px;">Ninguno</div>';
+  let html = `<table id="table-${id}"><thead><tr>
+    <th>Cliente</th>
+    <th>Editor</th>
+    <th class="num">Pendientes</th>
+    <th class="num">Crudos 7d / 30d</th>
+    <th class="num">Editados 7d / 30d</th>
+    <th class="num">Últ. subida</th>
+    <th>Estado</th>
+  </tr></thead><tbody>`;
+  for (const c of clients) {
+    const status = c.status;
+    let badge = '';
+    if (status === 'hot') badge = '<span class="badge-hot">🔥 hot</span>';
+    else if (status === 'active') badge = '<span style="color:#fbbf24">active</span>';
+    else if (status === 'cold') badge = '<span style="color:#8a93a3">cold</span>';
+    else if (status === 'ghost') badge = '<span class="badge-ghost">👻 ghost</span>';
+    else badge = '<span class="badge-empty">—</span>';
+
+    const lastUpload = c.days_since_crudo !== null
+      ? (c.days_since_crudo < 1 ? 'hoy' : `${c.days_since_crudo}d`)
+      : '<span class="badge-empty">nunca</span>';
+
+    html += `<tr class="client-row" data-name="${c.cliente.toLowerCase()}" data-editor="${(c.editor || '').toLowerCase()}" data-status="${status}">
+      <td class="name"><span class="health ${status}"></span>${c.cliente}</td>
+      <td>${c.editor || '<span class="badge-empty">—</span>'}</td>
+      <td class="num">${c.pending_videos || '<span class="badge-empty">0</span>'}</td>
+      <td class="num">${c.crudos_week} / ${c.crudos_month}</td>
+      <td class="num">${c.editados_week} / ${c.editados_month}</td>
+      <td class="num">${lastUpload}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  return html;
+}
+
+function filterClientTable() {
+  const q = (document.getElementById('client-filter')?.value || '').toLowerCase().trim();
+  const status = document.getElementById('status-filter')?.value || '';
+  let visible = 0;
+  document.querySelectorAll('#all-clients-container .client-row').forEach(row => {
+    const name = row.dataset.name || '';
+    const editor = row.dataset.editor || '';
+    const st = row.dataset.status || '';
+    const matchQ = !q || name.includes(q) || editor.includes(q);
+    const matchS = !status || st === status;
+    row.style.display = (matchQ && matchS) ? '' : 'none';
+    if (matchQ && matchS) visible++;
+  });
+  document.getElementById('filter-count').textContent = `${visible} visibles`;
+}
+
 setInterval(loadStats, 60000);
 </script>
 </body>
