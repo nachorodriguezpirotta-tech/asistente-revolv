@@ -46,15 +46,16 @@ def _to_int(v) -> int:
         return 0
 
 
-_service_cache = None
+import threading
+_thread_local = threading.local()
 
 
 def _get_service():
-    global _service_cache
-    if _service_cache is None:
+    """Service per-thread para thread-safety con ThreadPoolExecutor."""
+    if not hasattr(_thread_local, "service"):
         creds = get_credentials()
-        _service_cache = build("sheets", "v4", credentials=creds, cache_discovery=False)
-    return _service_cache
+        _thread_local.service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    return _thread_local.service
 
 
 def get_sheet_metadata():

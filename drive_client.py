@@ -37,15 +37,17 @@ def _is_video(name: str, mime: str = "") -> bool:
     return mime.startswith("video/")
 
 
-_service_cache = None
+import threading
+_thread_local = threading.local()
 
 
 def get_service():
-    global _service_cache
-    if _service_cache is None:
+    """Service de Drive por-thread (necesario para que ThreadPoolExecutor sea seguro:
+    el objeto http subyacente de googleapiclient no es thread-safe)."""
+    if not hasattr(_thread_local, "service"):
         creds = get_credentials()
-        _service_cache = build("drive", "v3", credentials=creds, cache_discovery=False)
-    return _service_cache
+        _thread_local.service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    return _thread_local.service
 
 
 def _list_subfolders(parent_id: str) -> list[dict]:

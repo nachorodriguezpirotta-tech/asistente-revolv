@@ -2,8 +2,8 @@ name: Scan Drive (Asistente Revolv)
 
 on:
   schedule:
-    # Cada 30 min (GitHub Actions tiene latencia variable de hasta ~15 min)
-    - cron: '*/30 * * * *'
+    # Cada 10 min (scan optimizado tarda ~3-4 min con paralelismo)
+    - cron: '*/10 * * * *'
   workflow_dispatch: {}  # disparable a mano desde la UI de GitHub
   push:
     branches: [main]

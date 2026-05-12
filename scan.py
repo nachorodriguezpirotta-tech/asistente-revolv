@@ -48,11 +48,56 @@ def _clients_already_baselined(conn):
     return {r[0].strip() for r in rows}
 
 
+def _process_standard_client(c, packs):
+    """Procesa un cliente con estructura /Material/ standard.
+    Devuelve (new_tasks_list, sin_editor_list, had_new_file).
+    Diseñada para correr en ThreadPoolExecutor (cada llamada es independiente)."""
+    cliente_real = resolve_alias(c.cliente)
+    upsert_client(c.folder_id, cliente_real, c.raw_folder_id)
+    files = list_material_files(c.raw_folder_id)
+
+    local_new_tasks = []
+    local_sin_editor = []
+    had_new_file = False
+
+    for f in files:
+        if is_file_known(f["id"]):
+            continue
+        size = int(f["size"]) if f.get("size") else None
+        claimed = claim_file(
+            file_id=f["id"], cliente=cliente_real, folder_id=c.raw_folder_id,
+            name=f["name"], size=size, created_time=f.get("createdTime"),
+            is_baseline=False,
+        )
+        if not claimed:
+            continue
+        had_new_file = True
+        editor = get_editor_for_client(cliente_real, packs)
+        if has_pending_for_client_editor(cliente_real, editor):
+            continue
+        if is_client_blocked(cliente_real, editor):
+            continue
+        if not editor:
+            local_sin_editor.append((cliente_real, f["name"]))
+        create_task(cliente_real, editor, f["id"], f["name"])
+        local_new_tasks.append({"cliente": cliente_real, "editor": editor, "file": f["name"]})
+
+    # Re-estimar pending_count
+    if had_new_file or has_pending_for_client_editor(cliente_real, None):
+        editor_for_client = get_editor_for_client(cliente_real, packs)
+        if has_pending_for_client_editor(cliente_real, editor_for_client):
+            estimated = estimate_pending_videos(c.raw_folder_id, c.folder_id)
+            if estimated > 0:
+                set_pending_count(cliente_real, editor_for_client, estimated)
+
+    return local_new_tasks, local_sin_editor, had_new_file
+
+
 def run(notify: bool = False):
     print("🔍 SCAN — detectando crudos nuevos\n")
     init_db()
 
-    # === FASE 1: clientes con /Material/ (lógica original) ===
+    # === FASE 1: clientes con /Material/ (lógica original) — PARALELIZADO ===
     clients_standard = discover_client_folders()
     print(f"   {len(clients_standard)} clientes con estructura /Material/ standard.")
 
@@ -63,43 +108,20 @@ def run(notify: bool = False):
     new_tasks = []
     sin_editor = []
 
-    for c in clients_standard:
-        # Resolver alias: si la carpeta de Drive tiene nombre distinto al cliente real
-        cliente_real = resolve_alias(c.cliente)
-        upsert_client(c.folder_id, cliente_real, c.raw_folder_id)
-        files = list_material_files(c.raw_folder_id)
-        had_new_file = False
-        for f in files:
-            if is_file_known(f["id"]):
-                continue
-            size = int(f["size"]) if f.get("size") else None
-            # CLAIM ATÓMICO: si otro workflow ya lo claimó, saltar (anti-duplicado de mails)
-            claimed = claim_file(
-                file_id=f["id"], cliente=cliente_real, folder_id=c.raw_folder_id,
-                name=f["name"], size=size, created_time=f.get("createdTime"),
-                is_baseline=False,
-            )
-            if not claimed:
-                continue
-            had_new_file = True
-            editor = get_editor_for_client(cliente_real, packs)
-            if has_pending_for_client_editor(cliente_real, editor):
-                continue
-            # NO recrear si el cliente está bloqueado (borrado manualmente reciente)
-            if is_client_blocked(cliente_real, editor):
-                continue
-            if not editor:
-                sin_editor.append((cliente_real, f["name"]))
-            create_task(cliente_real, editor, f["id"], f["name"])
-            new_tasks.append({"cliente": cliente_real, "editor": editor, "file": f["name"]})
-
-        # Re-estimar pending_count
-        if had_new_file or has_pending_for_client_editor(cliente_real, None):
-            editor_for_client = get_editor_for_client(cliente_real, packs)
-            if has_pending_for_client_editor(cliente_real, editor_for_client):
-                estimated = estimate_pending_videos(c.raw_folder_id, c.folder_id)
-                if estimated > 0:
-                    set_pending_count(cliente_real, editor_for_client, estimated)
+    # ThreadPoolExecutor: paraleliza las llamadas a Drive API (I/O bound).
+    # 15 workers = ~15x speedup vs secuencial. SQLite usa WAL mode + timeout para
+    # tolerar writes concurrentes. Google services se crean por-thread (thread-safe).
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    print(f"⚡ Procesando en paralelo (15 workers)...")
+    with ThreadPoolExecutor(max_workers=15) as ex:
+        futures = [ex.submit(_process_standard_client, c, packs) for c in clients_standard]
+        for fut in as_completed(futures):
+            try:
+                local_new, local_sin, _ = fut.result()
+                new_tasks.extend(local_new)
+                sin_editor.extend(local_sin)
+            except Exception as e:
+                print(f"   ⚠️  error procesando cliente: {e}")
 
     # === FASE 2: clientes sin /Material/ — incluye conocidos del sistema + del Sheet ===
     print("🔎 Escaneo generalizado — clientes sin /Material/...")
@@ -134,13 +156,15 @@ def run(notify: bool = False):
             except Exception:
                 return None
 
-        for cliente_name in extra_clients:
+        def _process_extra_client(cliente_name):
+            local_new_tasks = []
+            local_sin_editor = []
             folder = find_folder_by_name(cliente_name, all_root)
             if not folder:
-                continue
+                return local_new_tasks, local_sin_editor
             crudos = list_crudos_anywhere(folder["id"], folder.get("name"))
             if not crudos:
-                continue
+                return local_new_tasks, local_sin_editor
 
             first_time = cliente_name not in baselined
             for f in crudos:
@@ -148,12 +172,7 @@ def run(notify: bool = False):
                     continue
                 size = int(f["size"]) if f.get("size") else None
                 created = _parse_created(f.get("createdTime"))
-
-                # En primera corrida, archivos viejos (>24hs) van a baseline,
-                # archivos recientes se tratan como nuevos (probablemente recién subidos)
                 is_baseline_file = first_time and (not created or created < recent_threshold)
-
-                # CLAIM ATÓMICO: si otro workflow ya lo claimó, saltar
                 claimed = claim_file(
                     file_id=f["id"], cliente=cliente_name, folder_id=folder["id"],
                     name=f["name"], size=size, created_time=f.get("createdTime"),
@@ -162,18 +181,28 @@ def run(notify: bool = False):
                 if not claimed:
                     continue
                 if is_baseline_file:
-                    continue  # archivo viejo en primera corrida → baseline silencioso
-                # Archivo nuevo → crear tarea (con deduplicación por cliente+editor)
+                    continue
                 editor = get_editor_for_client(cliente_name, packs)
                 if has_pending_for_client_editor(cliente_name, editor):
                     continue
-                # NO recrear si el cliente está bloqueado (borrado manualmente reciente)
                 if is_client_blocked(cliente_name, editor):
                     continue
                 if not editor:
-                    sin_editor.append((cliente_name, f["name"]))
+                    local_sin_editor.append((cliente_name, f["name"]))
                 create_task(cliente_name, editor, f["id"], f["name"])
-                new_tasks.append({"cliente": cliente_name, "editor": editor, "file": f["name"]})
+                local_new_tasks.append({"cliente": cliente_name, "editor": editor, "file": f["name"]})
+            return local_new_tasks, local_sin_editor
+
+        # Paralelizar Fase 2 también
+        with ThreadPoolExecutor(max_workers=15) as ex:
+            futures = [ex.submit(_process_extra_client, name) for name in extra_clients]
+            for fut in as_completed(futures):
+                try:
+                    local_new, local_sin = fut.result()
+                    new_tasks.extend(local_new)
+                    sin_editor.extend(local_sin)
+                except Exception as e:
+                    print(f"   ⚠️  error procesando cliente extra: {e}")
     else:
         print("   (ninguno)")
 
@@ -190,18 +219,24 @@ def run(notify: bool = False):
         for c, fn in sin_editor:
             print(f"   - {c}: {fn}")
 
-    # === RE-ESTIMAR pending_count para clientes con /Material/ ===
+    # === RE-ESTIMAR pending_count para clientes con /Material/ — PARALELIZADO ===
     print("\n📊 Re-estimando contadores de videos pendientes...")
-    refreshed = 0
-    for c in clients_standard:
+
+    def _refresh_one(c):
         cliente_real = resolve_alias(c.cliente)
         editor_for_client = get_editor_for_client(cliente_real, packs)
         if not has_pending_for_client_editor(cliente_real, editor_for_client):
-            continue
+            return 0
         estimated = estimate_pending_videos(c.raw_folder_id, c.folder_id)
         if estimated > 0:
             set_pending_count(cliente_real, editor_for_client, estimated)
-            refreshed += 1
+            return 1
+        return 0
+
+    refreshed = 0
+    with ThreadPoolExecutor(max_workers=15) as ex:
+        for r in ex.map(_refresh_one, clients_standard):
+            refreshed += r
     if refreshed:
         print(f"   {refreshed} contadores actualizados.")
 
