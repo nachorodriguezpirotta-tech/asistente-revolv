@@ -75,7 +75,7 @@ def _list_files(parent_id: str, only_videos: bool = False) -> list[dict]:
     while True:
         res = service.files().list(
             q=f"'{parent_id}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'",
-            fields="nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, md5Checksum)",
+            fields="nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, md5Checksum, owners(emailAddress), lastModifyingUser(emailAddress))",
             pageSize=200,
             pageToken=page_token,
         ).execute()
@@ -303,7 +303,7 @@ def list_material_files(raw_folder_id: str) -> list[dict]:
             # shortcut directo a un video (poco común pero posible)
             try:
                 f = service.files().get(fileId=target_id,
-                                        fields="id, name, mimeType, size, createdTime, modifiedTime").execute()
+                                        fields="id, name, mimeType, size, createdTime, modifiedTime, owners(emailAddress), lastModifyingUser(emailAddress)").execute()
                 files.append(f)
             except Exception:
                 pass

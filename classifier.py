@@ -2,9 +2,10 @@
 Clasificador de videos: distingue CRUDOS (subidos por cliente) de EDITADOS (entregados por editor).
 
 Estrategia: combina señales de varios tipos para decidir.
+  - **Owner del archivo en Drive** (señal PRIMARIA): si el dueño/último-modificador
+    es un editor conocido (EDITOR_EMAILS) → EDITADO. Cualquier otro mail → CRUDO.
   - Carpeta padre: "Material/Raw/Crudos" vs "Editados/Pack X/Tanda N/etc"
   - Nombre del archivo: patrones de cámara/celular vs nombres descriptivos numerados
-  - (futuro) Owner del archivo en Drive
 
 Devuelve:
   True  → es editado (alto valor de confianza)
@@ -17,6 +18,11 @@ Filosofía: ser CONSERVADOR. Mejor "ambiguo" que falso positivo.
 import re
 import unicodedata
 from typing import Optional
+
+from aliases import EDITOR_EMAILS
+
+# Set de mails de editores en lowercase para matching rápido
+_EDITOR_EMAILS_LOWER = {e.strip().lower() for e in EDITOR_EMAILS.values() if e}
 
 
 def _normalize(s: str) -> str:
@@ -107,14 +113,53 @@ def _name_signals(name: str) -> Optional[bool]:
     return None
 
 
+def _owner_signal(file: dict) -> Optional[bool]:
+    """Devuelve True si el dueño/último-modificador es un editor de Revolv (=editado).
+    False si es claramente otro mail (=crudo). None si no hay info.
+
+    Drive API expone:
+      - owners[0].emailAddress → dueño del archivo
+      - lastModifyingUser.emailAddress → último que lo modificó/subió
+    """
+    if not _EDITOR_EMAILS_LOWER:
+        return None  # sin mails de editores configurados, no podemos decidir
+
+    candidates = []
+    for o in (file.get("owners") or []):
+        em = (o.get("emailAddress") or "").strip().lower()
+        if em:
+            candidates.append(em)
+    lm = (file.get("lastModifyingUser") or {}).get("emailAddress") or ""
+    lm = lm.strip().lower()
+    if lm:
+        candidates.append(lm)
+
+    if not candidates:
+        return None  # sin owner info
+
+    # Si CUALQUIERA de los candidatos es editor → editado
+    if any(em in _EDITOR_EMAILS_LOWER for em in candidates):
+        return True
+
+    # Si tenemos owner info y NINGUNO es editor → crudo
+    return False
+
+
 def classify(file: dict, parent_name: Optional[str] = None) -> Optional[bool]:
     """
     Clasifica un archivo de video.
     Retorna True (editado), False (crudo) o None (ambiguo).
 
     `file` es un dict de Drive API (al menos con key 'name').
+                Si incluye `owners` y/o `lastModifyingUser`, se usa como señal PRIMARIA.
     `parent_name` es el nombre de la carpeta inmediatamente arriba.
     """
+    # Señal PRIMARIA: owner del archivo. Si tenemos info confiable, override total.
+    owner_sig = _owner_signal(file)
+    if owner_sig is not None:
+        return owner_sig
+
+    # Fallback a heurísticas si no hay owner info
     parent_sig = _parent_signals(parent_name)
     name_sig = _name_signals(file.get("name", ""))
 
@@ -153,6 +198,16 @@ def is_likely_crudo(file: dict, parent_name: Optional[str] = None) -> bool:
 if __name__ == "__main__":
     # Tests
     cases = [
+        # Owner-based (PRIMARIO) — override de todo
+        ({"name": "1. melesio.mp4", "owners": [{"emailAddress": "cliente@gmail.com"}]},
+         "Pack 1", False, "owner=cliente override pack/nombre"),
+        ({"name": "IMG_4123.mp4", "owners": [{"emailAddress": "ramirolema00@gmail.com"}]},
+         "Material", True, "owner=editor override material/IMG"),
+        ({"name": "foo.mp4", "lastModifyingUser": {"emailAddress": "francoelagar@gmail.com"}},
+         None, True, "lastModifying=editor"),
+        ({"name": "foo.mp4", "owners": [{"emailAddress": "lilirohe@gmail.com"}]},
+         None, False, "owner=cliente (no editor)"),
+        # Heurísticas (fallback cuando NO hay owner)
         ({"name": "IMG_4123.mp4"}, None, False, "cámara"),
         ({"name": "MVI_0234.MOV"}, None, False, "Canon"),
         ({"name": "hf_20260504_150952_441b8d9d.mp4"}, None, False, "higgsfield hash"),
