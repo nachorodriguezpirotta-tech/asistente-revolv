@@ -137,12 +137,14 @@ def _owner_signal(file: dict) -> Optional[bool]:
     if not candidates:
         return None  # sin owner info
 
-    # Si CUALQUIERA de los candidatos es editor → editado
+    # Si CUALQUIERA de los candidatos es editor → editado (alta confianza)
     if any(em in _EDITOR_EMAILS_LOWER for em in candidates):
         return True
 
-    # Si tenemos owner info y NINGUNO es editor → crudo
-    return False
+    # Si owner NO es editor conocido → NO podemos afirmar "es crudo" porque puede
+    # ser un editor que no tenemos mapeado (Lean, Agus, Jose, Lucho, Santi, Samu, Jere...).
+    # Caer al fallback de heurística por nombre/carpeta para evitar falsos positivos.
+    return None
 
 
 def classify(file: dict, parent_name: Optional[str] = None) -> Optional[bool]:
