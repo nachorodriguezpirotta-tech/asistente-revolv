@@ -1,40 +1,37 @@
-name: Scan Drive (Asistente Revolv)
+name: Scan Incremental (Asistente Revolv)
+
+# Scan rápido que usa Drive Changes API — procesa solo lo que cambió desde
+# el último run. Tarda segundos, corre cada 2 min para latencia mínima.
+# El scan completo (scan.yml) sigue corriendo cada hora como backup.
 
 on:
   schedule:
-    # Cada 1 hora: scan COMPLETO (descubre clientes nuevos, re-estima counts,
-    # cierra tareas, etc). El scan-incremental.yml corre cada 2 min para
-    # latencia inmediata, este queda como backup full sweep.
-    - cron: '0 * * * *'
-  workflow_dispatch: {}  # disparable a mano desde la UI de GitHub
+    - cron: '*/2 * * * *'   # cada 2 minutos
+  workflow_dispatch: {}
   push:
     branches: [main]
-    # NO disparar si solo cambia la DB (los commits del bot no deben re-ejecutar)
     paths-ignore:
       - 'tracker.db'
+      - '*.md'
+      - '.gitignore'
 
-# Concurrency lock: si un workflow ya está corriendo, encolar el siguiente
-# en vez de cancelarlo. Previene race conditions que generaban mails duplicados
-# (workflows en paralelo veían el mismo archivo como "nuevo" antes de que
-# el otro lo marcara como conocido).
+# Lock: si un scan está corriendo, encolar el siguiente
 concurrency:
-  group: scan-drive
+  group: scan-incremental
   cancel-in-progress: false
 
-# Permiso para que el workflow pueda commitear la DB actualizada
 permissions:
   contents: write
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5  # debería tardar segundos, 5 min es paranoia
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          # token con permiso de push para que el commit del bot pueda subir
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
@@ -46,14 +43,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run scan with notify
+      - name: Run incremental scan with notify
         env:
           OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
           OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
           OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
-        run: python scan.py --notify
+        run: python scan_incremental.py --notify
 
       - name: Commit DB if changed
         run: |
@@ -61,9 +59,10 @@ jobs:
           git config user.email "bot@revolv.local"
           if git status --porcelain tracker.db | grep -q .; then
             git add tracker.db
-            git commit -m "[bot] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+            git commit -m "[bot-inc] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+            git pull --rebase
             git push
-            echo "✅ DB actualizada en repo"
+            echo "DB actualizada"
           else
-            echo "ℹ️  DB sin cambios, no commit necesario"
+            echo "DB sin cambios"
           fi

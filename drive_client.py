@@ -502,6 +502,51 @@ def _list_recursive_videos(folder_id: str, parent_name: Optional[str] = None) ->
     return out
 
 
+# ─── Drive Changes API (incremental scan) ────────────────────────────────────
+
+def get_start_page_token() -> str:
+    """Obtiene el page token actual de Drive (marca el estado HOY).
+    Cualquier cambio futuro se puede listar pidiendo desde este token."""
+    service = get_service()
+    res = service.changes().getStartPageToken().execute()
+    return res["startPageToken"]
+
+
+def list_changes_since(page_token: str) -> tuple[list[dict], str]:
+    """Lista todos los cambios en Drive desde el page_token dado.
+    Devuelve (lista_de_changes, nuevo_page_token).
+
+    Cada change tiene:
+      - fileId: id del archivo cambiado
+      - file: dict con info del archivo (si fue modificado, no eliminado)
+      - removed: True si el archivo fue eliminado
+      - time: timestamp del cambio
+
+    El nuevo_page_token sirve para la PRÓXIMA llamada incremental.
+    """
+    service = get_service()
+    all_changes = []
+    current_token = page_token
+    while True:
+        res = service.changes().list(
+            pageToken=current_token,
+            pageSize=1000,
+            fields="nextPageToken, newStartPageToken, changes(fileId, removed, time, "
+                   "file(id, name, mimeType, size, createdTime, modifiedTime, "
+                   "parents, owners(emailAddress), lastModifyingUser(emailAddress), trashed))",
+            spaces="drive",
+            includeRemoved=True,
+        ).execute()
+        all_changes.extend(res.get("changes", []))
+        next_page = res.get("nextPageToken")
+        if next_page:
+            current_token = next_page
+            continue
+        # Última página devuelve newStartPageToken para usar la próxima vez
+        new_start = res.get("newStartPageToken") or current_token
+        return all_changes, new_start
+
+
 if __name__ == "__main__":
     print("📁 Descubriendo carpetas de cliente (las que tienen Material/Raw/Crudos)...")
     clients = discover_client_folders()

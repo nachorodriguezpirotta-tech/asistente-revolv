@@ -105,6 +105,15 @@ def init_db():
         )
     """)
 
+    # Tabla meta: key/value para guardar estado del sistema (ej. drive_changes_page_token)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT
+        )
+    """)
+
     # Tabla de progreso por editor — soporta MÚLTIPLES contadores por editor.
     # Migración si existe versión vieja sin columna 'label':
     has_progress_table = conn.execute(
@@ -160,6 +169,25 @@ def init_db():
 
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+# ─── Meta (key/value para estado del sistema) ────────────────────────────────
+
+def meta_get(key: str) -> Optional[str]:
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def meta_set(key: str, value: str):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    """, (key, value, now_iso()))
+    conn.commit()
+    conn.close()
 
 
 def upsert_client(folder_id: str, cliente: str, raw_folder_id: Optional[str]):
