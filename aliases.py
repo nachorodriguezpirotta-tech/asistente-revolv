@@ -48,7 +48,11 @@ EDITOR_EMAILS = {
     "Fran": "francoelagar@gmail.com",
     "Rami": "ramirolema00@gmail.com",
     "Valen": "valencoto12@gmail.com",
-    # Sumar más cuando Ignacio pase otros mails
+    "Agus": "agustinbernalrdp@gmail.com",
+    "Santi": "santyoficial2009@gmail.com",
+    "Jere": "jeremart.1605@gmail.com",
+    "Samu": "samueltm097@gmail.com",
+    # Faltan: Lean, Jose, Lucho (otros editores que vi en el Sheet)
 }
 
 
