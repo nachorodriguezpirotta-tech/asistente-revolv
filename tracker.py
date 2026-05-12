@@ -191,6 +191,22 @@ def add_known_file(file_id: str, cliente: str, folder_id: str, name: str,
     conn.close()
 
 
+def claim_file(file_id: str, cliente: str, folder_id: str, name: str,
+               size: Optional[int], created_time: Optional[str], is_baseline: bool = False) -> bool:
+    """Versión atómica: INSERT y retorna True si efectivamente insertó (primero en verlo),
+    False si ya existía (otro proceso/workflow lo claimó). Sirve como lock anti-race condition."""
+    conn = get_conn()
+    cur = conn.execute("""
+        INSERT OR IGNORE INTO known_files
+        (file_id, cliente, folder_id, name, size, created_time, first_seen_at, is_baseline)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (file_id, cliente, folder_id, name, size, created_time, now_iso(), 1 if is_baseline else 0))
+    inserted = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return inserted
+
+
 def is_file_known(file_id: str) -> bool:
     conn = get_conn()
     row = conn.execute("SELECT 1 FROM known_files WHERE file_id = ?", (file_id,)).fetchone()
@@ -232,6 +248,26 @@ def add_known_edited_file(file_id: str, cliente: str, folder_id: str, name: str,
           1 if is_baseline else 0, closed_task_id))
     conn.commit()
     conn.close()
+
+
+def claim_edited_file(file_id: str, cliente: str, folder_id: str, name: str,
+                      size: Optional[int], created_time: Optional[str],
+                      is_baseline: bool = False,
+                      closed_task_id: Optional[int] = None) -> bool:
+    """Versión atómica de add_known_edited_file: retorna True si efectivamente insertó
+    (primero en verlo), False si ya existía. Sirve como lock anti-race condition
+    para evitar mails de cierre duplicados cuando dos scans corren concurrentes."""
+    conn = get_conn()
+    cur = conn.execute("""
+        INSERT OR IGNORE INTO known_edited_files
+        (file_id, cliente, folder_id, name, size, created_time, first_seen_at, is_baseline, closed_task_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (file_id, cliente, folder_id, name, size, created_time, now_iso(),
+          1 if is_baseline else 0, closed_task_id))
+    inserted = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return inserted
 
 
 def edited_baseline_done(cliente: str) -> bool:

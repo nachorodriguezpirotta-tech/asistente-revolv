@@ -11,9 +11,13 @@ on:
     paths-ignore:
       - 'tracker.db'
 
-# NO usamos concurrency lock: en raras colisiones de timing GH cancelaba runs
-# en lugar de encolarlos. La lógica del sistema es idempotente (is_file_known
-# evita mails duplicados), así que un overlap esporádico no es problema.
+# Concurrency lock: si un workflow ya está corriendo, encolar el siguiente
+# en vez de cancelarlo. Previene race conditions que generaban mails duplicados
+# (workflows en paralelo veían el mismo archivo como "nuevo" antes de que
+# el otro lo marcara como conocido).
+concurrency:
+  group: scan-drive
+  cancel-in-progress: false
 
 # Permiso para que el workflow pueda commitear la DB actualizada
 permissions:

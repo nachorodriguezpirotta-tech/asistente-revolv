@@ -16,7 +16,7 @@ from drive_client import (
     _list_root_items_with_shortcuts, estimate_pending_videos,
 )
 from tracker import (
-    init_db, upsert_client, add_known_file, is_file_known,
+    init_db, upsert_client, add_known_file, claim_file, is_file_known,
     create_task, list_pending_tasks, stats, get_conn,
     has_pending_for_client_editor, increment_pending_count,
     set_pending_count, is_client_blocked,
@@ -60,13 +60,16 @@ def run(notify: bool = False):
         for f in files:
             if is_file_known(f["id"]):
                 continue
-            had_new_file = True
             size = int(f["size"]) if f.get("size") else None
-            add_known_file(
+            # CLAIM ATÓMICO: si otro workflow ya lo claimó, saltar (anti-duplicado de mails)
+            claimed = claim_file(
                 file_id=f["id"], cliente=cliente_real, folder_id=c.raw_folder_id,
                 name=f["name"], size=size, created_time=f.get("createdTime"),
                 is_baseline=False,
             )
+            if not claimed:
+                continue
+            had_new_file = True
             editor = get_editor_for_client(cliente_real, packs)
             if has_pending_for_client_editor(cliente_real, editor):
                 continue
@@ -138,11 +141,14 @@ def run(notify: bool = False):
                 # archivos recientes se tratan como nuevos (probablemente recién subidos)
                 is_baseline_file = first_time and (not created or created < recent_threshold)
 
-                add_known_file(
+                # CLAIM ATÓMICO: si otro workflow ya lo claimó, saltar
+                claimed = claim_file(
                     file_id=f["id"], cliente=cliente_name, folder_id=folder["id"],
                     name=f["name"], size=size, created_time=f.get("createdTime"),
                     is_baseline=is_baseline_file,
                 )
+                if not claimed:
+                    continue
                 if is_baseline_file:
                     continue  # archivo viejo en primera corrida → baseline silencioso
                 # Archivo nuevo → crear tarea (con deduplicación por cliente+editor)

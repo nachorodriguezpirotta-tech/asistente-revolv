@@ -21,7 +21,7 @@ from drive_client import (
 )
 from tracker import (
     get_conn,
-    is_edited_known, add_known_edited_file,
+    is_edited_known, add_known_edited_file, claim_edited_file,
     edited_baseline_done,
     close_oldest_pending, count_pending_for_client,
     close_all_pending_for_client, decrement_pending_count,
@@ -185,6 +185,17 @@ def run_closer(verbose: bool = True) -> dict:
         for f in editados:
             if is_edited_known(f["id"]):
                 continue
+            # CLAIM ATÓMICO: intentamos marcar el archivo como conocido ANTES de cerrar
+            # task / mandar mail. Si otro proceso ya lo claimó (return False), saltamos.
+            # Evita mails duplicados cuando dos scans corren concurrentes.
+            size = int(f["size"]) if f.get("size") else None
+            claimed = claim_edited_file(
+                file_id=f["id"], cliente=cliente, folder_id="(varias)",
+                name=f["name"], size=size, created_time=f.get("createdTime"),
+                is_baseline=False, closed_task_id=None,
+            )
+            if not claimed:
+                continue  # otro workflow ya lo procesó
             result = decrement_pending_count(cliente, completed_by_file_id=f["id"])
             if result["task_id"] is not None:
                 summary["cierres"].append({
@@ -198,12 +209,6 @@ def run_closer(verbose: bool = True) -> dict:
                 })
                 if result["closed"]:
                     summary["tareas_cerradas"] += 1
-            size = int(f["size"]) if f.get("size") else None
-            add_known_edited_file(
-                file_id=f["id"], cliente=cliente, folder_id="(varias)",
-                name=f["name"], size=size, created_time=f.get("createdTime"),
-                is_baseline=False, closed_task_id=None,
-            )
             summary["nuevos_editados"] += 1
             if verbose:
                 if result["task_id"] is None:
