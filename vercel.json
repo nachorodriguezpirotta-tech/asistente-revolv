@@ -5,7 +5,8 @@
   "installCommand": null,
   "outputDirectory": null,
   "rewrites": [
-    { "source": "/", "destination": "/index.html" }
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/stats", "destination": "/stats.html" }
   ],
   "functions": {
     "api/data.py": {
@@ -13,6 +14,10 @@
       "maxDuration": 10
     },
     "api/task.py": {
+      "memory": 256,
+      "maxDuration": 10
+    },
+    "api/stats.py": {
       "memory": 256,
       "maxDuration": 10
     }

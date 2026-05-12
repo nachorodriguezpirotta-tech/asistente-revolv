@@ -237,7 +237,10 @@
         </div>
     </header>
 
-    <button class="add-btn-main" onclick="openAddDialog()">+ Agregar pendiente</button>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+      <button class="add-btn-main" onclick="openAddDialog()">+ Agregar pendiente</button>
+      <a id="stats-link" href="#" style="display:none; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">📊 Ver Stats</a>
+    </div>
 
     <div id="content">
         <div class="loading">Cargando datos…</div>
@@ -261,6 +264,13 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
     subtitle.textContent = IS_ADMIN
         ? 'Vista global — todos los editores'
         : 'Tus pendientes hoy';
+    if (IS_ADMIN) {
+        const statsLink = document.getElementById('stats-link');
+        if (statsLink) {
+            statsLink.href = `/stats.html?t=${encodeURIComponent(TOKEN)}`;
+            statsLink.style.display = 'inline-block';
+        }
+    }
     loadData();
 }
 
