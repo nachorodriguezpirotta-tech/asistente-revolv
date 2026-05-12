@@ -246,11 +246,13 @@ def run(notify: bool = False):
     closer_summary = run_closer(verbose=True)
     if closer_summary["tareas_cerradas"] > 0:
         print(f"\n✅ {closer_summary['tareas_cerradas']} tareas cerradas automáticamente.")
-        if notify and closer_summary["cierres"]:
-            print("📧 Mandando mails de cierre...")
-            from notifier import send_completion_mails
-            sent = send_completion_mails(closer_summary["cierres"])
-            print(f"   {sent} mails de cierre enviados.")
+    # Mandar mails por TODOS los cierres: incluye parciales (1 video editado, quedan N)
+    # y finales (último video completó al cliente). El notifier diferencia por `closed`.
+    if notify and closer_summary["cierres"]:
+        print(f"📧 Mandando mails de cierre ({len(closer_summary['cierres'])} editados)...")
+        from notifier import send_completion_mails
+        sent = send_completion_mails(closer_summary["cierres"])
+        print(f"   {sent} mails de cierre enviados.")
 
     pendings = list_pending_tasks()
     print(f"\n📊 Total pendientes en DB: {len(pendings)}")
