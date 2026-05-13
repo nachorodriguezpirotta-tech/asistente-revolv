@@ -113,17 +113,8 @@ def _name_signals(name: str) -> Optional[bool]:
     return None
 
 
-def _owner_signal(file: dict) -> Optional[bool]:
-    """Devuelve True si el dueño/último-modificador es un editor de Revolv (=editado).
-    False si es claramente otro mail (=crudo). None si no hay info.
-
-    Drive API expone:
-      - owners[0].emailAddress → dueño del archivo
-      - lastModifyingUser.emailAddress → último que lo modificó/subió
-    """
-    if not _EDITOR_EMAILS_LOWER:
-        return None  # sin mails de editores configurados, no podemos decidir
-
+def _get_owner_emails(file: dict) -> list[str]:
+    """Devuelve la lista de mails relevantes del archivo (owners + lastModifyingUser), lowercase."""
     candidates = []
     for o in (file.get("owners") or []):
         em = (o.get("emailAddress") or "").strip().lower()
@@ -131,23 +122,96 @@ def _owner_signal(file: dict) -> Optional[bool]:
             candidates.append(em)
     lm = (file.get("lastModifyingUser") or {}).get("emailAddress") or ""
     lm = lm.strip().lower()
-    if lm:
+    if lm and lm not in candidates:
         candidates.append(lm)
+    return candidates
 
+
+# Tokens demasiado genéricos para usarlos como signal del cliente.
+# Si el nombre del cliente es "Roger Marti", token "marti" es útil, "roger" también.
+# Pero "y", "de", "el" son ruido.
+_STOPWORDS_TOKEN = {
+    "de", "del", "el", "la", "los", "las", "y", "e", "o", "u", "a",
+    "the", "and", "or", "of",
+}
+
+
+def _client_tokens(cliente_name: str) -> list[str]:
+    """Tokens útiles del nombre del cliente para matchear contra local-parts de mail."""
+    if not cliente_name:
+        return []
+    norm = _normalize(cliente_name)
+    tokens = [t for t in norm.split() if len(t) >= 3 and t not in _STOPWORDS_TOKEN]
+    return tokens
+
+
+def _is_owner_the_client(file: dict, cliente_name: Optional[str]) -> bool:
+    """¿El owner del archivo es el propio cliente? Heurística por fuzzy match
+    del nombre del cliente contra el local-part del mail.
+
+    Estrategia (bidirectional):
+      - Tomar tokens del cliente (>=3 chars, sin stopwords)
+      - Tomar local-part del mail (normalizado, sin separadores)
+      - MATCH si:
+          a) token completo aparece en local-part
+          b) prefijo de 4+ chars del token aparece en local-part
+
+    Ej: cliente='Electro Angel' + 'electroangel@gmail.com'   → True (tokens "electro", "angel")
+        cliente='Liliana Rohenes' + 'lilirohe@gmail.com'     → True (lili⊂liliana, rohe prefix de rohenes)
+        cliente='Roger Marti' + 'rogermart@gmail.com'        → True
+        cliente='Roger Marti' + 'unrelated@gmail.com'        → False
+    """
+    if not cliente_name:
+        return False
+    tokens = _client_tokens(cliente_name)
+    if not tokens:
+        return False
+    for em in _get_owner_emails(file):
+        local = em.split("@", 1)[0]
+        local_norm = _normalize(local).replace(".", "").replace("_", "").replace("-", "")
+        for t in tokens:
+            # Match completo: "angel" en "electroangel"
+            if t in local_norm:
+                return True
+            # Match por prefijo del token (mínimo 4 chars): "rohe" (de "rohenes") en "lilirohe"
+            if len(t) >= 4 and t[:4] in local_norm:
+                return True
+            # Match por prefijo del local-part en el token: "lili" en "liliana"
+            for i in range(4, min(len(local_norm), len(t)) + 1):
+                if local_norm[:i] == t[:i]:
+                    return True
+                # solo necesitamos un prefix válido — si los 4 primeros coinciden, ya entró arriba
+                break
+    return False
+
+
+def _owner_signal(file: dict, cliente_name: Optional[str] = None) -> Optional[bool]:
+    """Devuelve True si owner es editor conocido (=editado).
+    Devuelve False si owner es el cliente (=crudo).
+    None si no se puede determinar (caer al fallback heurístico).
+
+    Drive API expone:
+      - owners[0].emailAddress → dueño del archivo
+      - lastModifyingUser.emailAddress → último que lo modificó/subió
+    """
+    candidates = _get_owner_emails(file)
     if not candidates:
-        return None  # sin owner info
+        return None
 
-    # Si CUALQUIERA de los candidatos es editor → editado (alta confianza)
-    if any(em in _EDITOR_EMAILS_LOWER for em in candidates):
+    # 1) Editor conocido → EDITADO (alta confianza)
+    if _EDITOR_EMAILS_LOWER and any(em in _EDITOR_EMAILS_LOWER for em in candidates):
         return True
 
-    # Si owner NO es editor conocido → NO podemos afirmar "es crudo" porque puede
-    # ser un editor que no tenemos mapeado (Lean, Agus, Jose, Lucho, Santi, Samu, Jere...).
-    # Caer al fallback de heurística por nombre/carpeta para evitar falsos positivos.
+    # 2) Owner matchea el nombre del cliente → CRUDO (cliente subió)
+    if _is_owner_the_client(file, cliente_name):
+        return False
+
+    # 3) No sabemos → caer al fallback de heurística
     return None
 
 
-def classify(file: dict, parent_name: Optional[str] = None) -> Optional[bool]:
+def classify(file: dict, parent_name: Optional[str] = None,
+             cliente_name: Optional[str] = None) -> Optional[bool]:
     """
     Clasifica un archivo de video.
     Retorna True (editado), False (crudo) o None (ambiguo).
@@ -155,9 +219,12 @@ def classify(file: dict, parent_name: Optional[str] = None) -> Optional[bool]:
     `file` es un dict de Drive API (al menos con key 'name').
                 Si incluye `owners` y/o `lastModifyingUser`, se usa como señal PRIMARIA.
     `parent_name` es el nombre de la carpeta inmediatamente arriba.
+    `cliente_name` (opcional): nombre del cliente. Si owner del archivo matchea
+        el nombre del cliente (fuzzy), se asume crudo. Ej: cliente='Electro Angel'
+        + owner='electroangel@gmail.com' → CRUDO.
     """
     # Señal PRIMARIA: owner del archivo. Si tenemos info confiable, override total.
-    owner_sig = _owner_signal(file)
+    owner_sig = _owner_signal(file, cliente_name=cliente_name)
     if owner_sig is not None:
         return owner_sig
 
@@ -198,18 +265,43 @@ def is_likely_crudo(file: dict, parent_name: Optional[str] = None) -> bool:
 
 
 if __name__ == "__main__":
-    # Tests
-    cases = [
-        # Owner-based (PRIMARIO) — override de todo
-        ({"name": "1. melesio.mp4", "owners": [{"emailAddress": "cliente@gmail.com"}]},
-         "Pack 1", False, "owner=cliente override pack/nombre"),
+    # Tests del fuzzy match cliente
+    print("== Fuzzy match owner vs cliente ==")
+    fuzzy_cases = [
+        ({"owners": [{"emailAddress": "electroangel@gmail.com"}]}, "Electro Angel", True, "electroangel + Electro Angel"),
+        ({"owners": [{"emailAddress": "rogermart@gmail.com"}]}, "Roger Marti", True, "rogermart + Roger Marti"),
+        ({"owners": [{"emailAddress": "jorgegonzalez@gmail.com"}]}, "Jorge y Darien", True, "jorge match Jorge"),
+        ({"owners": [{"emailAddress": "lilirohe@gmail.com"}]}, "Liliana Rohenes", True, "rohe match Rohenes"),
+        ({"owners": [{"emailAddress": "totallyunrelated@gmail.com"}]}, "Roger Marti", False, "unrelated NO match"),
+        ({"owners": [{"emailAddress": "ramirolema00@gmail.com"}]}, "Roger Marti", False, "editor != cliente"),
+    ]
+    for f, cli, expected, desc in fuzzy_cases:
+        result = _is_owner_the_client(f, cli)
+        ok = "✅" if result == expected else "❌"
+        print(f"  {ok} {desc:<40} → {result}")
+
+    print("\n== classify() tests ==")
+    # firma: (file, parent_name, cliente_name, expected, desc)
+    cases_with_cliente = [
+        # Fuzzy match cliente → CRUDO sin importar nombre/carpeta
+        ({"name": "1. melesio.mp4", "owners": [{"emailAddress": "electroangel@gmail.com"}]},
+         "Pack 1", "Electro Angel", False, "Electro Angel sube en Pack 1 → crudo por owner"),
+        ({"name": "Video 5 final.mp4", "owners": [{"emailAddress": "jorge.gz@gmail.com"}]},
+         "Editados", "Jorge y Darien", False, "Jorge sube en Editados → crudo por owner"),
+        # Editor conocido: editado siempre
         ({"name": "IMG_4123.mp4", "owners": [{"emailAddress": "ramirolema00@gmail.com"}]},
-         "Material", True, "owner=editor override material/IMG"),
+         "Material", "Roger Marti", True, "editor sube IMG en Material → editado"),
+    ]
+    for f, pn, cli, expected, desc in cases_with_cliente:
+        result = classify(f, parent_name=pn, cliente_name=cli)
+        ok = "✅" if result == expected else "❌"
+        print(f"  {ok} {desc:<45} → {result}")
+
+    # Tests legacy (sin cliente_name, fallback heurístico)
+    print("\n== classify() tests (fallback heurístico, sin cliente_name) ==")
+    cases = [
         ({"name": "foo.mp4", "lastModifyingUser": {"emailAddress": "francoelagar@gmail.com"}},
          None, True, "lastModifying=editor"),
-        ({"name": "foo.mp4", "owners": [{"emailAddress": "lilirohe@gmail.com"}]},
-         None, False, "owner=cliente (no editor)"),
-        # Heurísticas (fallback cuando NO hay owner)
         ({"name": "IMG_4123.mp4"}, None, False, "cámara"),
         ({"name": "MVI_0234.MOV"}, None, False, "Canon"),
         ({"name": "hf_20260504_150952_441b8d9d.mp4"}, None, False, "higgsfield hash"),

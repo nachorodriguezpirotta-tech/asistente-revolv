@@ -161,10 +161,34 @@ def run(notify: bool = False):
             new_tasks.append({"cliente": cliente_real, "editor": editor, "file": f["name"]})
             continue
 
-        # NO es crudo: clasificar con owner-based (puede ser editado)
-        sig = classify(f, parent_name=None)  # parent_name no relevante aquí
+        # NO es crudo según parent: clasificar con owner-based + fuzzy match cliente
+        sig = classify(f, parent_name=None, cliente_name=cliente_real)
+        if sig is False:
+            # Owner matchea el cliente → SÍ es crudo (subió fuera de /Material/)
+            # Tratarlo como crudo: claim + crear task igual que arriba
+            if is_file_known(f["id"]):
+                continue
+            size = int(f["size"]) if f.get("size") else None
+            claimed = claim_file(
+                file_id=f["id"], cliente=cliente_real,
+                folder_id="(incremental-fuera-material)",
+                name=f["name"], size=size, created_time=f.get("createdTime"),
+                is_baseline=False,
+            )
+            if not claimed:
+                continue
+            if has_manual_pending_for_client(cliente_real):
+                continue
+            editor = get_editor_for_client(cliente_real, packs)
+            if has_pending_for_client_editor(cliente_real, editor):
+                continue
+            if is_client_blocked(cliente_real, editor):
+                continue
+            create_task(cliente_real, editor, f["id"], f["name"])
+            new_tasks.append({"cliente": cliente_real, "editor": editor, "file": f["name"]})
+            continue
         if sig is not True:
-            continue  # ambiguo o crudo → ignorar (scan completo se encarga)
+            continue  # ambiguo → ignorar (scan completo se encarga)
 
         # Es editado → cerrar task pendiente (si hay)
         if is_edited_known(f["id"]):

@@ -427,7 +427,7 @@ def list_crudos_anywhere(client_folder_id: str, client_folder_name: Optional[str
     #      subidos sueltos (los EDITADOS sí los descartamos por nombre).
     has_material_subfolder = raw is not None
     for f in _list_files(client_folder_id, only_videos=True):
-        sig = classify(f, parent_name=client_folder_name)
+        sig = classify(f, parent_name=client_folder_name, cliente_name=client_folder_name)
         if sig is False:  # crudo seguro
             crudos.append(f)
         elif sig is None and not has_material_subfolder:
@@ -463,7 +463,7 @@ def list_edited_files(client_folder_id: str, raw_folder_id: Optional[str],
     # Videos directos en raíz del cliente
     direct = _list_files(client_folder_id, only_videos=True)
     for f in direct:
-        sig = classify(f, parent_name=client_folder_name)
+        sig = classify(f, parent_name=client_folder_name, cliente_name=client_folder_name)
         if sig is True:  # editado seguro
             edited.append(f)
         elif sig is None and has_material:
