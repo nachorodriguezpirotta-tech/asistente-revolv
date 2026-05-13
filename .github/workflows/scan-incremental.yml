@@ -43,7 +43,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run incremental scan with notify
+      - name: Run incremental scan with notify (con reintento)
         env:
           OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
           OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
@@ -51,7 +51,13 @@ jobs:
           MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
-        run: python scan_incremental.py --notify
+        run: |
+          for i in 1 2 3; do
+            python scan_incremental.py --notify && break
+            ec=$?
+            echo "Intento $i falló (exit $ec)"
+            if [ $i -lt 3 ]; then sleep $((5 * i)); else exit $ec; fi
+          done
 
       - name: Commit DB if changed
         run: |

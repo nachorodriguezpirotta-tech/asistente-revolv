@@ -1,0 +1,37 @@
+name: Health Check (Asistente Revolv)
+
+# Verifica cada 1 hora que el sistema esté funcionando.
+# Si lleva +90 min sin actividad, manda mail de alerta a Ignacio.
+
+on:
+  schedule:
+    - cron: '15 * * * *'  # cada hora, en el minuto 15 (offset del scan)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Health check
+        env:
+          OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+        run: python health_check.py

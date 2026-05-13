@@ -46,14 +46,26 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run scan with notify
+      - name: Run scan with notify (con reintento automático)
         env:
           OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
           OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
           OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
-        run: python scan.py --notify
+        # Reintento: hasta 3 intentos con backoff exponencial (10s, 30s)
+        run: |
+          for i in 1 2 3; do
+            python scan.py --notify && break
+            ec=$?
+            echo "Intento $i falló (exit $ec)"
+            if [ $i -lt 3 ]; then
+              sleep $((10 * i * i))
+            else
+              exit $ec
+            fi
+          done
 
       - name: Commit DB if changed
         run: |
