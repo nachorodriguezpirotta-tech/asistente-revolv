@@ -949,37 +949,61 @@ async function onDrop(e) {
     }
 }
 
-async function reassignClient(cliente, currentEditor, btn) {
-    // Lista de editores disponibles
-    const editores = Object.keys(LAST_DATA?.by_editor || {}).filter(e => !e.startsWith('—'));
-    const opciones = editores.join(', ');
-    const nuevo = prompt(`Reasignar "${cliente}" a qué editor?\n\nActual: ${currentEditor}\nDisponibles: ${opciones}\n\nEscribí el nombre:`);
-    if (!nuevo || !nuevo.trim()) return;
-    const trimmed = nuevo.trim();
-    if (trimmed.toLowerCase() === currentEditor.toLowerCase()) {
-        alert('Es el mismo editor.');
+function reassignClient(cliente, currentEditor, btn) {
+    // Modal con lista clickeable de editores
+    const editores = Object.keys(LAST_DATA?.by_editor || {})
+        .filter(e => !e.startsWith('—') && e !== currentEditor);
+    if (editores.length === 0) {
+        alert('No hay otros editores disponibles.');
         return;
     }
-    btn.disabled = true;
-    try {
-        const res = await fetch('/api/task', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                admin: 1, t: TOKEN,
-                action: 'reassign',
-                cliente: cliente,
-                current_editor: currentEditor,
-                new_editor: trimmed,
-            }),
+    const overlay = document.createElement('div');
+    overlay.className = 'add-overlay';
+    overlay.innerHTML = `
+      <div class="add-modal">
+        <h3>Reasignar ${escapeHtml(cliente)}</h3>
+        <p style="color:var(--text-dim); font-size:13px; margin-bottom:14px;">Actual: <strong>${escapeHtml(currentEditor)}</strong></p>
+        <div style="display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto;">
+          ${editores.map(e => `
+            <button class="editor-pick" data-editor="${escapeHtml(e)}"
+              style="text-align:left; padding:12px 14px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; font-size:14px; cursor:pointer; font-family:inherit;">
+              ↪ Mover a <strong>${escapeHtml(e)}</strong>
+            </button>
+          `).join('')}
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-cancel" onclick="this.closest('.add-overlay').remove()">Cancelar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelectorAll('.editor-pick').forEach(b => {
+        b.addEventListener('click', async () => {
+            const newEditor = b.dataset.editor;
+            b.disabled = true;
+            b.textContent = 'Moviendo...';
+            try {
+                const res = await fetch('/api/task', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        admin: 1, t: TOKEN,
+                        action: 'reassign',
+                        cliente, current_editor: currentEditor, new_editor: newEditor,
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+                overlay.remove();
+                await loadData();
+            } catch (err) {
+                alert('Error: ' + err.message);
+                b.disabled = false;
+            }
         });
-        const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        await loadData();
-    } catch (e) {
-        btn.disabled = false;
-        alert('No se pudo reasignar:\n' + e.message);
-    }
+        b.addEventListener('mouseenter', () => { b.style.background = 'var(--bg-card-2)'; b.style.borderColor = '#60a5fa'; });
+        b.addEventListener('mouseleave', () => { b.style.background = 'var(--bg)'; b.style.borderColor = 'var(--border)'; });
+    });
 }
 
 async function deleteCliente(cliente, editor, btn) {
