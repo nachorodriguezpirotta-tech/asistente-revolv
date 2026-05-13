@@ -21,6 +21,7 @@ Diseñado para correr cada 1-2 min sin gastar muchos recursos.
 import os
 import sys
 import argparse
+from typing import Optional
 
 # KILL SWITCH (igual que scan.py)
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -63,18 +64,72 @@ def _build_folder_index() -> tuple[dict, dict]:
     return folder_to_client, raw_to_client
 
 
-def _resolve_client_for_file(f: dict, folder_to_client: dict, raw_to_client: dict) -> tuple[str, bool]:
+def _resolve_client_for_file(f: dict, folder_to_client: dict, raw_to_client: dict,
+                              ancestry_cache: Optional[dict] = None) -> tuple[Optional[str], Optional[bool]]:
     """Devuelve (cliente_real, is_crudo) o (None, None) si no es relevante.
     is_crudo=True → archivo está en /Material/ del cliente (es crudo)
-    is_crudo=False → archivo está en la raíz del cliente o subcarpeta (puede ser editado)
+    is_crudo=False → archivo está en una subcarpeta del cliente (raíz o profunda)
     is_crudo=None → no es de un cliente conocido
+
+    Estrategia:
+      1. Mira el parent inmediato. Si está en raw_to_client → crudo.
+         Si está en folder_to_client → editado.
+      2. Si no, sube por la cadena de ancestors (max 6 niveles) buscando un
+         folder_id de cliente conocido. Esto detecta archivos en subcarpetas
+         profundas como /Cliente/Lina/Tanda 3/video.mp4.
+      3. Cache de ancestry para no repetir las calls a Drive API.
     """
+    from drive_client import get_service
+    if ancestry_cache is None:
+        ancestry_cache = {}
+
     parents = f.get("parents") or []
+    if not parents:
+        return None, None
+
+    # Nivel 0: parent directo
     for p in parents:
         if p in raw_to_client:
             return raw_to_client[p], True
         if p in folder_to_client:
             return folder_to_client[p], False
+
+    # Subir por la cadena de ancestors
+    service = get_service()
+    visited = set()
+    queue = list(parents)
+    depth = 0
+    while queue and depth < 6:
+        next_queue = []
+        for p in queue:
+            if p in visited:
+                continue
+            visited.add(p)
+            # Cache hit: ya sabemos la respuesta de este folder
+            if p in ancestry_cache:
+                cli, is_crudo = ancestry_cache[p]
+                if cli is not None:
+                    return cli, is_crudo
+                continue
+            # Si está en folder_to_client / raw_to_client (puede haber sido agregado)
+            if p in raw_to_client:
+                ancestry_cache[p] = (raw_to_client[p], True)
+                return raw_to_client[p], True
+            if p in folder_to_client:
+                ancestry_cache[p] = (folder_to_client[p], False)
+                return folder_to_client[p], False
+            # Subir un nivel: pedir parents de este folder
+            try:
+                meta = service.files().get(fileId=p, fields="parents", supportsAllDrives=True).execute()
+                pps = meta.get("parents") or []
+                ancestry_cache[p] = (None, None)  # se sobreescribe arriba si matchea más arriba
+                next_queue.extend(pps)
+            except Exception:
+                ancestry_cache[p] = (None, None)
+                continue
+        queue = next_queue
+        depth += 1
+
     return None, None
 
 
@@ -118,6 +173,7 @@ def run(notify: bool = False):
 
     new_tasks = []
     cierres = []
+    ancestry_cache = {}  # cache de folder_id → (cliente, is_crudo) compartido entre changes
 
     for ch in changes:
         if ch.get("removed"):
@@ -129,7 +185,7 @@ def run(notify: bool = False):
         if not _is_video(f.get("name", ""), f.get("mimeType", "")):
             continue
 
-        cliente_real, is_crudo = _resolve_client_for_file(f, folder_to_client, raw_to_client)
+        cliente_real, is_crudo = _resolve_client_for_file(f, folder_to_client, raw_to_client, ancestry_cache)
         if cliente_real is None:
             # Archivo no está en una carpeta de cliente conocida — ignorar.
             # (El scan completo se encarga de descubrir clientes nuevos cada hora.)
