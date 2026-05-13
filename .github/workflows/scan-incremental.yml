@@ -15,9 +15,11 @@ on:
       - '*.md'
       - '.gitignore'
 
-# Lock: si un scan está corriendo, encolar el siguiente
+# Lock: mismo grupo que scan.yml para que NUNCA corran en paralelo.
+# Sin esto, dos workflows podían procesar la misma cola de mails de cierre y
+# mandar 2 veces el mismo mail.
 concurrency:
-  group: scan-incremental
+  group: scan-drive
   cancel-in-progress: false
 
 permissions:

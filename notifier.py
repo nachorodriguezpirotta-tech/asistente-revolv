@@ -188,7 +188,10 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
 
     El mail varía si quedan más pendientes o si completó todo (count llegó a 0).
     """
-    from tracker import list_pending_completion_mails, mark_completion_mail_sent, mark_completion_mail_failed
+    from tracker import (
+        list_pending_completion_mails, mark_completion_mail_failed,
+        claim_completion_mail,
+    )
 
     # Leer cola persistente
     queue_items = list_pending_completion_mails(max_age_days=7)
@@ -197,14 +200,22 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
 
     to = recipient or TEST_EMAIL
     sent = 0
-    queue_by_file = {(q.get("file_id"), q.get("new_count"), q.get("closed")): q for q in queue_items}
 
-    # Combinar: items de la cola + cierres in-memory (deduplicar por file_id+counts)
-    items_to_send = list(queue_items)
+    # CLAIM ATÓMICO: marcar cada row como "siendo enviada" ANTES de mandar mail.
+    # Si otro proceso ya la claimó (claim retorna False), saltarla.
+    # Esto previene duplicados cuando dos workflows corren la misma cola.
+    items_to_send = []
+    for q in queue_items:
+        if claim_completion_mail(q["id"]):
+            items_to_send.append(q)
+        # else: ya claimada por otro, skip silencioso
+
+    # Cierres in-memory que NO están en la cola persistente (no deberían existir
+    # con el nuevo flujo, pero por compat)
     if cierres:
+        queue_file_ids = {q.get("file_id") for q in queue_items}
         for c in cierres:
-            key = (c.get("file_id"), c.get("new_count"), 1 if c.get("closed") else 0)
-            if key not in queue_by_file:
+            if c.get("file_id") not in queue_file_ids:
                 items_to_send.append(c)
 
     for c in items_to_send:
@@ -296,13 +307,23 @@ Archivo: {file_name}{link_text}
             except Exception as e:
                 print(f"     ⚠️ push cierre: {e}")
 
-        # Marcar en la cola: si está, marcar como enviado o como retry
+        # Si el mail falló (any_sent=False), revertir el claim para que otro intento futuro
+        # pueda reintentarlo. claim_completion_mail ya marcó mail_sent_at, así que en caso
+        # de falla, lo desmarcamos.
         row_id = c.get("id")
         if row_id is not None and isinstance(row_id, int):
-            if any_sent:
-                mark_completion_mail_sent(row_id)
-            else:
+            if not any_sent:
+                # Revertir: queremos retry en próximo scan
+                from tracker import get_conn
+                conn = get_conn()
+                conn.execute(
+                    "UPDATE pending_completion_mails SET mail_sent_at = NULL WHERE id = ?",
+                    (row_id,),
+                )
+                conn.commit()
+                conn.close()
                 mark_completion_mail_failed(row_id)
+            # Si any_sent=True, ya está marcado correctamente (claim lo marcó)
 
     return sent
 

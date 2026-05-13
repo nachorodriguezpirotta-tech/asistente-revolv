@@ -605,6 +605,23 @@ def mark_completion_mail_sent(row_id: int):
     conn.close()
 
 
+def claim_completion_mail(row_id: int) -> bool:
+    """Intenta marcar el mail como 'siendo enviado' atómicamente. Retorna True si lo
+    consiguió (este proceso es el primero), False si ya fue marcado por otro proceso.
+
+    Sirve como lock antes de mandar el mail real para evitar duplicados cuando
+    dos scans concurrentes leen la misma cola."""
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE pending_completion_mails SET mail_sent_at = ? WHERE id = ? AND mail_sent_at IS NULL",
+        (now_iso(), row_id),
+    )
+    rows = cur.rowcount
+    conn.commit()
+    conn.close()
+    return rows > 0
+
+
 def mark_completion_mail_failed(row_id: int):
     """Incrementa retry_count para tracking. No marca como enviado."""
     conn = get_conn()
