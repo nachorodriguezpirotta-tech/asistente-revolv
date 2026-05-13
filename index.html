@@ -249,6 +249,18 @@
         }
         .drive-btn:hover { background: rgba(96, 165, 250, 0.25); }
 
+        /* Drag & drop reasignar */
+        .cliente-card[draggable="true"] { cursor: grab; }
+        .cliente-card[draggable="true"]:active { cursor: grabbing; }
+        .cliente-card.dragging { opacity: 0.5; }
+        .editor-block.drop-target {
+            background: rgba(96, 165, 250, 0.08);
+            border-left: 3px solid #60a5fa;
+        }
+        .editor-block.drop-target h2 {
+            color: #60a5fa;
+        }
+
         /* Modal de agregar cliente */
         .add-overlay {
             position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -572,7 +584,8 @@ function renderAdmin(data) {
         const edProgresses = editorProgresses[ed] || [];
         const progHtml = renderAllProgresses(edProgresses, ed);
         const countLabel = items.length === 0 ? '<span style="color: var(--text-dim); font-weight: 400; font-size: 13px; font-style: italic;">sin pendientes</span>' : `<span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span>`;
-        html += `<section class="editor-block">
+        html += `<section class="editor-block" data-editor="${edEsc}"
+            ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
             <h2>
                 <span>${escapeHtml(ed)} ${countLabel}</span>
                 <button class="add-mini" onclick="addClientToEditor('${edEsc}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
@@ -584,7 +597,9 @@ function renderAdmin(data) {
             const driveBtn = it.drive_folder_id
                 ? `<a href="https://drive.google.com/drive/folders/${it.drive_folder_id}" target="_blank" class="drive-btn" title="Abrir carpeta en Drive">📁</a>`
                 : '';
-            html += `<div class="cliente-card">
+            html += `<div class="cliente-card" draggable="true"
+                data-cliente="${clienteEsc}" data-editor="${edEsc}"
+                ondragstart="onDragStart(event)" ondragend="onDragEnd(event)">
                 <span class="cliente-meta">
                     ${driveBtn}
                     <span class="cliente-name">${escapeHtml(it.cliente)}</span>
@@ -877,6 +892,61 @@ function showAddClientDialog(presetEditor) {
     }
     submitBtn.onclick = submit;
     update('');  // precarga
+}
+
+// ───── Drag & drop reasignar (solo admin) ─────
+let DRAGGING = null;
+function onDragStart(e) {
+    if (!IS_ADMIN) { e.preventDefault(); return; }
+    const card = e.target.closest('.cliente-card');
+    if (!card) return;
+    DRAGGING = { cliente: card.dataset.cliente, editor: card.dataset.editor };
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+}
+function onDragEnd(e) {
+    const card = e.target.closest('.cliente-card');
+    if (card) card.classList.remove('dragging');
+    document.querySelectorAll('.editor-block.drop-target').forEach(el => el.classList.remove('drop-target'));
+    DRAGGING = null;
+}
+function onDragOver(e) {
+    if (!DRAGGING) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const sec = e.currentTarget;
+    if (sec.dataset.editor && sec.dataset.editor !== DRAGGING.editor) {
+        sec.classList.add('drop-target');
+    }
+}
+function onDragLeave(e) {
+    e.currentTarget.classList.remove('drop-target');
+}
+async function onDrop(e) {
+    if (!DRAGGING) return;
+    e.preventDefault();
+    const sec = e.currentTarget;
+    sec.classList.remove('drop-target');
+    const newEditor = sec.dataset.editor;
+    if (!newEditor || newEditor === DRAGGING.editor) return;
+    const { cliente, editor: currentEditor } = DRAGGING;
+    DRAGGING = null;
+    try {
+        const res = await fetch('/api/task', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                admin: 1, t: TOKEN,
+                action: 'reassign',
+                cliente, current_editor: currentEditor, new_editor: newEditor,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        await loadData();
+    } catch (err) {
+        alert('No se pudo reasignar:\n' + err.message);
+    }
 }
 
 async function reassignClient(cliente, currentEditor, btn) {
