@@ -369,7 +369,37 @@ const updatedSpan = document.getElementById('updated');
 const content = document.getElementById('content');
 
 if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
-    content.innerHTML = '<div class="error">Faltan parámetros en la URL.<br>Pedile a Ignacio el link correcto.</div>';
+    // Pantalla de login: pegar el link completo y se autentica
+    content.innerHTML = `
+      <div style="max-width:480px; margin:32px auto; padding:24px; background:var(--bg-card); border-radius:12px; border:1px solid var(--border);">
+        <h2 style="margin-top:0; margin-bottom:8px;">🔑 Pegá tu link</h2>
+        <p style="color:var(--text-dim); font-size:13px; margin-bottom:16px;">Pegá el link completo que te pasó Ignacio (con <code>?admin=1&amp;t=...</code> o <code>?editor=Nombre&amp;t=...</code>):</p>
+        <input id="auth-link-input" type="text" placeholder="https://asistente-revolv.vercel.app/?admin=1&t=..."
+          style="width:100%; padding:10px 12px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:monospace; margin-bottom:12px;">
+        <button onclick="loginFromInput()" style="width:100%; padding:11px; background:#ff4747; color:white; border:none; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer;">Entrar</button>
+        <div id="login-err" style="color:#f87171; font-size:12px; margin-top:10px; display:none;"></div>
+      </div>`;
+    window.loginFromInput = function() {
+        const inp = document.getElementById('auth-link-input').value.trim();
+        if (!inp) return;
+        try {
+            // Aceptar URL completa o solo el querystring
+            let qs = inp;
+            if (inp.includes('?')) qs = inp.split('?')[1];
+            const p = new URLSearchParams(qs);
+            const t = p.get('t');
+            const ed = p.get('editor') || '';
+            const adm = p.get('admin') === '1';
+            if (!t || (!ed && !adm)) throw new Error('El link no tiene token o tipo');
+            localStorage.setItem('revolv_auth', JSON.stringify({ editor: ed, token: t, admin: adm }));
+            // Recargar la página limpia
+            location.href = location.pathname;
+        } catch (e) {
+            const errDiv = document.getElementById('login-err');
+            errDiv.textContent = 'Link inválido: ' + e.message;
+            errDiv.style.display = 'block';
+        }
+    };
 } else {
     userLabel.textContent = IS_ADMIN ? 'Administrador (Ignacio)' : EDITOR;
     subtitle.textContent = IS_ADMIN
