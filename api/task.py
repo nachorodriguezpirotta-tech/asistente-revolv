@@ -33,15 +33,18 @@ def _normalize(s: str) -> str:
 def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
     """
     Resuelve un apodo al nombre real del cliente. Estrategia:
-      1. Diccionario estático de apodos (delfi → Delfina Orange Power)
-      2. Match exacto en tasks del editor
-      3. Match parcial (contains/startswith) en clientes conocidos del editor
-      4. Match por prefijo común (≥3 chars) en tokens
+      1. Apodo registrado en cfg_nicknames (con prioridad editor-específico)
+      2. Fuzzy match contra TODOS los clientes conocidos del sistema
+         (tasks pending, clients, known_files, known_edited_files).
+         Si hay UN match único → usar. Si hay >1 match, priorizar:
+            a) cliente del MISMO editor
+            b) cliente con tasks pending (más reciente)
+         Si todo empata, devolver original (el user decide).
     """
     if not cliente_input:
         return cliente_input
 
-    # 1. Diccionario estático (con prioridad para apodos editor-específicos)
+    # 1. Diccionario configurado (DB con fallback hardcoded)
     try:
         from aliases import resolve_nickname_static
         nick = resolve_nickname_static(cliente_input, editor=editor)
@@ -51,38 +54,92 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
         pass
 
     norm = _normalize(cliente_input)
+    if len(norm) < 3:
+        return cliente_input  # demasiado corto para fuzzy match seguro
 
-    # Buscar entre clientes conocidos del editor (en tasks)
-    rows = conn.execute(
-        "SELECT DISTINCT TRIM(cliente) as cliente FROM tasks WHERE editor = ?",
-        (editor,),
-    ).fetchall()
-    known = {r["cliente"] for r in rows if r["cliente"]}
+    # 2. Construir universo de clientes conocidos
+    universe = {}  # cliente_real → metadata {has_pending, same_editor, in_drive}
 
-    # 2. Match exacto
-    for k in known:
+    # 2a. Clientes con tasks (cualquier editor)
+    for r in conn.execute("SELECT DISTINCT TRIM(cliente) as c, editor, status FROM tasks").fetchall():
+        if not r["c"]: continue
+        ent = universe.setdefault(r["c"], {"has_pending": False, "same_editor": False, "in_drive": False})
+        if r["status"] == "pending":
+            ent["has_pending"] = True
+        if editor and r["editor"] and _normalize(r["editor"]) == _normalize(editor):
+            ent["same_editor"] = True
+
+    # 2b. Clientes en tabla clients (carpetas Drive conocidas)
+    for r in conn.execute("SELECT DISTINCT cliente FROM clients").fetchall():
+        if not r["cliente"]: continue
+        ent = universe.setdefault(r["cliente"].strip(), {"has_pending": False, "same_editor": False, "in_drive": False})
+        ent["in_drive"] = True
+
+    # 2c. Clientes en known_files / known_edited_files
+    for table in ("known_files", "known_edited_files"):
+        try:
+            for r in conn.execute(f"SELECT DISTINCT cliente FROM {table}").fetchall():
+                if r["cliente"]:
+                    universe.setdefault(r["cliente"].strip(), {"has_pending": False, "same_editor": False, "in_drive": False})
+        except Exception:
+            pass
+
+    # 3. Buscar match exacto
+    for k in universe:
         if _normalize(k) == norm:
             return k
 
-    # 3. Match parcial: cliente conocido contiene el apodo
-    contains = [k for k in known if norm in _normalize(k)]
-    if len(contains) == 1:
-        return contains[0]
+    # 4. Match parcial: token >=3 chars en común
+    candidates = []  # (cliente, metadata, match_strength)
+    for k, meta in universe.items():
+        k_norm = _normalize(k)
+        strength = 0
+        # contiene como substring
+        if norm in k_norm:
+            strength = 100
+        # algún token del cliente coincide o tiene prefijo común con el input
+        else:
+            for token in k_norm.split():
+                if len(token) >= 3:
+                    # match exacto de token
+                    if token == norm:
+                        strength = max(strength, 90)
+                    # token empieza con input (o vice versa) — prefijo de 4+ chars
+                    elif token.startswith(norm) and len(norm) >= 3:
+                        strength = max(strength, 80)
+                    elif norm.startswith(token) and len(token) >= 3:
+                        strength = max(strength, 70)
+                    # prefijo común de 4+ chars
+                    elif len(token) >= 4 and len(norm) >= 4 and token[:4] == norm[:4]:
+                        strength = max(strength, 60)
+        if strength > 0:
+            candidates.append((k, meta, strength))
 
-    starts = [k for k in known if _normalize(k).startswith(norm)]
-    if len(starts) == 1:
-        return starts[0]
+    if not candidates:
+        return cliente_input
 
-    # 4. Prefijo común con algún token
-    fuzzy = []
-    for k in known:
-        for token in _normalize(k).split():
-            if len(token) >= 3 and (token.startswith(norm) or norm.startswith(token)) and min(len(token), len(norm)) >= 3:
-                fuzzy.append(k)
-                break
-    if len(set(fuzzy)) == 1:
-        return fuzzy[0]
+    # 5. Decidir el ganador
+    # Prioridad: mismo editor + has_pending > strength
+    def score(c):
+        k, meta, strength = c
+        return (
+            meta["same_editor"] and meta["has_pending"],
+            meta["same_editor"],
+            meta["has_pending"],
+            strength,
+        )
+    candidates.sort(key=score, reverse=True)
 
+    # Si el top es claramente mejor que el segundo (en score tuple), devolverlo.
+    # Si hay empate en el top score, devolver original (ambiguo).
+    if len(candidates) == 1:
+        return candidates[0][0]
+    top_score = score(candidates[0])
+    second_score = score(candidates[1])
+    if top_score != second_score:
+        return candidates[0][0]
+
+    # Empate → ambiguo, no resolver (el user puede ser más específico)
     return cliente_input
 
 
