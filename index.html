@@ -227,6 +227,59 @@
             transition: background 0.15s;
         }
         .drive-btn:hover { background: rgba(96, 165, 250, 0.25); }
+
+        /* Modal de agregar cliente */
+        .add-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 200; padding: 16px;
+        }
+        .add-modal {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 22px; width: 100%; max-width: 460px;
+        }
+        .add-modal h3 { margin: 0 0 16px; font-size: 17px; }
+        .add-modal .field-row { margin-bottom: 14px; }
+        .add-modal label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+        .add-modal input, .add-modal select {
+            width: 100%; background: var(--bg); color: var(--text);
+            border: 1px solid var(--border); padding: 9px 12px;
+            border-radius: 6px; font-size: 14px; font-family: inherit;
+        }
+        .add-modal input:focus, .add-modal select:focus {
+            outline: none; border-color: #4ade80;
+        }
+        .add-modal .readonly-val {
+            padding: 9px 12px; background: var(--bg);
+            border: 1px solid var(--border); border-radius: 6px;
+            color: var(--text-dim); font-size: 14px;
+        }
+        .suggest-list {
+            position: absolute; top: 100%; left: 0; right: 0;
+            background: var(--bg-card-2); border: 1px solid var(--border);
+            border-radius: 6px; margin-top: 4px;
+            max-height: 240px; overflow-y: auto; z-index: 10;
+        }
+        .suggest-item {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 12px; cursor: pointer; font-size: 13px;
+            border-bottom: 1px solid var(--border);
+        }
+        .suggest-item:last-child { border-bottom: none; }
+        .suggest-item:hover, .suggest-item.active { background: var(--bg); }
+        .suggest-item .icon { font-size: 14px; }
+        .modal-actions {
+            display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
+        }
+        .btn {
+            padding: 8px 16px; border-radius: 6px; font-size: 13px;
+            font-weight: 500; cursor: pointer; border: none; font-family: inherit;
+        }
+        .btn-primary { background: #4ade80; color: #0f1115; }
+        .btn-primary:hover { background: #3ec170; }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-cancel { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+        .btn-cancel:hover { color: var(--text); }
         .empty {
             text-align: center;
             padding: 60px;
@@ -581,31 +634,152 @@ function copyLink(url, btn) {
     });
 }
 
-async function addClientToEditor(editor) {
-    const cliente = prompt(`Cliente pendiente para ${editor}:`);
-    if (!cliente || !cliente.trim()) return;
+// Cache de la lista de clientes (autocomplete)
+let CLIENTS_CACHE = null;
+async function getClientsList() {
+    if (CLIENTS_CACHE) return CLIENTS_CACHE;
     try {
-        const res = await fetch('/api/task', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                admin: 1, t: TOKEN,
-                target_editor: editor,
-                cliente: cliente.trim(),
-            }),
-        });
+        const params = IS_ADMIN
+            ? `admin=1&t=${encodeURIComponent(TOKEN)}&list_clients=1`
+            : `editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}&list_clients=1`;
+        const res = await fetch(`/api/data?${params}`);
         const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        loadData();
+        CLIENTS_CACHE = data.clients || [];
+        return CLIENTS_CACHE;
     } catch (e) {
-        alert('No se pudo agregar:\n' + e.message);
+        return [];
     }
 }
 
+async function addClientToEditor(editor) {
+    showAddClientDialog(editor);
+}
 async function addClientToEditorPrompt() {
-    const editor = prompt('Editor (nombre):');
-    if (!editor || !editor.trim()) return;
-    addClientToEditor(editor.trim());
+    showAddClientDialog(null);
+}
+function refreshClientsCache() { CLIENTS_CACHE = null; }
+
+function showAddClientDialog(presetEditor) {
+    const editores = LAST_DATA && LAST_DATA.by_editor
+        ? Object.keys(LAST_DATA.by_editor).filter(e => !e.startsWith('—'))
+        : [];
+
+    const overlay = document.createElement('div');
+    overlay.className = 'add-overlay';
+    overlay.innerHTML = `
+      <div class="add-modal">
+        <h3>Agregar pendiente</h3>
+        ${presetEditor ? `<div class="field-row"><label>Editor</label><div class="readonly-val">${escapeHtml(presetEditor)}</div></div>` : `
+        <div class="field-row">
+          <label>Editor</label>
+          <select id="add-editor-sel">
+            <option value="">— elegí —</option>
+            ${editores.map(e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('')}
+          </select>
+        </div>`}
+        <div class="field-row" style="position:relative;">
+          <label>Cliente</label>
+          <input id="add-cliente-input" type="text" autocomplete="off" placeholder="Escribí: roger, cisco, etc." autofocus>
+          <div id="add-suggest" class="suggest-list"></div>
+        </div>
+        <div style="font-size:11px; color:var(--text-dim); margin-bottom:10px;">↑↓ navegar · enter seleccionar · escapar cancelar</div>
+        <div class="modal-actions">
+          <button class="btn btn-cancel" id="add-cancel">Cancelar</button>
+          <button class="btn btn-primary" id="add-submit">Agregar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector('#add-cliente-input');
+    const suggest = overlay.querySelector('#add-suggest');
+    const submitBtn = overlay.querySelector('#add-submit');
+    const cancelBtn = overlay.querySelector('#add-cancel');
+    let selectedFromList = null;
+    let activeIdx = -1;
+    let currentMatches = [];
+
+    function close() { overlay.remove(); }
+    cancelBtn.onclick = close;
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    async function update(q) {
+        const list = await getClientsList();
+        const norm = (q || '').trim().toLowerCase();
+        if (!norm) { suggest.innerHTML = ''; currentMatches = []; activeIdx = -1; return; }
+        currentMatches = list.filter(c =>
+            c.cliente.toLowerCase().includes(norm)
+        ).slice(0, 8);
+        suggest.innerHTML = currentMatches.map((c, i) => `
+          <div class="suggest-item ${i===activeIdx?'active':''}" data-idx="${i}">
+            ${c.folder_id ? '<span class="icon">📁</span>' : '<span class="icon" style="opacity:0.3">—</span>'}
+            <span>${escapeHtml(c.cliente)}</span>
+          </div>`).join('');
+        // Click handlers
+        suggest.querySelectorAll('.suggest-item').forEach(el => {
+            el.onclick = () => {
+                const idx = parseInt(el.dataset.idx);
+                selectedFromList = currentMatches[idx];
+                input.value = selectedFromList.cliente;
+                suggest.innerHTML = '';
+                currentMatches = [];
+            };
+        });
+    }
+
+    input.addEventListener('input', () => { selectedFromList = null; update(input.value); });
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Escape') return close();
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (currentMatches.length === 0) return;
+            activeIdx = (activeIdx + 1) % currentMatches.length;
+            update(input.value);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (currentMatches.length === 0) return;
+            activeIdx = (activeIdx - 1 + currentMatches.length) % currentMatches.length;
+            update(input.value);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (activeIdx >= 0 && currentMatches[activeIdx]) {
+                selectedFromList = currentMatches[activeIdx];
+                input.value = selectedFromList.cliente;
+                suggest.innerHTML = '';
+                currentMatches = [];
+                activeIdx = -1;
+            } else {
+                submit();
+            }
+        }
+    });
+
+    async function submit() {
+        const cliente = input.value.trim();
+        if (!cliente) return alert('Falta cliente');
+        let editor = presetEditor;
+        if (!editor) {
+            const sel = overlay.querySelector('#add-editor-sel');
+            editor = sel ? sel.value : '';
+            if (!editor) return alert('Elegí un editor');
+        }
+        submitBtn.disabled = true;
+        try {
+            const body = IS_ADMIN
+                ? { admin: 1, t: TOKEN, target_editor: editor, cliente }
+                : { editor: EDITOR, t: TOKEN, cliente };
+            const res = await fetch('/api/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+            close();
+            refreshClientsCache();
+            loadData();
+        } catch (e) {
+            submitBtn.disabled = false;
+            alert('No se pudo agregar:\n' + e.message);
+        }
+    }
+    submitBtn.onclick = submit;
+    update('');  // precarga
 }
 
 async function reassignClient(cliente, currentEditor, btn) {
@@ -668,29 +842,8 @@ async function deleteCliente(cliente, editor, btn) {
 }
 
 async function openAddDialog() {
-    let editor = EDITOR;
-    if (IS_ADMIN) {
-        editor = prompt('¿Editor al que agregar el pendiente?');
-        if (!editor || !editor.trim()) return;
-        editor = editor.trim();
-    }
-    const cliente = prompt(`Nombre del cliente pendiente para ${editor}:`);
-    if (!cliente || !cliente.trim()) return;
-    try {
-        const body = IS_ADMIN
-            ? { admin: 1, t: TOKEN, target_editor: editor, cliente: cliente.trim() }
-            : { editor: EDITOR, t: TOKEN, cliente: cliente.trim() };
-        const res = await fetch('/api/task', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        loadData();
-    } catch (e) {
-        alert('No se pudo agregar:\n' + e.message);
-    }
+    // Si es editor, ya tenemos el editor; si es admin, lo elige en el modal
+    showAddClientDialog(IS_ADMIN ? null : EDITOR);
 }
 
 function escapeHtml(s) {

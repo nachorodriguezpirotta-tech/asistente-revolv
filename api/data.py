@@ -33,6 +33,37 @@ def _get_client_folder_map(conn) -> dict:
     return {r["cliente"].strip().lower(): r["folder_id"] for r in rows}
 
 
+def get_all_clients(conn) -> dict:
+    """Devuelve lista de TODOS los clientes conocidos del sistema con su folder_id.
+    Fuente: tabla clients + tasks + known_files + known_edited_files.
+    Útil para autocomplete en el dashboard.
+    """
+    universe = {}  # cliente → folder_id
+
+    # 1. Tabla clients (con folder_id confirmado)
+    for r in conn.execute("SELECT cliente, folder_id FROM clients").fetchall():
+        if r["cliente"]:
+            universe[r["cliente"].strip()] = r["folder_id"]
+
+    # 2. Tasks (puede haber clientes sin folder_id confirmado)
+    for r in conn.execute("SELECT DISTINCT TRIM(cliente) as c FROM tasks WHERE cliente IS NOT NULL AND cliente != ''").fetchall():
+        if r["c"] and r["c"] not in universe:
+            universe[r["c"]] = None
+
+    # 3. known_files / known_edited_files (histórico)
+    for table in ("known_files", "known_edited_files"):
+        try:
+            for r in conn.execute(f"SELECT DISTINCT TRIM(cliente) as c FROM {table}").fetchall():
+                if r["c"] and r["c"] not in universe:
+                    universe[r["c"]] = None
+        except Exception:
+            pass
+
+    clients = [{"cliente": name, "folder_id": fid} for name, fid in universe.items()]
+    clients.sort(key=lambda x: x["cliente"].lower())
+    return {"clients": clients}
+
+
 def get_editor_data(conn, editor: str) -> dict:
     # 1 entry por cliente con la suma de pending_count (videos pendientes)
     rows = conn.execute(
@@ -162,14 +193,17 @@ class handler(BaseHTTPRequestHandler):
         editor = (params.get("editor", [""])[0] or "").strip()
         admin = params.get("admin", [""])[0]
         token = (params.get("t", [""])[0] or "").strip()
+        list_clients = params.get("list_clients", [""])[0]
 
         if admin == "1":
-            # Token admin = hash de "ADMIN" con la secret
             from _shared import make_token
             if not check_token("ADMIN", token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
             try:
-                data = read_db(get_all_data)
+                if list_clients == "1":
+                    data = read_db(get_all_clients)
+                else:
+                    data = read_db(get_all_data)
                 return json_response(self, data)
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
@@ -180,7 +214,10 @@ class handler(BaseHTTPRequestHandler):
             return json_response(self, {"error": "unauthorized"}, status=401)
 
         try:
-            data = read_db(lambda conn: get_editor_data(conn, editor))
+            if list_clients == "1":
+                data = read_db(get_all_clients)
+            else:
+                data = read_db(lambda conn: get_editor_data(conn, editor))
             return json_response(self, data)
         except Exception as e:
             return json_response(self, {"error": str(e)[:200]}, status=500)
