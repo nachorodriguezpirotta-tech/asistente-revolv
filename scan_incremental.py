@@ -38,6 +38,7 @@ from tracker import (
     has_manual_pending_for_client, find_similar_pending_client,
     is_client_blocked, set_pending_count,
     is_edited_known, claim_edited_file, decrement_pending_count,
+    enqueue_completion_mail,
 )
 from sheets_client import read_packs, get_editor_for_client
 from aliases import resolve_alias, reverse_alias
@@ -206,7 +207,7 @@ def run(notify: bool = False):
             continue
         result = decrement_pending_count(cliente_real, completed_by_file_id=f["id"])
         if result["task_id"] is not None:
-            cierres.append({
+            cierre_data = {
                 "cliente": cliente_real,
                 "editor": result["editor"] or "—",
                 "file_name": f["name"],
@@ -214,7 +215,20 @@ def run(notify: bool = False):
                 "edited_folder_id": (f.get("parents") or [None])[0],
                 "new_count": result["new_count"],
                 "closed": result["closed"],
-            })
+            }
+            cierres.append(cierre_data)
+            # Persistir en cola para retry si el mail falla
+            enqueue_completion_mail(
+                task_id=result["task_id"],
+                cliente=cliente_real,
+                editor=cierre_data["editor"],
+                file_id=f["id"],
+                file_name=f["name"],
+                edited_folder_id=cierre_data["edited_folder_id"],
+                client_folder_id=None,
+                new_count=result["new_count"],
+                closed=result["closed"],
+            )
 
     # 5) Reportar y notificar
     if new_tasks:
@@ -230,13 +244,14 @@ def run(notify: bool = False):
         print("   (sin novedades relevantes)")
 
     if notify:
-        if new_tasks or cierres:
-            print("\n📧 Disparando notificador...")
         from notifier import run as notify_run, send_completion_mails
         if new_tasks:
+            print("\n📧 Disparando notificador (crudos nuevos)...")
             notify_run(dry_run=False)
-        if cierres:
-            send_completion_mails(cierres)
+        # SIEMPRE procesar cola persistente de cierres (incluye retry de fallidos anteriores)
+        sent = send_completion_mails(cierres)
+        if sent:
+            print(f"📧 {sent} mails de cierre enviados.")
 
 
 if __name__ == "__main__":

@@ -114,6 +114,29 @@ def init_db():
         )
     """)
 
+    # Tabla pending_completion_mails: cola persistente de mails de cierre/decremento.
+    # Cuando el closer detecta un editado nuevo, INSERT acá ANTES de mandar mail.
+    # El notifier lee filas con mail_sent_at IS NULL, manda, y marca.
+    # Si el mail falla, queda NULL → próximo scan retry.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pending_completion_mails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            cliente TEXT NOT NULL,
+            editor TEXT,
+            file_id TEXT,
+            file_name TEXT,
+            edited_folder_id TEXT,
+            client_folder_id TEXT,
+            new_count INTEGER NOT NULL DEFAULT 0,
+            closed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            mail_sent_at TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_completion_unsent ON pending_completion_mails(mail_sent_at) WHERE mail_sent_at IS NULL")
+
     # Tabla de progreso por editor — soporta MÚLTIPLES contadores por editor.
     # Migración si existe versión vieja sin columna 'label':
     has_progress_table = conn.execute(
@@ -413,6 +436,63 @@ def has_manual_pending_for_client(cliente: str) -> bool:
     ).fetchone()
     conn.close()
     return row is not None
+
+
+def enqueue_completion_mail(task_id: Optional[int], cliente: str, editor: Optional[str],
+                            file_id: Optional[str], file_name: Optional[str],
+                            edited_folder_id: Optional[str], client_folder_id: Optional[str],
+                            new_count: int, closed: bool) -> int:
+    """Encola un mail de cierre/decremento para envío. Si el envío falla, queda en cola
+    para retry. Retorna el id del row insertado."""
+    conn = get_conn()
+    cur = conn.execute("""
+        INSERT INTO pending_completion_mails
+        (task_id, cliente, editor, file_id, file_name, edited_folder_id, client_folder_id,
+         new_count, closed, created_at, mail_sent_at, retry_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)
+    """, (task_id, cliente, editor, file_id, file_name, edited_folder_id, client_folder_id,
+          new_count, 1 if closed else 0, now_iso()))
+    row_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def list_pending_completion_mails(max_age_days: int = 7) -> list[dict]:
+    """Devuelve mails de cierre encolados sin enviar (mail_sent_at IS NULL).
+    Filtra por max_age_days para no retry indefinidamente (descartar muy viejos).
+    """
+    from datetime import timedelta, datetime as _dt
+    cutoff = (_dt.now() - timedelta(days=max_age_days)).isoformat(timespec="seconds")
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT * FROM pending_completion_mails
+        WHERE mail_sent_at IS NULL AND created_at >= ?
+        ORDER BY created_at ASC
+    """, (cutoff,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def mark_completion_mail_sent(row_id: int):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE pending_completion_mails SET mail_sent_at = ? WHERE id = ?",
+        (now_iso(), row_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_completion_mail_failed(row_id: int):
+    """Incrementa retry_count para tracking. No marca como enviado."""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE pending_completion_mails SET retry_count = retry_count + 1 WHERE id = ?",
+        (row_id,),
+    )
+    conn.commit()
+    conn.close()
 
 
 def find_similar_pending_client(cliente: str) -> Optional[str]:

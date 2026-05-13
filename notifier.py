@@ -165,21 +165,35 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
 
 # ─── MAILS DE CIERRE (cuando se entrega un editado) ──────────────────────────
 
-def send_completion_mails(cierres: list, recipient: Optional[str] = None) -> int:
+def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[str] = None) -> int:
     """
-    Manda mails cuando se entrega un video.
+    Manda mails cuando se entrega un video. Lee de la cola persistente
+    `pending_completion_mails` (cualquier mail que haya quedado sin enviar
+    de scans anteriores) y los manda. Si se pasa una lista `cierres` adicional,
+    también se incluye (pero ya debería estar en la cola desde el closer).
 
-    Cada cierre = un editado entregado. El mail varía si quedan más pendientes
-    o si completó todo (count llegó a 0).
-
-    `cierres` = [{"cliente", "editor", "file_name", "new_count", "closed"}, ...]
+    El mail varía si quedan más pendientes o si completó todo (count llegó a 0).
     """
-    if not cierres:
+    from tracker import list_pending_completion_mails, mark_completion_mail_sent, mark_completion_mail_failed
+
+    # Leer cola persistente
+    queue_items = list_pending_completion_mails(max_age_days=7)
+    if not queue_items and not cierres:
         return 0
 
     to = recipient or TEST_EMAIL
     sent = 0
-    for c in cierres:
+    queue_by_file = {(q.get("file_id"), q.get("new_count"), q.get("closed")): q for q in queue_items}
+
+    # Combinar: items de la cola + cierres in-memory (deduplicar por file_id+counts)
+    items_to_send = list(queue_items)
+    if cierres:
+        for c in cierres:
+            key = (c.get("file_id"), c.get("new_count"), 1 if c.get("closed") else 0)
+            if key not in queue_by_file:
+                items_to_send.append(c)
+
+    for c in items_to_send:
         cliente = c["cliente"]
         editor = c.get("editor") or "—"
         file_name = c["file_name"]
@@ -235,12 +249,30 @@ Archivo: {file_name}{link_text}
 <p style="color:#888;font-size:12px;">— Asistente Revolv</p>
 </body></html>
 """
-        try:
-            msg_id = send_mail(to=to, subject=subject, body_text=text, body_html=html)
-            print(f"  ✅ mail cierre enviado: {editor} → {cliente} (msg_id={msg_id})")
-            sent += 1
-        except Exception as e:
-            print(f"  ❌ falló mail cierre [{cliente}]: {e}")
+        # Determinar destinatarios: admin + editor (si tiene mail mapeado)
+        from aliases import get_editor_email
+        destinatarios = [to]
+        editor_email = get_editor_email(editor) if editor and editor != "—" else None
+        if editor_email and editor_email.lower() != to.lower():
+            destinatarios.append(editor_email)
+
+        any_sent = False
+        for dest in destinatarios:
+            try:
+                msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html)
+                print(f"  ✅ mail cierre enviado a {dest}: {editor} → {cliente} (msg_id={msg_id})")
+                any_sent = True
+                sent += 1
+            except Exception as e:
+                print(f"  ❌ falló mail cierre a {dest} [{cliente}]: {e}")
+
+        # Marcar en la cola: si está, marcar como enviado o como retry
+        row_id = c.get("id")
+        if row_id is not None and isinstance(row_id, int):
+            if any_sent:
+                mark_completion_mail_sent(row_id)
+            else:
+                mark_completion_mail_failed(row_id)
 
     return sent
 

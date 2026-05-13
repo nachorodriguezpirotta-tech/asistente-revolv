@@ -25,6 +25,7 @@ from tracker import (
     edited_baseline_done,
     close_oldest_pending, count_pending_for_client,
     close_all_pending_for_client, decrement_pending_count,
+    enqueue_completion_mail,
 )
 from aliases import resolve_alias, reverse_alias, CLIENT_DELIVERY_FOLDERS, _normalize as _alias_norm
 
@@ -151,7 +152,7 @@ def run_closer(verbose: bool = True) -> dict:
             for f in new_files:
                 result = decrement_pending_count(cliente, completed_by_file_id=f["id"])
                 if result["task_id"] is not None:
-                    summary["cierres"].append({
+                    cierre_data = {
                         "cliente": cliente,
                         "editor": result["editor"] or client_editor,
                         "file_name": f["name"],
@@ -161,7 +162,21 @@ def run_closer(verbose: bool = True) -> dict:
                         "client_folder_id": folder["id"],
                         "new_count": result["new_count"],
                         "closed": result["closed"],
-                    })
+                    }
+                    summary["cierres"].append(cierre_data)
+                    # PERSISTIR el cierre para mail con retry. Si crashea o falla el mail,
+                    # próximo scan lo retoma.
+                    enqueue_completion_mail(
+                        task_id=result["task_id"],
+                        cliente=cliente,
+                        editor=cierre_data["editor"],
+                        file_id=f["id"],
+                        file_name=f["name"],
+                        edited_folder_id=f.get("_parent_id"),
+                        client_folder_id=folder["id"],
+                        new_count=result["new_count"],
+                        closed=result["closed"],
+                    )
                     if result["closed"]:
                         summary["tareas_cerradas"] += 1
                 size = int(f["size"]) if f.get("size") else None
@@ -198,15 +213,29 @@ def run_closer(verbose: bool = True) -> dict:
                 continue  # otro workflow ya lo procesó
             result = decrement_pending_count(cliente, completed_by_file_id=f["id"])
             if result["task_id"] is not None:
-                summary["cierres"].append({
+                cierre_data = {
                     "cliente": cliente,
                     "editor": result["editor"] or client_editor,
                     "file_name": f["name"],
                     "file_id": f["id"],
+                    "edited_folder_id": f.get("_parent_id"),
                     "client_folder_id": folder["id"],
                     "new_count": result["new_count"],
                     "closed": result["closed"],
-                })
+                }
+                summary["cierres"].append(cierre_data)
+                # PERSISTIR cierre en cola para retry persistente del mail
+                enqueue_completion_mail(
+                    task_id=result["task_id"],
+                    cliente=cliente,
+                    editor=cierre_data["editor"],
+                    file_id=f["id"],
+                    file_name=f["name"],
+                    edited_folder_id=f.get("_parent_id"),
+                    client_folder_id=folder["id"],
+                    new_count=result["new_count"],
+                    closed=result["closed"],
+                )
                 if result["closed"]:
                     summary["tareas_cerradas"] += 1
             summary["nuevos_editados"] += 1
