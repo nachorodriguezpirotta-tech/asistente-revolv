@@ -125,6 +125,15 @@ def get_all_data(conn) -> dict:
             "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
         })
 
+    # Conteo de carpetas Drive pendientes de aprobación (para badge en dashboard)
+    pending_folders_count = 0
+    try:
+        pending_folders_count = conn.execute(
+            "SELECT COUNT(*) FROM pending_drive_folders WHERE status='pending'"
+        ).fetchone()[0]
+    except Exception:
+        pass
+
     # Asegurar que TODOS los editores ACTIVOS aparezcan, aunque no tengan pendientes.
     # Lee de cfg_editors (DB) que es la fuente de verdad runtime — incluye editores
     # agregados desde el dashboard de configuración sin reiniciar nada.
@@ -167,6 +176,7 @@ def get_all_data(conn) -> dict:
         "by_editor": by_editor,
         "editor_links": editor_links,
         "editor_progresses": editor_progresses,
+        "pending_folders_count": pending_folders_count,
         "stats": {
             "pendientes": sum(len(v) for v in by_editor.values()),
             "editores": len(by_editor),

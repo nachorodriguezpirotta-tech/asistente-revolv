@@ -31,7 +31,7 @@ from tracker import (
     init_db, upsert_client, add_known_file, claim_file, is_file_known,
     create_task, list_pending_tasks, stats, get_conn,
     has_pending_for_client_editor, has_manual_pending_for_client,
-    find_similar_pending_client,
+    find_similar_pending_client, upsert_pending_drive_folder,
     increment_pending_count, set_pending_count, is_client_blocked,
 )
 from sheets_client import read_packs, get_editor_for_client
@@ -133,6 +133,40 @@ def run(notify: bool = False):
                 sin_editor.extend(local_sin)
             except Exception as e:
                 print(f"   ⚠️  error procesando cliente: {e}")
+
+    # === DETECTAR CARPETAS NUEVAS no conocidas (pendientes de aprobación) ===
+    # Si hay carpetas en Mi Unidad que NO son clientes conocidos NI ya decididas → marcar como pendientes
+    print("\n🆕 Detectando carpetas nuevas en Drive...")
+    try:
+        from drive_client import _list_root_items_with_shortcuts as _list_root
+        all_root = _list_root()
+        # Carpetas ya conocidas (en clients + tasks + ya decididas)
+        conn = get_conn()
+        known_folder_ids = set()
+        for r in conn.execute("SELECT folder_id FROM clients").fetchall():
+            if r["folder_id"]: known_folder_ids.add(r["folder_id"])
+        for r in conn.execute("SELECT folder_id FROM pending_drive_folders").fetchall():
+            known_folder_ids.add(r["folder_id"])
+        # Clientes en tasks (puede que no tengan folder_id aún)
+        known_names = set()
+        for r in conn.execute("SELECT DISTINCT TRIM(cliente) as c FROM tasks WHERE cliente IS NOT NULL").fetchall():
+            if r["c"]: known_names.add(r["c"].lower())
+        conn.close()
+        nuevas = 0
+        for f in all_root:
+            fid = f.get("id")
+            fname = (f.get("name") or "").strip()
+            if not fid or not fname: continue
+            if fid in known_folder_ids: continue
+            if fname.lower() in known_names: continue
+            # Filtrar nombres "obvios" de no-cliente (config personal, etc.)
+            if fname.startswith("."): continue
+            upsert_pending_drive_folder(fid, fname)
+            nuevas += 1
+        if nuevas:
+            print(f"   {nuevas} carpetas nuevas marcadas para aprobación.")
+    except Exception as e:
+        print(f"   ⚠️ Error detectando carpetas nuevas: {e}")
 
     # === FASE 2: clientes sin /Material/ — incluye conocidos del sistema + del Sheet ===
     print("🔎 Escaneo generalizado — clientes sin /Material/...")

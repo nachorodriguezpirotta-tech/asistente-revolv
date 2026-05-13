@@ -100,6 +100,7 @@
   <div class="page-content">
     <div class="tabs">
       <button class="tab active" data-tab="editors">👤 Editores</button>
+      <button class="tab" data-tab="detected">🆕 Detectadas <span id="detected-badge" style="background:#f87171;color:white;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px;display:none;">0</span></button>
       <button class="tab" data-tab="nicknames">🏷️ Apodos</button>
       <button class="tab" data-tab="aliases">📂 Aliases</button>
       <button class="tab" data-tab="delivery">📁 Extras</button>
@@ -174,10 +175,97 @@ async function loadConfig() {
 
 function render() {
   if (!DATA) return;
+  // Badge de carpetas detectadas
+  const count = (DATA.pending_folders || []).length;
+  const badge = document.getElementById('detected-badge');
+  if (badge) {
+    badge.textContent = count;
+    badge.style.display = count > 0 ? 'inline-block' : 'none';
+  }
   if (ACTIVE_TAB === 'editors') renderEditors();
+  else if (ACTIVE_TAB === 'detected') renderDetected();
   else if (ACTIVE_TAB === 'nicknames') renderNicknames();
   else if (ACTIVE_TAB === 'aliases') renderAliases();
   else if (ACTIVE_TAB === 'delivery') renderDelivery();
+}
+
+// ──────────── DETECTADAS (carpetas Drive pendientes de aprobar) ────────────
+function renderDetected() {
+  const pending = DATA.pending_folders || [];
+  const editores = (DATA.editors || []).filter(e => e.active).map(e => e.name);
+  let html = `<div class="section-header">
+    <div><strong>${pending.length}</strong> carpetas detectadas en Drive sin asignar</div>
+  </div>
+  <div style="font-size:12px; color:#8a93a3; margin-bottom:10px;">
+    El sistema encontró estas carpetas en Mi Unidad que no son de clientes conocidos.
+    Aprobá si es un cliente nuevo (opcionalmente asignale un editor), o rechazá si no lo es.
+  </div>`;
+  if (pending.length === 0) {
+    html += '<div class="empty">🎉 No hay carpetas pendientes de decisión.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Carpeta en Drive</th>
+      <th>Detectada</th>
+      <th>Editor (opcional)</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const p of pending) {
+      const ed_options = editores.map(e => `<option value="${escape(e)}">${escape(e)}</option>`).join('');
+      html += `<tr>
+        <td class="name">
+          <a href="https://drive.google.com/drive/folders/${escape(p.folder_id)}" target="_blank" style="color:#60a5fa; text-decoration:none;">📁 ${escape(p.folder_name)}</a>
+        </td>
+        <td class="mono">${escape(p.detected_at?.slice(0, 16) || '')}</td>
+        <td>
+          <select id="ed-${escape(p.folder_id)}" style="background:#0f1115; color:#e8eaed; border:1px solid #2a2f3a; padding:5px 8px; border-radius:4px; font-size:12px;">
+            <option value="">— sin asignar —</option>
+            ${ed_options}
+          </select>
+        </td>
+        <td class="actions">
+          <button class="icon-btn" style="background:#1f3a26; color:#4ade80; border-color:#2a4a30;" onclick='approveFolder(${JSON.stringify(p.folder_id)})'>✓ Aprobar</button>
+          <button class="icon-btn danger" onclick='rejectFolder(${JSON.stringify(p.folder_id)})'>✕ Rechazar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
+}
+
+async function approveFolder(folder_id) {
+  const sel = document.getElementById('ed-' + folder_id);
+  const editor = sel ? sel.value : '';
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        admin: 1, t: TOKEN, section: 'pending_folder', action: 'update',
+        data: { folder_id, decision: 'approved', editor: editor || null }
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function rejectFolder(folder_id) {
+  if (!confirm('¿Marcar esta carpeta como NO-cliente? No volverá a aparecer.')) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        admin: 1, t: TOKEN, section: 'pending_folder', action: 'update',
+        data: { folder_id, decision: 'rejected' }
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) { alert('Error: ' + e.message); }
 }
 
 // ──────────── EDITORES ────────────

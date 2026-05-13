@@ -339,7 +339,7 @@
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
         <button class="add-btn-main" onclick="openAddDialog()">+ Agregar pendiente</button>
         <a id="stats-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">📊 Stats</a>
-        <a id="config-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">⚙️ Config</a>
+        <a id="config-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px; position:relative;">⚙️ Config<span id="config-badge" style="display:none; background:#f87171; color:white; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">0</span></a>
       </div>
 
       <div id="content">
@@ -528,6 +528,17 @@ function renderEditor(data) {
 function renderAdmin(data) {
     const byEditor = data.by_editor || {};
     const editorLinks = data.editor_links || {};
+    // Badge en botón Config si hay carpetas detectadas para revisar
+    const cfgBadge = document.getElementById('config-badge');
+    if (cfgBadge) {
+        const cnt = data.pending_folders_count || 0;
+        if (cnt > 0) {
+            cfgBadge.textContent = cnt;
+            cfgBadge.style.display = 'inline-block';
+        } else {
+            cfgBadge.style.display = 'none';
+        }
+    }
     // Orden: primero editores CON pendientes (más cantidad arriba), después vacíos alfabéticos
     const editores = Object.keys(byEditor).sort((a, b) => {
         const la = byEditor[a].length;

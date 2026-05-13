@@ -114,6 +114,21 @@ def init_db():
         )
     """)
 
+    # Tabla de carpetas Drive detectadas que esperan decisión del admin.
+    # Cada vez que aparece una carpeta nueva en Mi Unidad que no es de un cliente conocido,
+    # se mete acá. El admin decide en el dashboard: aprobar (= es cliente, asignar editor)
+    # o rechazar (= no es cliente, no preguntar más).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pending_drive_folders (
+            folder_id TEXT PRIMARY KEY,
+            folder_name TEXT NOT NULL,
+            detected_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            decided_at TEXT,
+            decided_editor TEXT
+        )
+    """)
+
     # Tablas de CONFIGURACIÓN: editables desde el dashboard sin tocar código.
     # Reemplazan/extienden el contenido de aliases.py (que queda como seed inicial).
     conn.execute("""
@@ -753,6 +768,66 @@ def cfg_add_delivery_folder(cliente: str, folder_id: str, description: Optional[
 def cfg_delete_delivery_folder(row_id: int):
     conn = get_conn()
     conn.execute("DELETE FROM cfg_delivery_folders WHERE id = ?", (row_id,))
+    conn.commit()
+    conn.close()
+
+
+# ─── Detección de carpetas Drive nuevas ───────────────────────────────────
+
+def upsert_pending_drive_folder(folder_id: str, folder_name: str):
+    """Inserta carpeta pendiente de decisión. Si ya existe con status decidido (approved/rejected), NO la re-pone como pending."""
+    conn = get_conn()
+    existing = conn.execute(
+        "SELECT status FROM pending_drive_folders WHERE folder_id = ?", (folder_id,)
+    ).fetchone()
+    if existing:
+        # Ya decidida (approved/rejected) → no tocar. Solo si está pending, refrescar nombre.
+        if existing["status"] == "pending":
+            conn.execute("UPDATE pending_drive_folders SET folder_name = ? WHERE folder_id = ?", (folder_name, folder_id))
+            conn.commit()
+        conn.close()
+        return
+    conn.execute("""
+        INSERT INTO pending_drive_folders (folder_id, folder_name, detected_at, status)
+        VALUES (?, ?, ?, 'pending')
+    """, (folder_id, folder_name, now_iso()))
+    conn.commit()
+    conn.close()
+
+
+def list_pending_drive_folders(status: str = 'pending') -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT folder_id, folder_name, detected_at, status, decided_at, decided_editor FROM pending_drive_folders WHERE status = ? ORDER BY detected_at DESC",
+        (status,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def decide_pending_drive_folder(folder_id: str, decision: str, editor: Optional[str] = None):
+    """decision: 'approved' o 'rejected'. Si approved, agrega a `clients` con folder_id."""
+    if decision not in ("approved", "rejected"):
+        raise ValueError("decision inválida")
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT folder_id, folder_name FROM pending_drive_folders WHERE folder_id = ?",
+        (folder_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("folder no encontrado")
+    conn.execute("""
+        UPDATE pending_drive_folders SET status = ?, decided_at = ?, decided_editor = ?
+        WHERE folder_id = ?
+    """, (decision, now_iso(), editor, folder_id))
+    if decision == "approved":
+        # Agregar a tabla clients para que el dashboard lo linkee
+        conn.execute("""
+            INSERT INTO clients (folder_id, cliente, raw_folder_id, last_scan_at)
+            VALUES (?, ?, NULL, ?)
+            ON CONFLICT(folder_id) DO UPDATE SET cliente=excluded.cliente, last_scan_at=excluded.last_scan_at
+        """, (folder_id, row["folder_name"], now_iso()))
     conn.commit()
     conn.close()
 

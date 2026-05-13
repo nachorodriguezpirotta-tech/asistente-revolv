@@ -30,7 +30,7 @@ except Exception as _e:
 
 
 def _get_all_config(conn):
-    """Devuelve {editors, nicknames, aliases, delivery_folders}."""
+    """Devuelve {editors, nicknames, aliases, delivery_folders, pending_folders}."""
     editors = [dict(r) for r in conn.execute(
         "SELECT name, email, receives_daily_summary, active FROM cfg_editors ORDER BY name"
     ).fetchall()]
@@ -43,11 +43,19 @@ def _get_all_config(conn):
     delivery = [dict(r) for r in conn.execute(
         "SELECT id, cliente, folder_id, description FROM cfg_delivery_folders ORDER BY cliente"
     ).fetchall()]
+    pending_folders = []
+    try:
+        pending_folders = [dict(r) for r in conn.execute(
+            "SELECT folder_id, folder_name, detected_at FROM pending_drive_folders WHERE status='pending' ORDER BY detected_at DESC"
+        ).fetchall()]
+    except Exception:
+        pass
     return {
         "editors": editors,
         "nicknames": nicknames,
         "aliases": aliases,
         "delivery_folders": delivery,
+        "pending_folders": pending_folders,
     }
 
 
@@ -106,7 +114,7 @@ class handler(BaseHTTPRequestHandler):
             action = (body.get("action") or "").strip().lower()
             data = body.get("data") or {}
 
-            if section not in ("editor", "nickname", "alias", "delivery"):
+            if section not in ("editor", "nickname", "alias", "delivery", "pending_folder"):
                 return json_response(self, {"error": f"section inválida: {section}"}, status=400)
             if action not in ("create", "update", "delete"):
                 return json_response(self, {"error": f"action inválida: {action}"}, status=400)
@@ -122,6 +130,8 @@ class handler(BaseHTTPRequestHandler):
                     self._op_alias(conn, action, data, result)
                 elif section == "delivery":
                     self._op_delivery(conn, action, data, result)
+                elif section == "pending_folder":
+                    self._op_pending_folder(conn, action, data, result)
 
             with_db(op, message=f"config: {action} {section}")
             return json_response(self, {"ok": True, "section": section, "action": action, **result})
@@ -257,6 +267,42 @@ class handler(BaseHTTPRequestHandler):
                 UPDATE cfg_delivery_folders SET cliente=?, folder_id=?, description=? WHERE id=?
             """, (cliente, folder_id, description, row_id))
             result["updated_id"] = row_id
+
+    def _op_pending_folder(self, conn, action, data, result):
+        """action: 'update' con data.decision='approved'|'rejected', data.folder_id, opcional editor."""
+        from datetime import datetime
+        now = datetime.now().isoformat(timespec="seconds")
+        folder_id = (data.get("folder_id") or "").strip()
+        if not folder_id:
+            raise ValueError("falta folder_id")
+        if action != "update":
+            raise ValueError("solo action=update soportada en pending_folder")
+        decision = (data.get("decision") or "").strip()
+        if decision not in ("approved", "rejected"):
+            raise ValueError("decision debe ser approved o rejected")
+        editor = (data.get("editor") or "").strip() or None
+        row = conn.execute("SELECT folder_name FROM pending_drive_folders WHERE folder_id = ?", (folder_id,)).fetchone()
+        if not row:
+            raise ValueError("folder no existe")
+        conn.execute("""
+            UPDATE pending_drive_folders SET status = ?, decided_at = ?, decided_editor = ?
+            WHERE folder_id = ?
+        """, (decision, now, editor, folder_id))
+        if decision == "approved":
+            # Agregar a clients para que aparezca con link
+            conn.execute("""
+                INSERT INTO clients (folder_id, cliente, raw_folder_id, last_scan_at)
+                VALUES (?, ?, NULL, ?)
+                ON CONFLICT(folder_id) DO UPDATE SET cliente=excluded.cliente, last_scan_at=excluded.last_scan_at
+            """, (folder_id, row["folder_name"], now))
+            # Si hay editor, crear task pending count=1 con count_locked=1
+            if editor:
+                conn.execute("""
+                    INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count, count_locked)
+                    VALUES (?, ?, ?, '(cliente agregado desde detección)', ?, 'pending', ?, 1, 1)
+                """, (row["folder_name"], editor, f"approval:{folder_id}", now, now))
+        result["decision"] = decision
+        result["folder_id"] = folder_id
 
     def do_OPTIONS(self):
         self.send_response(204)
