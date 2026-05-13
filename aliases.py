@@ -76,11 +76,69 @@ CLIENT_DELIVERY_FOLDERS = {
 }
 
 
+# ─── DB-backed config loaders ─────────────────────────────────────────────
+# Las constantes arriba (EDITOR_EMAILS, CLIENT_NICKNAMES, etc.) son SEED inicial.
+# Una vez que la DB tiene datos en cfg_*, esas son la fuente de verdad.
+# Las funciones de abajo prefieren DB, fallback a hardcoded si DB no disponible.
+
+def _safe_db_call(fn, default):
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def get_editor_emails_runtime() -> dict:
+    """{editor_name: email} desde DB. Fallback a hardcoded EDITOR_EMAILS."""
+    from tracker import cfg_get_editor_emails
+    db = _safe_db_call(cfg_get_editor_emails, None)
+    return db if db is not None else dict(EDITOR_EMAILS)
+
+
+def get_editors_list_runtime() -> list:
+    """Lista de editores activos desde DB. Fallback a EDITORS_LIST hardcoded."""
+    from tracker import cfg_get_editors_list
+    db = _safe_db_call(cfg_get_editors_list, None)
+    return db if db else list(EDITORS_LIST)
+
+
+def get_daily_summary_editors_runtime() -> set:
+    from tracker import cfg_get_daily_summary_editors
+    db = _safe_db_call(cfg_get_daily_summary_editors, None)
+    return db if db is not None else set(DAILY_SUMMARY_EDITORS)
+
+
+def get_nicknames_runtime() -> dict:
+    from tracker import cfg_get_nicknames
+    db = _safe_db_call(cfg_get_nicknames, None)
+    return db if db else dict(CLIENT_NICKNAMES)
+
+
+def get_nicknames_by_editor_runtime() -> dict:
+    from tracker import cfg_get_nicknames_by_editor
+    db = _safe_db_call(cfg_get_nicknames_by_editor, None)
+    return db if db else dict(CLIENT_NICKNAMES_BY_EDITOR)
+
+
+def get_aliases_runtime() -> dict:
+    from tracker import cfg_get_aliases
+    db = _safe_db_call(cfg_get_aliases, None)
+    return db if db else dict(CLIENT_ALIASES)
+
+
+def get_delivery_folders_runtime() -> dict:
+    from tracker import cfg_get_delivery_folders
+    db = _safe_db_call(cfg_get_delivery_folders, None)
+    return db if db else dict(CLIENT_DELIVERY_FOLDERS)
+
+
 def get_editor_email(editor: str):
-    """Devuelve el mail del editor si está configurado, None si no."""
+    """Devuelve el mail del editor si está configurado, None si no.
+    Lee de la DB (fuente de verdad runtime) con fallback al hardcoded."""
     if not editor:
         return None
-    for k, v in EDITOR_EMAILS.items():
+    emails = get_editor_emails_runtime()
+    for k, v in emails.items():
         if _normalize(k) == _normalize(editor):
             return v
     return None
@@ -89,23 +147,27 @@ def get_editor_email(editor: str):
 def resolve_nickname_static(text: str, editor: str = None) -> str:
     """
     Resuelve un apodo conocido al nombre real del cliente.
-    Si el editor está dado, primero busca en CLIENT_NICKNAMES_BY_EDITOR.
-    Si no encuentra, busca en CLIENT_NICKNAMES (universal).
+    Si el editor está dado, primero busca en nicknames_by_editor.
+    Si no encuentra, busca en nicknames universales.
     Si no es apodo conocido, devuelve el original.
+    Lee de DB con fallback al hardcoded.
     """
     if not text:
         return text
     norm = _normalize(text)
 
+    nicknames_by_editor = get_nicknames_by_editor_runtime()
+    nicknames = get_nicknames_runtime()
+
     # 1. Buscar en dict editor-específico
     if editor:
         norm_editor = _normalize(editor)
         key = (norm, norm_editor)
-        if key in CLIENT_NICKNAMES_BY_EDITOR:
-            return CLIENT_NICKNAMES_BY_EDITOR[key]
+        if key in nicknames_by_editor:
+            return nicknames_by_editor[key]
 
     # 2. Buscar en universal
-    return CLIENT_NICKNAMES.get(norm, text)
+    return nicknames.get(norm, text)
 
 
 def _normalize(s: str) -> str:
@@ -118,12 +180,14 @@ def resolve_alias(drive_folder_name: str) -> str:
     """
     Si el nombre de carpeta de Drive matchea con un alias conocido,
     devuelve el nombre real del cliente. Si no, devuelve el original.
+    Lee de DB con fallback al hardcoded.
     """
     if not drive_folder_name:
         return drive_folder_name
     norm = _normalize(drive_folder_name)
-    if norm in CLIENT_ALIASES:
-        return CLIENT_ALIASES[norm]
+    aliases = get_aliases_runtime()
+    if norm in aliases:
+        return aliases[norm]
     return drive_folder_name
 
 
@@ -131,9 +195,11 @@ def reverse_alias(cliente_real: str) -> list:
     """
     Dado el nombre real de un cliente, devuelve los nombres de carpeta de Drive
     que mapean a él. Lista vacía si no hay alias inverso.
+    Lee de DB con fallback al hardcoded.
     """
     target = _normalize(cliente_real)
-    return [drive_name for drive_name, real in CLIENT_ALIASES.items()
+    aliases = get_aliases_runtime()
+    return [drive_name for drive_name, real in aliases.items()
             if _normalize(real) == target]
 
 

@@ -114,6 +114,96 @@ def init_db():
         )
     """)
 
+    # Tablas de CONFIGURACIÓN: editables desde el dashboard sin tocar código.
+    # Reemplazan/extienden el contenido de aliases.py (que queda como seed inicial).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cfg_editors (
+            name TEXT PRIMARY KEY,
+            email TEXT,
+            receives_daily_summary INTEGER NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cfg_nicknames (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nickname TEXT NOT NULL,
+            cliente_real TEXT NOT NULL,
+            editor TEXT,  -- NULL = universal; si tiene editor, solo aplica con ese editor
+            created_at TEXT
+        )
+    """)
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_nicknames_nick_editor ON cfg_nicknames(nickname, COALESCE(editor, ''))")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cfg_aliases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            drive_name TEXT NOT NULL UNIQUE,
+            cliente_real TEXT NOT NULL,
+            created_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cfg_delivery_folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente TEXT NOT NULL UNIQUE,
+            folder_id TEXT NOT NULL,
+            description TEXT,
+            created_at TEXT
+        )
+    """)
+
+    # Seed inicial desde aliases.py (solo si las tablas están vacías)
+    try:
+        from aliases import (
+            EDITORS_LIST, EDITOR_EMAILS, DAILY_SUMMARY_EDITORS,
+            CLIENT_NICKNAMES, CLIENT_NICKNAMES_BY_EDITOR,
+            CLIENT_ALIASES, CLIENT_DELIVERY_FOLDERS,
+        )
+        existing = conn.execute("SELECT COUNT(*) FROM cfg_editors").fetchone()[0]
+        if existing == 0:
+            now = now_iso()
+            for ed in EDITORS_LIST:
+                email = EDITOR_EMAILS.get(ed)
+                receives = 1 if ed in DAILY_SUMMARY_EDITORS else 0
+                conn.execute(
+                    "INSERT OR IGNORE INTO cfg_editors (name, email, receives_daily_summary, active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
+                    (ed, email, receives, now, now),
+                )
+        existing = conn.execute("SELECT COUNT(*) FROM cfg_nicknames").fetchone()[0]
+        if existing == 0:
+            now = now_iso()
+            for nick, real in CLIENT_NICKNAMES.items():
+                conn.execute(
+                    "INSERT OR IGNORE INTO cfg_nicknames (nickname, cliente_real, editor, created_at) VALUES (?, ?, NULL, ?)",
+                    (nick, real, now),
+                )
+            for (nick, editor), real in CLIENT_NICKNAMES_BY_EDITOR.items():
+                conn.execute(
+                    "INSERT OR IGNORE INTO cfg_nicknames (nickname, cliente_real, editor, created_at) VALUES (?, ?, ?, ?)",
+                    (nick, real, editor, now),
+                )
+        existing = conn.execute("SELECT COUNT(*) FROM cfg_aliases").fetchone()[0]
+        if existing == 0:
+            now = now_iso()
+            for drive_name, real in CLIENT_ALIASES.items():
+                conn.execute(
+                    "INSERT OR IGNORE INTO cfg_aliases (drive_name, cliente_real, created_at) VALUES (?, ?, ?)",
+                    (drive_name, real, now),
+                )
+        existing = conn.execute("SELECT COUNT(*) FROM cfg_delivery_folders").fetchone()[0]
+        if existing == 0:
+            now = now_iso()
+            for cli, folder_id in CLIENT_DELIVERY_FOLDERS.items():
+                conn.execute(
+                    "INSERT OR IGNORE INTO cfg_delivery_folders (cliente, folder_id, description, created_at) VALUES (?, ?, NULL, ?)",
+                    (cli, folder_id, now),
+                )
+    except Exception as e:
+        # Si aliases.py falla por algún motivo, no romper init_db
+        pass
+
     # Tabla pending_completion_mails: cola persistente de mails de cierre/decremento.
     # Cuando el closer detecta un editado nuevo, INSERT acá ANTES de mandar mail.
     # El notifier lee filas con mail_sent_at IS NULL, manda, y marca.
@@ -491,6 +581,178 @@ def mark_completion_mail_failed(row_id: int):
         "UPDATE pending_completion_mails SET retry_count = retry_count + 1 WHERE id = ?",
         (row_id,),
     )
+    conn.commit()
+    conn.close()
+
+
+# ─── Config helpers (lee de cfg_* tablas, con fallback a aliases.py si vacío) ──
+
+def cfg_list_editors() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT name, email, receives_daily_summary, active, created_at, updated_at
+        FROM cfg_editors ORDER BY name
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def cfg_get_editor_emails() -> dict:
+    """Devuelve {editor_name: email}. Solo editores activos con email."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT name, email FROM cfg_editors WHERE active=1 AND email IS NOT NULL AND email != ''"
+    ).fetchall()
+    conn.close()
+    return {r["name"]: r["email"] for r in rows}
+
+
+def cfg_get_daily_summary_editors() -> set:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT name FROM cfg_editors WHERE active=1 AND receives_daily_summary=1"
+    ).fetchall()
+    conn.close()
+    return {r["name"] for r in rows}
+
+
+def cfg_get_editors_list() -> list[str]:
+    """Lista de editores activos (canónica para dashboard)."""
+    conn = get_conn()
+    rows = conn.execute("SELECT name FROM cfg_editors WHERE active=1 ORDER BY name").fetchall()
+    conn.close()
+    return [r["name"] for r in rows]
+
+
+def cfg_upsert_editor(name: str, email: Optional[str], receives_daily_summary: bool, active: bool = True):
+    conn = get_conn()
+    now = now_iso()
+    conn.execute("""
+        INSERT INTO cfg_editors (name, email, receives_daily_summary, active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            email=excluded.email,
+            receives_daily_summary=excluded.receives_daily_summary,
+            active=excluded.active,
+            updated_at=excluded.updated_at
+    """, (name, email, 1 if receives_daily_summary else 0, 1 if active else 0, now, now))
+    conn.commit()
+    conn.close()
+
+
+def cfg_delete_editor(name: str):
+    conn = get_conn()
+    conn.execute("DELETE FROM cfg_editors WHERE name = ?", (name,))
+    conn.commit()
+    conn.close()
+
+
+def cfg_list_nicknames() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute("SELECT id, nickname, cliente_real, editor, created_at FROM cfg_nicknames ORDER BY nickname").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def cfg_get_nicknames() -> dict:
+    """Devuelve {nickname_lower: cliente_real} para los universales."""
+    conn = get_conn()
+    rows = conn.execute("SELECT nickname, cliente_real FROM cfg_nicknames WHERE editor IS NULL").fetchall()
+    conn.close()
+    return {r["nickname"].lower(): r["cliente_real"] for r in rows}
+
+
+def cfg_get_nicknames_by_editor() -> dict:
+    """Devuelve {(nick_lower, editor_lower): cliente_real}."""
+    conn = get_conn()
+    rows = conn.execute("SELECT nickname, cliente_real, editor FROM cfg_nicknames WHERE editor IS NOT NULL").fetchall()
+    conn.close()
+    return {(r["nickname"].lower(), r["editor"].lower()): r["cliente_real"] for r in rows}
+
+
+def cfg_add_nickname(nickname: str, cliente_real: str, editor: Optional[str]) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO cfg_nicknames (nickname, cliente_real, editor, created_at) VALUES (?, ?, ?, ?)",
+        (nickname, cliente_real, editor, now_iso()),
+    )
+    rid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return rid
+
+
+def cfg_delete_nickname(row_id: int):
+    conn = get_conn()
+    conn.execute("DELETE FROM cfg_nicknames WHERE id = ?", (row_id,))
+    conn.commit()
+    conn.close()
+
+
+def cfg_list_aliases() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute("SELECT id, drive_name, cliente_real, created_at FROM cfg_aliases ORDER BY drive_name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def cfg_get_aliases() -> dict:
+    """Devuelve {drive_name_lower: cliente_real}."""
+    conn = get_conn()
+    rows = conn.execute("SELECT drive_name, cliente_real FROM cfg_aliases").fetchall()
+    conn.close()
+    return {r["drive_name"].lower(): r["cliente_real"] for r in rows}
+
+
+def cfg_add_alias(drive_name: str, cliente_real: str) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO cfg_aliases (drive_name, cliente_real, created_at) VALUES (?, ?, ?)",
+        (drive_name, cliente_real, now_iso()),
+    )
+    rid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return rid
+
+
+def cfg_delete_alias(row_id: int):
+    conn = get_conn()
+    conn.execute("DELETE FROM cfg_aliases WHERE id = ?", (row_id,))
+    conn.commit()
+    conn.close()
+
+
+def cfg_list_delivery_folders() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute("SELECT id, cliente, folder_id, description, created_at FROM cfg_delivery_folders ORDER BY cliente").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def cfg_get_delivery_folders() -> dict:
+    """Devuelve {cliente: folder_id}."""
+    conn = get_conn()
+    rows = conn.execute("SELECT cliente, folder_id FROM cfg_delivery_folders").fetchall()
+    conn.close()
+    return {r["cliente"]: r["folder_id"] for r in rows}
+
+
+def cfg_add_delivery_folder(cliente: str, folder_id: str, description: Optional[str] = None) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO cfg_delivery_folders (cliente, folder_id, description, created_at) VALUES (?, ?, ?, ?)",
+        (cliente, folder_id, description, now_iso()),
+    )
+    rid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return rid
+
+
+def cfg_delete_delivery_folder(row_id: int):
+    conn = get_conn()
+    conn.execute("DELETE FROM cfg_delivery_folders WHERE id = ?", (row_id,))
     conn.commit()
     conn.close()
 

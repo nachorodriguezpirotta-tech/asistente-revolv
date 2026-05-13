@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Configuración — Asistente Revolv</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#0f1115; color:#e8eaed; margin:0; padding:24px; }
+  .header { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid #2a2f3a; }
+  h1 { margin:0; font-size:22px; font-weight:600; }
+  .subtitle { font-size:13px; color:#8a93a3; margin-top:4px; }
+  .back-link { font-size:13px; color:#8a93a3; text-decoration:none; }
+  .back-link:hover { color:#e8eaed; }
+  .tabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:1px solid #2a2f3a; overflow-x:auto; }
+  .tab { padding:10px 16px; background:transparent; border:none; color:#8a93a3; cursor:pointer; font-size:14px; font-weight:500; font-family:inherit; border-bottom:2px solid transparent; white-space:nowrap; }
+  .tab:hover { color:#e8eaed; }
+  .tab.active { color:#e8eaed; border-bottom-color:#4ade80; }
+  .panel { display:none; }
+  .panel.active { display:block; }
+  .section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .add-btn { background:#1f3a26; color:#4ade80; border:1px solid #2a4a30; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; }
+  .add-btn:hover { background:#264d2f; }
+  table { width:100%; border-collapse:collapse; background:#1a1e27; border-radius:10px; overflow:hidden; border:1px solid #2a2f3a; }
+  th, td { padding:11px 14px; text-align:left; font-size:13px; border-bottom:1px solid #2a2f3a; }
+  th { background:#14171f; color:#8a93a3; font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:#1f2430; }
+  td.name { font-weight:600; color:#e8eaed; }
+  td.mono { font-family: monospace; font-size:12px; color:#8a93a3; }
+  td.actions { text-align:right; white-space:nowrap; }
+  .icon-btn { background:transparent; border:1px solid #2a2f3a; color:#8a93a3; padding:4px 10px; border-radius:5px; font-size:12px; cursor:pointer; margin-left:4px; }
+  .icon-btn:hover { background:#1f2430; color:#e8eaed; }
+  .icon-btn.danger:hover { background:#3a1a1a; color:#f87171; border-color:#5a2a2a; }
+  .toggle { display:inline-block; width:36px; height:20px; background:#2a2f3a; border-radius:20px; position:relative; cursor:pointer; transition:background 0.15s; }
+  .toggle.on { background:#4ade80; }
+  .toggle::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; background:white; border-radius:50%; transition:left 0.15s; }
+  .toggle.on::after { left:18px; }
+  .loading, .error, .empty { padding:32px; text-align:center; color:#8a93a3; }
+  .error { color:#ff7676; white-space:pre-wrap; }
+
+  /* Modal */
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:100; padding:16px; }
+  .modal-bg.open { display:flex; }
+  .modal { background:#1a1e27; border:1px solid #2a2f3a; border-radius:12px; padding:24px; max-width:480px; width:100%; }
+  .modal h3 { margin:0 0 18px; font-size:17px; }
+  .field { margin-bottom:14px; }
+  .field label { display:block; font-size:12px; color:#8a93a3; margin-bottom:6px; }
+  .field input, .field select { width:100%; background:#0f1115; border:1px solid #2a2f3a; color:#e8eaed; padding:9px 12px; border-radius:6px; font-size:14px; font-family:inherit; }
+  .field input:focus, .field select:focus { outline:none; border-color:#4ade80; }
+  .field-hint { font-size:11px; color:#5a6478; margin-top:4px; }
+  .field-row { display:flex; gap:8px; align-items:center; }
+  .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+  .btn { padding:8px 16px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; border:none; font-family:inherit; }
+  .btn-primary { background:#4ade80; color:#0f1115; }
+  .btn-primary:hover { background:#3ec170; }
+  .btn-secondary { background:transparent; color:#8a93a3; border:1px solid #2a2f3a; }
+  .btn-secondary:hover { color:#e8eaed; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>⚙️ Configuración</h1>
+      <div class="subtitle">Editores, apodos, aliases y carpetas extra — todo editable</div>
+    </div>
+    <div style="text-align:right;">
+      <a href="javascript:goBack()" class="back-link">← Dashboard</a>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="editors">👤 Editores</button>
+    <button class="tab" data-tab="nicknames">🏷️ Apodos</button>
+    <button class="tab" data-tab="aliases">📂 Aliases de carpetas</button>
+    <button class="tab" data-tab="delivery">📁 Carpetas extra</button>
+  </div>
+
+  <div id="content"><div class="loading">Cargando…</div></div>
+
+  <!-- Modal genérico -->
+  <div id="modal-bg" class="modal-bg">
+    <div class="modal" id="modal">
+      <h3 id="modal-title">Editar</h3>
+      <div id="modal-body"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" id="modal-save" onclick="submitModal()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get('t') || '';
+const content = document.getElementById('content');
+
+let DATA = null;
+let ACTIVE_TAB = 'editors';
+let MODAL_STATE = null;
+
+function goBack() {
+  location.href = `/?admin=1&t=${encodeURIComponent(TOKEN)}`;
+}
+
+if (!TOKEN) {
+  content.innerHTML = '<div class="error">Falta token.</div>';
+} else {
+  loadConfig();
+}
+
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    ACTIVE_TAB = t.dataset.tab;
+    render();
+  });
+});
+
+async function loadConfig() {
+  content.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const res = await fetch(`/api/config?admin=1&t=${encodeURIComponent(TOKEN)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    DATA = data;
+    render();
+  } catch (e) {
+    content.innerHTML = `<div class="error">No pude cargar:\n${e.message}</div>`;
+  }
+}
+
+function render() {
+  if (!DATA) return;
+  if (ACTIVE_TAB === 'editors') renderEditors();
+  else if (ACTIVE_TAB === 'nicknames') renderNicknames();
+  else if (ACTIVE_TAB === 'aliases') renderAliases();
+  else if (ACTIVE_TAB === 'delivery') renderDelivery();
+}
+
+// ──────────── EDITORES ────────────
+function renderEditors() {
+  let html = `<div class="section-header">
+    <div><strong>${DATA.editors.length}</strong> editores configurados</div>
+    <button class="add-btn" onclick="openEditorModal()">+ Nuevo editor</button>
+  </div>`;
+  if (DATA.editors.length === 0) {
+    html += '<div class="empty">No hay editores. Agregá uno con el botón arriba.</div>';
+  } else {
+    html += `<table><thead><tr>
+      <th>Nombre</th>
+      <th>Email</th>
+      <th>Resumen 8am</th>
+      <th>Activo</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const ed of DATA.editors) {
+      html += `<tr>
+        <td class="name">${escape(ed.name)}</td>
+        <td class="mono">${ed.email ? escape(ed.email) : '<span style="color:#5a6478">—</span>'}</td>
+        <td>${ed.receives_daily_summary ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
+        <td>${ed.active ? '🟢' : '<span style="color:#5a6478">🔴 inactivo</span>'}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openEditorModal(${JSON.stringify(ed)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteEditor(${JSON.stringify(ed.name)})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  content.innerHTML = html;
+}
+
+function openEditorModal(ed) {
+  const isNew = !ed;
+  MODAL_STATE = { type: 'editor', isNew, data: ed || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nuevo editor' : 'Editar editor';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Nombre <span style="color:#f87171">*</span></label>
+      <input id="m-name" type="text" value="${escapeAttr(ed?.name || '')}" ${isNew ? '' : 'readonly style="opacity:0.6"'} placeholder="Ej: Rami">
+      <div class="field-hint">${isNew ? 'No se puede cambiar después' : 'Para renombrar borrá y creá uno nuevo'}</div>
+    </div>
+    <div class="field"><label>Email</label>
+      <input id="m-email" type="email" value="${escapeAttr(ed?.email || '')}" placeholder="editor@gmail.com">
+      <div class="field-hint">Necesario para recibir notificaciones</div>
+    </div>
+    <div class="field field-row" style="gap:12px;">
+      <span class="toggle ${ed?.receives_daily_summary ? 'on' : ''}" id="m-receives" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-receives').click()">Recibe resumen diario 8am</label>
+    </div>
+    <div class="field field-row" style="gap:12px;">
+      <span class="toggle ${(ed?.active !== 0) ? 'on' : ''}" id="m-active" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-active').click()">Activo (aparece en dashboard)</label>
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function deleteEditor(name) {
+  if (!confirm(`¿Borrar editor "${name}"?\n\nLas tasks que tenga seguirán existiendo pero quedarán huérfanas. Mejor reasignalas antes.`)) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin: 1, t: TOKEN, section: 'editor', action: 'delete', data: { name } }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) {
+    alert('No se pudo borrar:\n' + e.message);
+  }
+}
+
+// ──────────── APODOS ────────────
+function renderNicknames() {
+  let html = `<div class="section-header">
+    <div><strong>${DATA.nicknames.length}</strong> apodos configurados</div>
+    <button class="add-btn" onclick="openNicknameModal()">+ Nuevo apodo</button>
+  </div>`;
+  if (DATA.nicknames.length === 0) {
+    html += '<div class="empty">No hay apodos.</div>';
+  } else {
+    html += `<table><thead><tr>
+      <th>Apodo</th>
+      <th>Cliente real</th>
+      <th>Editor (opcional)</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const n of DATA.nicknames) {
+      html += `<tr>
+        <td class="name">${escape(n.nickname)}</td>
+        <td>${escape(n.cliente_real)}</td>
+        <td>${n.editor ? escape(n.editor) : '<span style="color:#5a6478">universal</span>'}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openNicknameModal(${JSON.stringify(n)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteRow("nickname", ${n.id})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  content.innerHTML = html;
+}
+
+function openNicknameModal(n) {
+  const isNew = !n;
+  MODAL_STATE = { type: 'nickname', isNew, data: n || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nuevo apodo' : 'Editar apodo';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Apodo <span style="color:#f87171">*</span></label>
+      <input id="m-nickname" type="text" value="${escapeAttr(n?.nickname || '')}" placeholder="cris">
+      <div class="field-hint">Se normaliza a minúsculas. Ej: "cris", "delfi"</div>
+    </div>
+    <div class="field"><label>Cliente real <span style="color:#f87171">*</span></label>
+      <input id="m-real" type="text" value="${escapeAttr(n?.cliente_real || '')}" placeholder="Cristhian Fonseca">
+    </div>
+    <div class="field"><label>Editor específico (opcional)</label>
+      <input id="m-editor" type="text" value="${escapeAttr(n?.editor || '')}" placeholder="Vacío = universal">
+      <div class="field-hint">Solo si el mismo apodo significa cosas distintas según el editor</div>
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ──────────── ALIASES ────────────
+function renderAliases() {
+  let html = `<div class="section-header">
+    <div><strong>${DATA.aliases.length}</strong> aliases configurados</div>
+    <button class="add-btn" onclick="openAliasModal()">+ Nuevo alias</button>
+  </div>`;
+  html += `<div style="font-size:12px;color:#8a93a3;margin-bottom:10px;">Mapeo: nombre raro en Drive → cliente real del Sheet</div>`;
+  if (DATA.aliases.length === 0) {
+    html += '<div class="empty">No hay aliases.</div>';
+  } else {
+    html += `<table><thead><tr>
+      <th>Nombre en Drive</th>
+      <th>Cliente real</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const a of DATA.aliases) {
+      html += `<tr>
+        <td class="mono">${escape(a.drive_name)}</td>
+        <td>${escape(a.cliente_real)}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openAliasModal(${JSON.stringify(a)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteRow("alias", ${a.id})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  content.innerHTML = html;
+}
+
+function openAliasModal(a) {
+  const isNew = !a;
+  MODAL_STATE = { type: 'alias', isNew, data: a || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nuevo alias' : 'Editar alias';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Nombre en Drive <span style="color:#f87171">*</span></label>
+      <input id="m-drive" type="text" value="${escapeAttr(a?.drive_name || '')}" placeholder="content roger rm founders">
+      <div class="field-hint">El nombre EXACTO de la carpeta en Drive (lowercase)</div>
+    </div>
+    <div class="field"><label>Cliente real <span style="color:#f87171">*</span></label>
+      <input id="m-real-a" type="text" value="${escapeAttr(a?.cliente_real || '')}" placeholder="Roger Marti">
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ──────────── DELIVERY FOLDERS ────────────
+function renderDelivery() {
+  let html = `<div class="section-header">
+    <div><strong>${DATA.delivery_folders.length}</strong> carpetas extra configuradas</div>
+    <button class="add-btn" onclick="openDeliveryModal()">+ Nueva</button>
+  </div>`;
+  html += `<div style="font-size:12px;color:#8a93a3;margin-bottom:10px;">Carpetas EXTRA donde se entregan editados para clientes específicos (fuera de su carpeta normal)</div>`;
+  if (DATA.delivery_folders.length === 0) {
+    html += '<div class="empty">No hay configuradas.</div>';
+  } else {
+    html += `<table><thead><tr>
+      <th>Cliente</th>
+      <th>Folder ID</th>
+      <th>Descripción</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const d of DATA.delivery_folders) {
+      html += `<tr>
+        <td class="name">${escape(d.cliente)}</td>
+        <td class="mono">${escape(d.folder_id)}</td>
+        <td>${d.description ? escape(d.description) : '<span style="color:#5a6478">—</span>'}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openDeliveryModal(${JSON.stringify(d)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteRow("delivery", ${d.id})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  content.innerHTML = html;
+}
+
+function openDeliveryModal(d) {
+  const isNew = !d;
+  MODAL_STATE = { type: 'delivery', isNew, data: d || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nueva carpeta extra' : 'Editar carpeta extra';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Cliente <span style="color:#f87171">*</span></label>
+      <input id="m-cli" type="text" value="${escapeAttr(d?.cliente || '')}" placeholder="Rafa Elvram">
+    </div>
+    <div class="field"><label>Folder ID de Drive <span style="color:#f87171">*</span></label>
+      <input id="m-fid" type="text" value="${escapeAttr(d?.folder_id || '')}" placeholder="1PUIRQ80fV9...">
+      <div class="field-hint">El ID está en la URL de Drive: drive.google.com/drive/folders/<strong>ID</strong></div>
+    </div>
+    <div class="field"><label>Descripción (opcional)</label>
+      <input id="m-desc" type="text" value="${escapeAttr(d?.description || '')}" placeholder="Editados Nacho abril 2026">
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ──────────── MODAL submit ────────────
+function closeModal() { document.getElementById('modal-bg').classList.remove('open'); MODAL_STATE = null; }
+
+async function submitModal() {
+  if (!MODAL_STATE) return;
+  const { type, isNew, data } = MODAL_STATE;
+  let payload, section;
+  try {
+    if (type === 'editor') {
+      section = 'editor';
+      payload = {
+        name: document.getElementById('m-name').value.trim(),
+        email: document.getElementById('m-email').value.trim(),
+        receives_daily_summary: document.getElementById('m-receives').classList.contains('on'),
+        active: document.getElementById('m-active').classList.contains('on'),
+      };
+      if (!payload.name) return alert('Falta nombre');
+    } else if (type === 'nickname') {
+      section = 'nickname';
+      payload = {
+        id: data.id,
+        nickname: document.getElementById('m-nickname').value.trim(),
+        cliente_real: document.getElementById('m-real').value.trim(),
+        editor: document.getElementById('m-editor').value.trim() || null,
+      };
+      if (!payload.nickname || !payload.cliente_real) return alert('Falta apodo o cliente real');
+    } else if (type === 'alias') {
+      section = 'alias';
+      payload = {
+        id: data.id,
+        drive_name: document.getElementById('m-drive').value.trim(),
+        cliente_real: document.getElementById('m-real-a').value.trim(),
+      };
+      if (!payload.drive_name || !payload.cliente_real) return alert('Faltan campos');
+    } else if (type === 'delivery') {
+      section = 'delivery';
+      payload = {
+        id: data.id,
+        cliente: document.getElementById('m-cli').value.trim(),
+        folder_id: document.getElementById('m-fid').value.trim(),
+        description: document.getElementById('m-desc').value.trim(),
+      };
+      if (!payload.cliente || !payload.folder_id) return alert('Faltan campos');
+    }
+
+    const action = isNew ? 'create' : 'update';
+    const method = isNew ? 'POST' : 'PATCH';
+    const res = await fetch('/api/config', {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin: 1, t: TOKEN, section, action, data: payload }),
+    });
+    const r = await res.json();
+    if (!res.ok || !r.ok) throw new Error(r.error || ('HTTP ' + res.status));
+    closeModal();
+    loadConfig();
+  } catch (e) {
+    alert('Error:\n' + e.message);
+  }
+}
+
+async function deleteRow(section, id) {
+  if (!confirm('¿Borrar?')) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin: 1, t: TOKEN, section, action: 'delete', data: { id } }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) {
+    alert('No se pudo borrar:\n' + e.message);
+  }
+}
+
+function escape(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function escapeAttr(s) { return escape(s); }
+</script>
+</body>
+</html>

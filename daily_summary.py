@@ -156,7 +156,12 @@ def build_mail_para_editor(editor: str, clientes: list):
 
 
 def run(dry_run: bool = False):
-    from aliases import EDITOR_EMAILS, DAILY_SUMMARY_EDITORS, get_editor_email
+    from aliases import (
+        get_editor_emails_runtime, get_daily_summary_editors_runtime,
+        get_editor_email,
+    )
+    EDITOR_EMAILS = get_editor_emails_runtime()
+    DAILY_SUMMARY_EDITORS = get_daily_summary_editors_runtime()
 
     grouped = get_pending_grouped()
     subject, text, html = build_mail(grouped)

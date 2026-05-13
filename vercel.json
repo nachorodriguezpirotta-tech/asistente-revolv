@@ -7,6 +7,7 @@
   "rewrites": [
     { "source": "/", "destination": "/index.html" },
     { "source": "/stats", "destination": "/stats.html" },
+    { "source": "/config", "destination": "/config.html" },
     { "source": "/manifest.json", "destination": "/manifest.json" }
   ],
   "functions": {
@@ -19,6 +20,10 @@
       "maxDuration": 10
     },
     "api/stats.py": {
+      "memory": 256,
+      "maxDuration": 10
+    },
+    "api/config.py": {
       "memory": 256,
       "maxDuration": 10
     }

@@ -264,6 +264,7 @@
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
       <button class="add-btn-main" onclick="openAddDialog()">+ Agregar pendiente</button>
       <a id="stats-link" href="#" style="display:none; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">📊 Ver Stats</a>
+      <a id="config-link" href="#" style="display:none; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">⚙️ Configuración</a>
     </div>
 
     <div id="content">
@@ -293,6 +294,11 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
         if (statsLink) {
             statsLink.href = `/stats.html?t=${encodeURIComponent(TOKEN)}`;
             statsLink.style.display = 'inline-block';
+        }
+        const cfgLink = document.getElementById('config-link');
+        if (cfgLink) {
+            cfgLink.href = `/config.html?t=${encodeURIComponent(TOKEN)}`;
+            cfgLink.style.display = 'inline-block';
         }
     }
     loadData();
