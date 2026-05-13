@@ -11,19 +11,45 @@
 <link rel="apple-touch-icon" href="/icon-192.png">
 <style>
   * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0f1115; color: #e8eaed; margin: 0; padding: 24px;
+    background: #0f1115; color: #e8eaed;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
-  .header {
-    display: flex; align-items: baseline; justify-content: space-between;
-    margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #2a2f3a;
+  .page-content { padding: 16px; padding-top: 12px; }
+
+  /* HEADER FIJO MOBILE */
+  .app-header {
+    position: sticky; top: 0; z-index: 50;
+    background: #0f1115; padding: 12px 16px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    border-bottom: 1px solid #2a2f3a;
+    display: flex; align-items: center; gap: 12px;
   }
-  h1 { margin: 0; font-size: 22px; font-weight: 600; }
-  .subtitle { font-size: 13px; color: #8a93a3; margin-top: 4px; }
-  .back-link { font-size: 13px; color: #8a93a3; text-decoration: none; }
-  .back-link:hover { color: #e8eaed; }
-  .updated { font-size: 11px; color: #5a6478; }
+  .back-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 40px; min-height: 40px;
+    background: rgba(255,255,255,0.06); border-radius: 10px;
+    color: #e8eaed; text-decoration: none;
+    font-size: 18px; font-weight: 600;
+    transition: background 0.15s;
+  }
+  .back-btn:active { background: rgba(255,255,255,0.12); }
+  .header-title { flex: 1; min-width: 0; }
+  .header-title h1 { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.2; }
+  .header-title .subtitle { font-size: 11px; color: #8a93a3; margin-top: 2px; }
+  .updated { font-size: 10px; color: #5a6478; text-align: right; white-space: nowrap; }
+
+  /* Layout desktop > 700px */
+  @media (min-width: 700px) {
+    .page-content { padding: 24px; max-width: 1200px; margin: 0 auto; }
+    .app-header { padding: 16px 24px; padding-top: calc(16px + env(safe-area-inset-top)); }
+    .header-title h1 { font-size: 22px; }
+    .header-title .subtitle { font-size: 13px; }
+  }
+
   .loading, .error {
     padding: 32px; text-align: center; color: #8a93a3;
   }
@@ -31,13 +57,16 @@
 
   /* TABS */
   .tabs {
-    display: flex; gap: 4px; margin-bottom: 20px;
+    display: flex; gap: 2px; margin-bottom: 16px;
     border-bottom: 1px solid #2a2f3a;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .tab {
-    padding: 10px 18px; background: transparent; border: none; color: #8a93a3;
-    cursor: pointer; font-size: 14px; font-weight: 500; font-family: inherit;
-    border-bottom: 2px solid transparent;
+    padding: 12px 14px; background: transparent; border: none; color: #8a93a3;
+    cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit;
+    border-bottom: 2px solid transparent; white-space: nowrap;
+    min-height: 44px;  /* iOS hit target */
   }
   .tab:hover { color: #e8eaed; }
   .tab.active { color: #e8eaed; border-bottom-color: #4ade80; }
@@ -62,19 +91,23 @@
   .totals .value { font-size: 26px; font-weight: 700; color: #e8eaed; }
   .totals .extra { font-size: 12px; color: #5a6478; margin-top: 4px; }
 
-  /* TABLAS */
+  /* TABLAS — scroll horizontal en mobile */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 16px; border-radius: 10px; border: 1px solid #2a2f3a; }
   table {
     width: 100%; border-collapse: collapse; background: #1a1e27;
-    border-radius: 10px; overflow: hidden; border: 1px solid #2a2f3a;
-    margin-bottom: 24px;
+    min-width: 600px;
   }
   th, td {
-    padding: 12px 14px; text-align: left; font-size: 13px;
-    border-bottom: 1px solid #2a2f3a;
+    padding: 10px 12px; text-align: left; font-size: 12px;
+    border-bottom: 1px solid #2a2f3a; white-space: nowrap;
   }
   th {
     background: #14171f; color: #8a93a3; font-weight: 500;
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  @media (min-width: 700px) {
+    th, td { padding: 12px 14px; font-size: 13px; }
+    th { font-size: 11px; }
   }
   tr:last-child td { border-bottom: none; }
   tr.clickable { cursor: pointer; }
@@ -155,24 +188,24 @@
 </style>
 </head>
 <body>
-  <div class="header">
-    <div>
-      <h1>📊 Stats Asistente Revolv</h1>
-      <div class="subtitle">Productividad y métricas — editores y clientes</div>
+  <header class="app-header">
+    <a href="javascript:goBack()" class="back-btn" title="Volver">←</a>
+    <div class="header-title">
+      <h1>📊 Stats</h1>
+      <div class="subtitle">Productividad y métricas</div>
     </div>
-    <div style="text-align:right;">
-      <a href="javascript:goBack()" class="back-link">← Dashboard</a>
-      <div class="updated">Actualizado: <span id="updated">—</span></div>
+    <div class="updated">⟳ <span id="updated">—</span></div>
+  </header>
+
+  <div class="page-content">
+    <div class="tabs">
+      <button class="tab active" data-tab="editores">👥 Editores</button>
+      <button class="tab" data-tab="clientes">🎬 Clientes</button>
     </div>
-  </div>
 
-  <div class="tabs">
-    <button class="tab active" data-tab="editores">👥 Editores</button>
-    <button class="tab" data-tab="clientes">🎬 Clientes</button>
-  </div>
-
-  <div id="content">
-    <div class="loading">Cargando métricas…</div>
+    <div id="content">
+      <div class="loading">Cargando métricas…</div>
+    </div>
   </div>
 
 <script>
@@ -254,7 +287,7 @@ function renderEditores(data) {
     </div>
   </div>`;
 
-  html += `<table>
+  html += `<div class="table-wrap"><table>
     <thead><tr>
       <th>Editor</th>
       <th class="num">Pendientes</th>
@@ -288,7 +321,7 @@ function renderEditores(data) {
     </tr>
     <tr class="detail-row" id="detail-${s.editor}"><td colspan="7">${renderPendingList(data.pending_detail[s.editor] || [])}</td></tr>`;
   }
-  html += `</tbody></table>`;
+  html += `</tbody></table></div>`;
 
   content.innerHTML = html;
 }
@@ -410,7 +443,7 @@ function renderClientTable(clients, id) {
       <td>${badge}</td>
     </tr>`;
   }
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   return html;
 }
 

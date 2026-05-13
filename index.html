@@ -23,27 +23,43 @@
             --green: #4ade80;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { margin: 0; padding: 0; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
             background: var(--bg);
             color: var(--text);
             line-height: 1.5;
-            padding: 32px;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .page-content {
+            padding: 16px;
             max-width: 1100px;
             margin: 0 auto;
         }
         header.main-header {
+            position: sticky; top: 0; z-index: 50;
+            background: var(--bg);
+            padding: 12px 16px;
+            padding-top: calc(12px + env(safe-area-inset-top));
+            border-bottom: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
-            align-items: flex-end;
-            margin-bottom: 32px;
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 24px;
+            align-items: center;
+            gap: 12px;
+        }
+        @media (min-width: 700px) {
+            .page-content { padding: 24px; }
+            header.main-header { padding: 16px 24px; padding-top: calc(16px + env(safe-area-inset-top)); }
         }
         h1 {
-            font-size: 28px;
+            font-size: 18px;
             font-weight: 700;
             letter-spacing: -0.02em;
+            line-height: 1.2;
+        }
+        @media (min-width: 700px) {
+            h1 { font-size: 24px; }
         }
         h1 .red-dot {
             display: inline-block;
@@ -56,13 +72,18 @@
         }
         .header-meta {
             color: var(--text-dim);
-            font-size: 13px;
+            font-size: 11px;
             text-align: right;
+            white-space: nowrap;
         }
         .editor-name {
             color: var(--text);
             font-weight: 600;
-            font-size: 16px;
+            font-size: 13px;
+        }
+        @media (min-width: 700px) {
+            .header-meta { font-size: 13px; }
+            .editor-name { font-size: 15px; }
         }
         .progress-widget {
             background: var(--bg-card);
@@ -302,26 +323,28 @@
 </head>
 <body>
     <header class="main-header">
-        <div>
+        <div style="flex:1; min-width:0;">
             <h1><span class="red-dot"></span>Asistente Revolv</h1>
-            <p style="color: var(--text-dim); margin-top: 4px; font-size: 14px;" id="subtitle">
+            <p style="color: var(--text-dim); margin-top: 2px; font-size: 11px;" id="subtitle">
                 Cargando...
             </p>
         </div>
         <div class="header-meta">
             <div id="user-label" class="editor-name">—</div>
-            <div style="margin-top:6px;">Última: <span id="updated">—</span></div>
+            <div style="margin-top:3px;">⟳ <span id="updated">—</span></div>
         </div>
     </header>
 
-    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-      <button class="add-btn-main" onclick="openAddDialog()">+ Agregar pendiente</button>
-      <a id="stats-link" href="#" style="display:none; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">📊 Ver Stats</a>
-      <a id="config-link" href="#" style="display:none; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">⚙️ Configuración</a>
-    </div>
+    <div class="page-content">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+        <button class="add-btn-main" onclick="openAddDialog()">+ Agregar pendiente</button>
+        <a id="stats-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">📊 Stats</a>
+        <a id="config-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">⚙️ Config</a>
+      </div>
 
-    <div id="content">
-        <div class="loading">Cargando datos…</div>
+      <div id="content">
+          <div class="loading">Cargando datos…</div>
+      </div>
     </div>
 
 <script>
