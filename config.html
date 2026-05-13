@@ -97,7 +97,18 @@
 
 <script>
 const params = new URLSearchParams(location.search);
-const TOKEN = params.get('t') || '';
+let TOKEN = params.get('t') || '';
+if (TOKEN) {
+    try {
+        const saved = JSON.parse(localStorage.getItem('revolv_auth') || '{}');
+        localStorage.setItem('revolv_auth', JSON.stringify({ ...saved, token: TOKEN, admin: true }));
+    } catch (e) {}
+} else {
+    try {
+        const saved = JSON.parse(localStorage.getItem('revolv_auth') || 'null');
+        if (saved && saved.token) TOKEN = saved.token;
+    } catch (e) {}
+}
 const content = document.getElementById('content');
 
 let DATA = null;

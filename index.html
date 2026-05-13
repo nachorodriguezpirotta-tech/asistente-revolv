@@ -325,10 +325,43 @@
     </div>
 
 <script>
+// Auth con persistencia: la primera vez se pasa por URL (?editor=X&t=Y o ?admin=1&t=Y).
+// Se guarda en localStorage para que la PWA pueda abrir desde el ícono sin params.
+// Si vienen params en URL, esos GANAN (permite cambiar credenciales).
 const params = new URLSearchParams(location.search);
-const EDITOR = params.get('editor') || '';
-const TOKEN = params.get('t') || '';
-const IS_ADMIN = params.get('admin') === '1';
+const urlEditor = params.get('editor') || '';
+const urlToken = params.get('t') || '';
+const urlAdmin = params.get('admin') === '1';
+
+let EDITOR, TOKEN, IS_ADMIN;
+if (urlToken && (urlEditor || urlAdmin)) {
+    EDITOR = urlEditor;
+    TOKEN = urlToken;
+    IS_ADMIN = urlAdmin;
+    // Persistir para próximas aperturas (PWA desde ícono pierde params)
+    try {
+        localStorage.setItem('revolv_auth', JSON.stringify({ editor: EDITOR, token: TOKEN, admin: IS_ADMIN }));
+    } catch (e) {}
+    // Si entró con params y NO está en standalone (PWA), limpiar la URL
+    // para que el link compartido no quede expuesto en la barra
+    if (history.replaceState) {
+        const clean = location.pathname;
+        history.replaceState({}, '', clean);
+    }
+} else {
+    try {
+        const saved = JSON.parse(localStorage.getItem('revolv_auth') || 'null');
+        if (saved && saved.token) {
+            EDITOR = saved.editor || '';
+            TOKEN = saved.token;
+            IS_ADMIN = !!saved.admin;
+        } else {
+            EDITOR = ''; TOKEN = ''; IS_ADMIN = false;
+        }
+    } catch (e) {
+        EDITOR = ''; TOKEN = ''; IS_ADMIN = false;
+    }
+}
 
 const subtitle = document.getElementById('subtitle');
 const userLabel = document.getElementById('user-label');
