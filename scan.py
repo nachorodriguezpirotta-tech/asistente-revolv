@@ -173,6 +173,11 @@ def run(notify: bool = False):
             folder = find_folder_by_name(cliente_name, all_root)
             if not folder:
                 return local_new_tasks, local_sin_editor
+            # Guardar folder en clients para que el dashboard muestre link a Drive
+            try:
+                upsert_client(folder["id"], cliente_name, None)
+            except Exception:
+                pass
             crudos = list_crudos_anywhere(folder["id"], folder.get("name"))
             if not crudos:
                 return local_new_tasks, local_sin_editor

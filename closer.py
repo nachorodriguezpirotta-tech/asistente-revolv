@@ -25,7 +25,7 @@ from tracker import (
     edited_baseline_done,
     close_oldest_pending, count_pending_for_client,
     close_all_pending_for_client, decrement_pending_count,
-    enqueue_completion_mail,
+    enqueue_completion_mail, upsert_client,
 )
 from aliases import resolve_alias, reverse_alias, CLIENT_DELIVERY_FOLDERS, _normalize as _alias_norm
 
@@ -101,6 +101,13 @@ def run_closer(verbose: bool = True) -> dict:
         # Detectar carpeta de crudos (Material/Raw/Crudos) si existe, para excluirla
         raw = find_raw_subfolder(folder["id"])
         raw_id = raw["id"] if raw else None
+
+        # Guardar el folder en la tabla clients para que el dashboard tenga el link directo a Drive
+        # (incluye clientes sin /Material/ y los cargados manualmente)
+        try:
+            upsert_client(folder["id"], cliente, raw_id)
+        except Exception:
+            pass
 
         editados = list_edited_files(folder["id"], raw_id, client_folder_name=folder["name"])
 
