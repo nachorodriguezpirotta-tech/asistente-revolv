@@ -51,6 +51,8 @@ jobs:
           MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
         run: |
           for i in 1 2 3; do
             python scan_incremental.py --notify && break

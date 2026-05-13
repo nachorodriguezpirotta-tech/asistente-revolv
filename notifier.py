@@ -159,6 +159,20 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
         if any_sent:
             mark_mail_sent(task_ids)
 
+        # Mandar push notification además del mail
+        try:
+            from push_sender import send_push
+            push_body = f"{len(items)} archivo{'s' if len(items) != 1 else ''} nuevo{'s' if len(items) != 1 else ''}"
+            push_title = f"🎬 {cliente}"
+            push_url = f"/?admin=1"
+            # A admin
+            send_push(editor=None, title=push_title, body=push_body, url=push_url, tag=f"crudo-{cliente}")
+            # Al editor
+            if editor:
+                send_push(editor=editor, title=push_title, body=push_body, url=f"/?editor={editor}", tag=f"crudo-{cliente}")
+        except Exception as e:
+            print(f"     ⚠️ push: {e}")
+
     if dry_run:
         print("\n(dry-run, ningún mail se envió, ningún task se marcó)")
 
@@ -265,6 +279,22 @@ Archivo: {file_name}{link_text}
                 sent += 1
             except Exception as e:
                 print(f"  ❌ falló mail cierre a {dest} [{cliente}]: {e}")
+
+        # Push notification de cierre
+        if any_sent:
+            try:
+                from push_sender import send_push
+                if closed:
+                    push_title = f"✅ {cliente} completado"
+                    push_body = f"{editor} entregó el último video"
+                else:
+                    push_title = f"📹 {cliente}"
+                    push_body = f"{editor} entregó 1 video — quedan {new_count}"
+                send_push(editor=None, title=push_title, body=push_body, url="/?admin=1", tag=f"cierre-{cliente}")
+                if editor and editor != "—":
+                    send_push(editor=editor, title=push_title, body=push_body, url=f"/?editor={editor}", tag=f"cierre-{cliente}")
+            except Exception as e:
+                print(f"     ⚠️ push cierre: {e}")
 
         # Marcar en la cola: si está, marcar como enviado o como retry
         row_id = c.get("id")

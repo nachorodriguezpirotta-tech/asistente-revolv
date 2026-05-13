@@ -350,6 +350,7 @@
     <div class="page-content">
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
         <button class="add-btn-main" onclick="openAddDialog()">+ Agregar pendiente</button>
+        <button id="notif-btn" onclick="toggleNotifications()" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border:none; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; min-height:40px;">🔔 Activar notificaciones</button>
         <a id="stats-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">📊 Stats</a>
         <a id="config-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px; position:relative;">⚙️ Config<span id="config-badge" style="display:none; background:#f87171; color:white; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">0</span></a>
       </div>
@@ -476,8 +477,123 @@ let LAST_DATA = null;
 // PWA: registrar service worker para instalación como app
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/sw.js').then(() => updateNotifButton()).catch(() => {});
   });
+}
+
+// ───── Push notifications ─────
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = window.atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function updateNotifButton() {
+  const btn = document.getElementById('notif-btn');
+  if (!btn) return;
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    btn.style.display = 'none';
+    return;
+  }
+  // Solo mostrar si está logueado
+  if (!TOKEN || (!EDITOR && !IS_ADMIN)) return;
+  btn.style.display = 'inline-block';
+
+  const perm = Notification.permission;
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (perm === 'granted' && sub) {
+    btn.textContent = '🔔 Notif. activas';
+    btn.style.background = '#1f3a26';
+    btn.style.color = '#4ade80';
+  } else if (perm === 'denied') {
+    btn.textContent = '🔕 Notif. bloqueadas';
+    btn.style.background = '#3a1a1a';
+    btn.style.color = '#f87171';
+  } else {
+    btn.textContent = '🔔 Activar notificaciones';
+    btn.style.background = '#2d3445';
+    btn.style.color = '#e8eaed';
+  }
+}
+
+async function toggleNotifications() {
+  if (!('Notification' in window)) {
+    return alert('Tu navegador no soporta notificaciones.');
+  }
+  const btn = document.getElementById('notif-btn');
+  btn.disabled = true;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+
+    if (sub) {
+      // Ya suscripto → preguntar si quiere desuscribirse
+      if (!confirm('Las notificaciones ya están activas. ¿Desactivarlas?')) {
+        btn.disabled = false;
+        return;
+      }
+      try {
+        await fetch('/api/push?action=unsubscribe', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            t: TOKEN, editor: EDITOR, admin: IS_ADMIN ? 1 : 0,
+            endpoint: sub.endpoint,
+          }),
+        });
+      } catch (e) {}
+      await sub.unsubscribe();
+      btn.disabled = false;
+      updateNotifButton();
+      return;
+    }
+
+    // Pedir permiso
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      btn.disabled = false;
+      updateNotifButton();
+      if (perm === 'denied') {
+        alert('Notificaciones bloqueadas. Cambialo desde la configuración del browser.');
+      }
+      return;
+    }
+
+    // Obtener VAPID public key del server
+    const keyRes = await fetch('/api/push?action=vapid-key');
+    const keyData = await keyRes.json();
+    const vapidKey = keyData.key;
+    if (!vapidKey) throw new Error('No se pudo obtener VAPID key');
+
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidKey),
+    });
+
+    // Guardar en server
+    const res = await fetch('/api/push?action=subscribe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        t: TOKEN, editor: EDITOR, admin: IS_ADMIN ? 1 : 0,
+        subscription: sub.toJSON(),
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
+
+    // Mostrar notif local de bienvenida
+    new Notification('🎉 Notificaciones activadas', {
+      body: 'Te vamos a avisar cuando llegue material nuevo.',
+      icon: '/icon-192.png',
+    });
+    btn.disabled = false;
+    updateNotifButton();
+  } catch (e) {
+    btn.disabled = false;
+    alert('Error: ' + e.message);
+    updateNotifButton();
+  }
 }
 
 function render(data) {

@@ -114,6 +114,22 @@ def init_db():
         )
     """)
 
+    # Tabla de suscripciones a Web Push notifications.
+    # Cada browser/device que se suscribe queda con su endpoint + keys.
+    # Cuando llega crudo nuevo o cierre, mandamos push a todos los suscriptos al editor.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            editor TEXT,  -- NULL = admin (Ignacio)
+            endpoint TEXT NOT NULL UNIQUE,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            failed_count INTEGER DEFAULT 0
+        )
+    """)
+
     # Tabla de carpetas Drive detectadas que esperan decisión del admin.
     # Cada vez que aparece una carpeta nueva en Mi Unidad que no es de un cliente conocido,
     # se mete acá. El admin decide en el dashboard: aprobar (= es cliente, asignar editor)
