@@ -219,10 +219,16 @@ def get_client_stats(conn, cliente: str, now: datetime) -> dict:
 
 def _build_stats(conn):
     now = datetime.now()
-    # === EDITORES ===
-    stats_per_editor = [get_editor_stats(conn, editor, now) for editor in EDITORS]
-    # Detalle de pending por editor (lazy: solo si el front lo pide via param, pero por simplicidad lo incluyo)
-    pending_detail = {ed: get_editor_pending_detail(conn, ed) for ed in EDITORS}
+    # === EDITORES === — usar lista activa desde cfg_editors (DB), no hardcoded
+    try:
+        rows = conn.execute("SELECT name FROM cfg_editors WHERE active=1 ORDER BY name").fetchall()
+        editors_active = [r["name"] for r in rows]
+        if not editors_active:
+            editors_active = EDITORS  # fallback
+    except Exception:
+        editors_active = EDITORS
+    stats_per_editor = [get_editor_stats(conn, editor, now) for editor in editors_active]
+    pending_detail = {ed: get_editor_pending_detail(conn, ed) for ed in editors_active}
 
     total_pending_videos = sum(s["pending_videos"] for s in stats_per_editor)
     total_pending_clientes = sum(s["pending_clientes"] for s in stats_per_editor)

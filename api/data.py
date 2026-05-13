@@ -125,14 +125,24 @@ def get_all_data(conn) -> dict:
             "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
         })
 
-    # Asegurar que TODOS los editores canónicos aparezcan, aunque no tengan pendientes
+    # Asegurar que TODOS los editores ACTIVOS aparezcan, aunque no tengan pendientes.
+    # Lee de cfg_editors (DB) que es la fuente de verdad runtime — incluye editores
+    # agregados desde el dashboard de configuración sin reiniciar nada.
     try:
-        from aliases import EDITORS_LIST
-        for ed in EDITORS_LIST:
-            if ed not in by_editor:
-                by_editor[ed] = []
+        ed_rows = conn.execute("SELECT name FROM cfg_editors WHERE active=1").fetchall()
+        for r in ed_rows:
+            ed_name = r["name"]
+            if ed_name and ed_name not in by_editor:
+                by_editor[ed_name] = []
     except Exception:
-        pass
+        # Fallback al hardcoded si la tabla no existe
+        try:
+            from aliases import EDITORS_LIST
+            for ed in EDITORS_LIST:
+                if ed not in by_editor:
+                    by_editor[ed] = []
+        except Exception:
+            pass
 
     # Generar links únicos por editor (cualquier editor que aparezca acá tiene su link)
     editor_links = {}
