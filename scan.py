@@ -262,6 +262,17 @@ def run(notify: bool = False):
     if refreshed:
         print(f"   {refreshed} contadores actualizados.")
 
+    # === NOTIFIER DE CRUDOS — ANTES del closer ===
+    # CRÍTICO: hay que mandar mails de crudos nuevos ANTES de que el closer
+    # pueda cerrar la task con un editado viejo. Caso real (Alberto, 13/05):
+    # Alberto subió crudo → task creada count=1 → Benja había entregado editado
+    # del crudo PREVIO → closer decrementa → cierra → notifier corre con
+    # task ya 'done' → mail del crudo perdido.
+    if notify:
+        print("\n📧 Notificador de crudos nuevos (antes del closer)...")
+        from notifier import run as notify_run
+        notify_run(dry_run=False)
+
     # === CIERRE: detectar editados nuevos y marcar tareas como hechas ===
     print("\n🔄 Buscando editados nuevos para cerrar tareas...")
     from closer import run_closer
@@ -283,11 +294,8 @@ def run(notify: bool = False):
     pendings = list_pending_tasks()
     print(f"\n📊 Total pendientes en DB: {len(pendings)}")
     print(f"   Stats: {stats()}")
-
-    if notify:
-        print("\n📧 Disparando notificador...")
-        from notifier import run as notify_run
-        notify_run(dry_run=False)
+    # Notifier de crudos se llama ANTES del closer (línea ~271) para evitar
+    # que el closer pise tasks recién creadas. Sigue corriendo solo si notify=True.
 
 
 if __name__ == "__main__":
