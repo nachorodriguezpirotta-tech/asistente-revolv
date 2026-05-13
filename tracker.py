@@ -402,6 +402,19 @@ def set_pending_count(cliente: str, editor: Optional[str], count: int, lock: boo
     return n
 
 
+def has_manual_pending_for_client(cliente: str) -> bool:
+    """¿El cliente tiene alguna task pending con count_locked=1 (decisión manual del admin)?
+    Si sí, el scan NO debe crear duplicados para otro editor según el Sheet.
+    Esto respeta cuando Ignacio asigna manualmente un cliente a un editor distinto al del Sheet."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
+        (cliente,)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 def has_pending_for_client_editor(cliente: str, editor: Optional[str]) -> bool:
     conn = get_conn()
     if editor:

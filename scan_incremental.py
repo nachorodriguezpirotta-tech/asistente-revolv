@@ -35,6 +35,7 @@ from drive_client import (
 from tracker import (
     init_db, get_conn, meta_get, meta_set,
     is_file_known, claim_file, create_task, has_pending_for_client_editor,
+    has_manual_pending_for_client,
     is_client_blocked, set_pending_count,
     is_edited_known, claim_edited_file, decrement_pending_count,
 )
@@ -147,6 +148,9 @@ def run(notify: bool = False):
                 is_baseline=False,
             )
             if not claimed:
+                continue
+            # Si admin ya asignó manualmente este cliente a un editor, no duplicar
+            if has_manual_pending_for_client(cliente_real):
                 continue
             editor = get_editor_for_client(cliente_real, packs)
             if has_pending_for_client_editor(cliente_real, editor):

@@ -141,9 +141,11 @@ class handler(BaseHTTPRequestHandler):
             if existing:
                 raise ValueError("duplicado")
             pseudo_id = f"manual:{editor.lower()}:{cliente_resuelto.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
+            # count_locked=1 desde el principio: significa "esto es manual, el scan
+            # automático NO debe sobreescribir count NI crear duplicado para otro editor".
             conn.execute(
-                """INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?, 1)""",
+                """INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count, count_locked)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, 1, 1)""",
                 (cliente_resuelto, editor, pseudo_id, "(pendiente cargado manualmente)", now_iso(), now_iso()),
             )
 

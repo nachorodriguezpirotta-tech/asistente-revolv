@@ -30,8 +30,8 @@ from drive_client import (
 from tracker import (
     init_db, upsert_client, add_known_file, claim_file, is_file_known,
     create_task, list_pending_tasks, stats, get_conn,
-    has_pending_for_client_editor, increment_pending_count,
-    set_pending_count, is_client_blocked,
+    has_pending_for_client_editor, has_manual_pending_for_client,
+    increment_pending_count, set_pending_count, is_client_blocked,
 )
 from sheets_client import read_packs, get_editor_for_client
 from aliases import resolve_alias
@@ -72,6 +72,11 @@ def _process_standard_client(c, packs):
         if not claimed:
             continue
         had_new_file = True
+        # Si el admin ya asignó manualmente este cliente a un editor (count_locked=1),
+        # NO crear duplicado para el editor del Sheet. La task manual decrementa
+        # automáticamente cuando se entreguen los editados.
+        if has_manual_pending_for_client(cliente_real):
+            continue
         editor = get_editor_for_client(cliente_real, packs)
         if has_pending_for_client_editor(cliente_real, editor):
             continue
@@ -181,6 +186,9 @@ def run(notify: bool = False):
                 if not claimed:
                     continue
                 if is_baseline_file:
+                    continue
+                # Si admin ya asignó manualmente este cliente, no duplicar
+                if has_manual_pending_for_client(cliente_name):
                     continue
                 editor = get_editor_for_client(cliente_name, packs)
                 if has_pending_for_client_editor(cliente_name, editor):
