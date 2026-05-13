@@ -156,27 +156,26 @@ def run_closer(verbose: bool = True) -> dict:
             # Procesar los nuevos (más viejos primero). Cada editado nuevo descuenta 1
             # del contador. Cuando llega a 0, se cierra el cliente.
             new_files.sort(key=lambda f: _parse_iso(f.get("createdTime")) or datetime.min)
+            from classifier import identify_editor_by_owner
             for f in new_files:
                 result = decrement_pending_count(cliente, completed_by_file_id=f["id"])
                 if result["task_id"] is not None:
+                    real_editor = identify_editor_by_owner(f) or result["editor"] or client_editor
                     cierre_data = {
                         "cliente": cliente,
-                        "editor": result["editor"] or client_editor,
+                        "editor": real_editor,
                         "file_name": f["name"],
                         "file_id": f["id"],
-                        # Carpeta donde está el editado (Pack X / Tanda Y / Mayo/Editados / etc.)
                         "edited_folder_id": f.get("_parent_id"),
                         "client_folder_id": folder["id"],
                         "new_count": result["new_count"],
                         "closed": result["closed"],
                     }
                     summary["cierres"].append(cierre_data)
-                    # PERSISTIR el cierre para mail con retry. Si crashea o falla el mail,
-                    # próximo scan lo retoma.
                     enqueue_completion_mail(
                         task_id=result["task_id"],
                         cliente=cliente,
-                        editor=cierre_data["editor"],
+                        editor=real_editor,
                         file_id=f["id"],
                         file_name=f["name"],
                         edited_folder_id=f.get("_parent_id"),
@@ -204,12 +203,12 @@ def run_closer(verbose: bool = True) -> dict:
             continue
 
         # Cliente con baseline previo: cada editado nuevo descuenta 1 del contador.
+        from classifier import identify_editor_by_owner
         for f in editados:
             if is_edited_known(f["id"]):
                 continue
             # CLAIM ATÓMICO: intentamos marcar el archivo como conocido ANTES de cerrar
             # task / mandar mail. Si otro proceso ya lo claimó (return False), saltamos.
-            # Evita mails duplicados cuando dos scans corren concurrentes.
             size = int(f["size"]) if f.get("size") else None
             claimed = claim_edited_file(
                 file_id=f["id"], cliente=cliente, folder_id="(varias)",
@@ -220,9 +219,13 @@ def run_closer(verbose: bool = True) -> dict:
                 continue  # otro workflow ya lo procesó
             result = decrement_pending_count(cliente, completed_by_file_id=f["id"])
             if result["task_id"] is not None:
+                # Determinar el editor REAL que entregó: prioridad al owner del archivo
+                # (si subió Agus aunque la task estuviera asignada a Benja, el editor
+                # real es Agus). Si el owner no es editor conocido, usar el de la task.
+                real_editor = identify_editor_by_owner(f) or result["editor"] or client_editor
                 cierre_data = {
                     "cliente": cliente,
-                    "editor": result["editor"] or client_editor,
+                    "editor": real_editor,  # quien realmente entregó
                     "file_name": f["name"],
                     "file_id": f["id"],
                     "edited_folder_id": f.get("_parent_id"),
@@ -231,11 +234,10 @@ def run_closer(verbose: bool = True) -> dict:
                     "closed": result["closed"],
                 }
                 summary["cierres"].append(cierre_data)
-                # PERSISTIR cierre en cola para retry persistente del mail
                 enqueue_completion_mail(
                     task_id=result["task_id"],
                     cliente=cliente,
-                    editor=cierre_data["editor"],
+                    editor=real_editor,
                     file_id=f["id"],
                     file_name=f["name"],
                     edited_folder_id=f.get("_parent_id"),

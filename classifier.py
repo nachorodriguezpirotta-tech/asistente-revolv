@@ -113,6 +113,25 @@ def _name_signals(name: str) -> Optional[bool]:
     return None
 
 
+def identify_editor_by_owner(file: dict) -> Optional[str]:
+    """Si el owner del archivo es uno de los editores conocidos, retorna su NOMBRE.
+    Útil para saber QUIÉN REALMENTE entregó un editado (puede no coincidir con
+    el editor asignado a la task, por ejemplo cuando un editor cubre a otro).
+
+    Retorna None si no se puede identificar (owner no es editor conocido, o
+    no hay info de owner)."""
+    from aliases import get_editor_emails_runtime
+    emails_map = get_editor_emails_runtime()  # {Name: email}
+    # Invertir: {email_lower: Name}
+    by_email = {(v or "").strip().lower(): k for k, v in emails_map.items() if v}
+    if not by_email:
+        return None
+    for em in _get_owner_emails(file):
+        if em in by_email:
+            return by_email[em]
+    return None
+
+
 def _get_owner_emails(file: dict) -> list[str]:
     """Devuelve la lista de mails relevantes del archivo (owners + lastModifyingUser), lowercase."""
     candidates = []

@@ -263,9 +263,13 @@ def run(notify: bool = False):
             continue
         result = decrement_pending_count(cliente_real, completed_by_file_id=f["id"])
         if result["task_id"] is not None:
+            # Editor REAL = quien subió el archivo (Drive owner), si es editor conocido.
+            # Si no, usar el de la task. Esto refleja la realidad cuando un editor cubre a otro.
+            from classifier import identify_editor_by_owner
+            real_editor = identify_editor_by_owner(f) or result["editor"] or "—"
             cierre_data = {
                 "cliente": cliente_real,
-                "editor": result["editor"] or "—",
+                "editor": real_editor,
                 "file_name": f["name"],
                 "file_id": f["id"],
                 "edited_folder_id": (f.get("parents") or [None])[0],
@@ -273,11 +277,10 @@ def run(notify: bool = False):
                 "closed": result["closed"],
             }
             cierres.append(cierre_data)
-            # Persistir en cola para retry si el mail falla
             enqueue_completion_mail(
                 task_id=result["task_id"],
                 cliente=cliente_real,
-                editor=cierre_data["editor"],
+                editor=real_editor,
                 file_id=f["id"],
                 file_name=f["name"],
                 edited_folder_id=cierre_data["edited_folder_id"],
