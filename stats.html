@@ -147,6 +147,19 @@
   .health.cold { background: #8a93a3; }
   .health.unknown { background: #5a6478; }
 
+  /* Headers ordenables */
+  th.sortable {
+    cursor: pointer; user-select: none;
+    transition: background 0.1s;
+  }
+  th.sortable:hover { background: #1f2430; color: #e8eaed; }
+  th.sortable::after {
+    content: '↕';
+    margin-left: 4px; opacity: 0.4; font-size: 10px;
+  }
+  th.sortable.asc::after { content: '↑'; opacity: 1; color: #4ade80; }
+  th.sortable.desc::after { content: '↓'; opacity: 1; color: #4ade80; }
+
   .badge-critical { background: #3a1a1a; color: #f87171; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
   .badge-hot { background: #1a2e1a; color: #4ade80; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
   .badge-ghost { background: #2a201a; color: #d4a070; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
@@ -229,6 +242,46 @@ const updatedSpan = document.getElementById('updated');
 let LAST_DATA = null;
 let ACTIVE_TAB = 'editores';
 
+// Sort state por tabla: { table_id: { key, dir } }
+const SORT_STATE = {
+    editors: { key: null, dir: 'desc' },
+    'top-active': { key: 'crudos_month', dir: 'desc' },
+    ghost: { key: 'days_since_crudo', dir: 'desc' },
+    all: { key: 'pending_videos', dir: 'desc' },
+};
+
+function sortClick(table, key) {
+    const st = SORT_STATE[table];
+    if (st.key === key) {
+        st.dir = st.dir === 'desc' ? 'asc' : 'desc';
+    } else {
+        st.key = key;
+        st.dir = 'desc';
+    }
+    renderActiveTab();
+}
+
+function sortArray(arr, key, dir) {
+    if (!key) return arr;
+    const m = dir === 'asc' ? 1 : -1;
+    return [...arr].sort((a, b) => {
+        let va = a[key], vb = b[key];
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        if (typeof va === 'string' && typeof vb === 'string') {
+            return va.localeCompare(vb) * m;
+        }
+        return (va - vb) * m;
+    });
+}
+
+function sortHeader(table, key, label, extraClass) {
+    const st = SORT_STATE[table];
+    const cls = st.key === key ? st.dir : '';
+    const ec = extraClass || '';
+    return `<th class="sortable ${cls} ${ec}" onclick="sortClick('${table}','${key}')">${label}</th>`;
+}
+
 function goBack() {
   location.href = `/?admin=1&t=${encodeURIComponent(TOKEN)}`;
 }
@@ -287,19 +340,24 @@ function renderEditores(data) {
     </div>
   </div>`;
 
+  // Aplicar sort si está seteado, sino orden default (por nombre)
+  const editorRows = SORT_STATE.editors.key
+    ? sortArray(data.by_editor, SORT_STATE.editors.key, SORT_STATE.editors.dir)
+    : data.by_editor;
+
   html += `<div class="table-wrap"><table>
     <thead><tr>
-      <th>Editor</th>
-      <th class="num">Pendientes</th>
-      <th class="num">Clientes</th>
-      <th class="num">Entregados 7d</th>
-      <th class="num">Entregados 30d</th>
-      <th class="num">Tiempo promedio</th>
-      <th class="num">Pending más vieja</th>
+      ${sortHeader('editors', 'editor', 'Editor')}
+      ${sortHeader('editors', 'pending_videos', 'Pendientes', 'num')}
+      ${sortHeader('editors', 'pending_clientes', 'Clientes', 'num')}
+      ${sortHeader('editors', 'delivered_week', 'Entregados 7d', 'num')}
+      ${sortHeader('editors', 'delivered_month', 'Entregados 30d', 'num')}
+      ${sortHeader('editors', 'avg_turnaround_hours', 'Tiempo promedio', 'num')}
+      ${sortHeader('editors', 'oldest_pending_days', 'Pending más vieja', 'num')}
     </tr></thead>
     <tbody>`;
 
-  for (const s of data.by_editor) {
+  for (const s of editorRows) {
     const turn = s.avg_turnaround_hours
       ? (s.avg_turnaround_hours < 24
           ? `${s.avg_turnaround_hours}h`
@@ -391,36 +449,29 @@ function renderClientes(data) {
     html += renderClientTable(data.ghost_clients, 'ghost');
   }
 
-  // TODOS los clientes — ordenados: primero los que tienen pending (desc), después el resto
-  const sortedClients = [...data.clients].sort((a, b) => {
-    const ap = a.pending_videos || 0;
-    const bp = b.pending_videos || 0;
-    if (bp !== ap) return bp - ap;  // más pendientes arriba
-    // Empate: los activos arriba (orden status: hot > active > cold > ghost > unknown)
-    const statusOrder = { hot: 0, active: 1, cold: 2, ghost: 3, unknown: 4 };
-    const sa = statusOrder[a.status] ?? 5;
-    const sb = statusOrder[b.status] ?? 5;
-    if (sa !== sb) return sa - sb;
-    return a.cliente.localeCompare(b.cliente);
-  });
-  html += `<div class="section-title">Todos los clientes (${data.clients.length}) — pendientes primero</div>`;
-  html += `<div id="all-clients-container">${renderClientTable(sortedClients, 'all')}</div>`;
+  // TODOS los clientes — la tabla se auto-ordena via SORT_STATE.all (default: pending_videos desc)
+  html += `<div class="section-title">Todos los clientes (${data.clients.length}) <span style="color:#5a6478; font-weight:normal; font-size:11px;">— click en columna para ordenar</span></div>`;
+  html += `<div id="all-clients-container">${renderClientTable(data.clients, 'all')}</div>`;
 
   content.innerHTML = html;
 }
 
 function renderClientTable(clients, id) {
   if (!clients || clients.length === 0) return '<div class="badge-empty" style="padding:12px;">Ninguno</div>';
-  let html = `<table id="table-${id}"><thead><tr>
-    <th>Cliente</th>
-    <th>Editor</th>
-    <th class="num">Pendientes</th>
-    <th class="num">Crudos 7d / 30d</th>
-    <th class="num">Editados 7d / 30d</th>
-    <th class="num">Últ. subida</th>
-    <th>Estado</th>
+  // Aplicar sort si tabla tiene estado y el usuario ordenó
+  const sortKey = SORT_STATE[id]?.key;
+  const sortDir = SORT_STATE[id]?.dir || 'desc';
+  const rows = sortKey ? sortArray(clients, sortKey, sortDir) : clients;
+  let html = `<div class="table-wrap"><table id="table-${id}"><thead><tr>
+    ${sortHeader(id, 'cliente', 'Cliente')}
+    ${sortHeader(id, 'editor', 'Editor')}
+    ${sortHeader(id, 'pending_videos', 'Pendientes', 'num')}
+    ${sortHeader(id, 'crudos_month', 'Crudos 7d/30d', 'num')}
+    ${sortHeader(id, 'editados_month', 'Editados 7d/30d', 'num')}
+    ${sortHeader(id, 'days_since_crudo', 'Últ. subida', 'num')}
+    ${sortHeader(id, 'status', 'Estado')}
   </tr></thead><tbody>`;
-  for (const c of clients) {
+  for (const c of rows) {
     const status = c.status;
     let badge = '';
     if (status === 'hot') badge = '<span class="badge-hot">🔥 hot</span>';
