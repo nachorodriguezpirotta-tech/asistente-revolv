@@ -415,6 +415,53 @@ def has_manual_pending_for_client(cliente: str) -> bool:
     return row is not None
 
 
+def find_similar_pending_client(cliente: str) -> Optional[str]:
+    """Busca pending tasks con nombre similar (fuzzy match) al cliente dado.
+    Sirve para detectar duplicados por apodos: 'Cisco' (manual) vs 'Cisco Amengual' (scan).
+
+    Retorna el nombre del cliente que matchea si encuentra uno, None si no.
+
+    Lógica:
+      - Normaliza ambos nombres (sin acentos, minúsculas)
+      - Match si:
+          a) Uno es prefijo del otro (con espacio o final)
+          b) Comparten al menos un token de >=4 chars
+    """
+    import unicodedata
+    def _norm(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return " ".join(s.lower().split())
+
+    target = _norm(cliente)
+    if not target:
+        return None
+    target_tokens = {t for t in target.split() if len(t) >= 4}
+
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT cliente FROM tasks WHERE status='pending'"
+    ).fetchall()
+    conn.close()
+
+    for r in rows:
+        existing = _norm(r["cliente"])
+        if not existing or existing == target:
+            continue  # exact match no es duplicado por apodo
+        # Caso prefijo: 'cisco' es prefijo de 'cisco amengual'
+        if existing.startswith(target + " ") or target.startswith(existing + " "):
+            return r["cliente"]
+        # Caso token compartido (>=4 chars): 'roger marti' vs 'roger mendez' → ojo, false positive
+        # Solo aceptar si compartido es UN token único distintivo
+        existing_tokens = {t for t in existing.split() if len(t) >= 4}
+        shared = target_tokens & existing_tokens
+        # Solo si el shared token es ÚNICO en ambos lados (no genérico como "video", "edit")
+        if shared and len(target_tokens) <= 2 and len(existing_tokens) <= 2:
+            # Ambos nombres cortos (1-2 tokens) que comparten uno → probable misma persona
+            return r["cliente"]
+    return None
+
+
 def has_pending_for_client_editor(cliente: str, editor: Optional[str]) -> bool:
     conn = get_conn()
     if editor:
