@@ -1,7 +1,7 @@
 // Service Worker mínimo para PWA install + offline shell.
 // No cachea la data (/api/*) para que siempre vea estado fresco.
 const SHELL = ['/', '/index.html', '/stats.html', '/config.html', '/manifest.json'];
-const CACHE = 'revolv-shell-v6';
+const CACHE = 'revolv-shell-v7';
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));

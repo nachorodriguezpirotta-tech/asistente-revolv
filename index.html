@@ -249,6 +249,32 @@
         }
         .drive-btn:hover { background: rgba(96, 165, 250, 0.25); }
 
+        /* Pull-to-refresh */
+        .ptr-indicator {
+            position: fixed; top: 0; left: 50%;
+            transform: translate(-50%, -60px);
+            background: var(--bg-card); border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 16px; border-radius: 0 0 12px 12px;
+            font-size: 13px; font-weight: 500;
+            z-index: 1000;
+            transition: transform 0.2s, opacity 0.2s;
+            opacity: 0;
+            pointer-events: none;
+            display: flex; align-items: center; gap: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        .ptr-indicator.visible { opacity: 1; }
+        .ptr-indicator .arrow {
+            display: inline-block;
+            transition: transform 0.2s;
+        }
+        .ptr-indicator.ready .arrow { transform: rotate(180deg); color: #4ade80; }
+        .ptr-indicator.loading .arrow {
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
         /* Drag & drop reasignar */
         .cliente-card[draggable="true"] { cursor: grab; }
         .cliente-card[draggable="true"]:active { cursor: grabbing; }
@@ -334,6 +360,7 @@
     </style>
 </head>
 <body>
+    <div id="ptr" class="ptr-indicator"><span class="arrow">↓</span><span class="label">Tirá para refrescar</span></div>
     <header class="main-header">
         <div style="flex:1; min-width:0;">
             <h1><span class="red-dot"></span>Asistente Revolv</h1>
@@ -480,6 +507,70 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').then(() => updateNotifButton()).catch(() => {});
   });
 }
+
+// ───── Pull-to-refresh (mobile) ─────
+(function initPTR() {
+  const ptr = document.getElementById('ptr');
+  if (!ptr) return;
+  const label = ptr.querySelector('.label');
+  const THRESHOLD = 70;  // px que hay que tirar para activar
+  let startY = 0;
+  let pulling = false;
+  let pulledDist = 0;
+
+  function show(dist) {
+    const clamp = Math.min(dist, 120);
+    ptr.style.transform = `translate(-50%, ${Math.min(clamp - 60, 10)}px)`;
+    ptr.classList.add('visible');
+    if (dist >= THRESHOLD) {
+      ptr.classList.add('ready');
+      label.textContent = 'Soltá para refrescar';
+    } else {
+      ptr.classList.remove('ready');
+      label.textContent = 'Tirá para refrescar';
+    }
+  }
+  function hide() {
+    ptr.classList.remove('visible', 'ready');
+    ptr.style.transform = 'translate(-50%, -60px)';
+  }
+
+  document.addEventListener('touchstart', e => {
+    if (window.scrollY > 0) return;
+    startY = e.touches[0].clientY;
+    pulling = true;
+    pulledDist = 0;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', e => {
+    if (!pulling) return;
+    if (window.scrollY > 0) { pulling = false; hide(); return; }
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0) return;
+    pulledDist = dy;
+    show(dy);
+  }, { passive: true });
+
+  document.addEventListener('touchend', async () => {
+    if (!pulling) return;
+    pulling = false;
+    if (pulledDist >= THRESHOLD) {
+      ptr.classList.add('loading');
+      label.textContent = 'Refrescando...';
+      try {
+        if (typeof loadData === 'function') {
+          await loadData();
+          if (typeof refreshClientsCache === 'function') refreshClientsCache();
+        } else {
+          location.reload();
+          return;
+        }
+      } catch (e) {}
+      ptr.classList.remove('loading');
+    }
+    hide();
+  }, { passive: true });
+})();
 
 // ───── Push notifications ─────
 function urlBase64ToUint8Array(base64String) {
