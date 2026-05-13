@@ -56,6 +56,11 @@ EDITOR_EMAILS = {
 }
 
 
+# Editores que reciben el resumen diario de 8am.
+# Por ahora solo los 4 más activos. Los demás los agregamos cuando Ignacio diga.
+DAILY_SUMMARY_EDITORS = {"Rami", "Fran", "Benja", "Valen"}
+
+
 # Lista canónica de editores que SIEMPRE aparecen en el dashboard admin,
 # aunque no tengan pendientes en ese momento.
 EDITORS_LIST = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu", "Jere"]

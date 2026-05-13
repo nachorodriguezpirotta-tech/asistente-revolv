@@ -156,7 +156,7 @@ def build_mail_para_editor(editor: str, clientes: list):
 
 
 def run(dry_run: bool = False):
-    from aliases import EDITOR_EMAILS, get_editor_email
+    from aliases import EDITOR_EMAILS, DAILY_SUMMARY_EDITORS, get_editor_email
 
     grouped = get_pending_grouped()
     subject, text, html = build_mail(grouped)
@@ -175,11 +175,14 @@ def run(dry_run: bool = False):
         except Exception as e:
             print(f"❌ Admin: {e}")
 
-    # 2. Mail individual a cada editor con su mail configurado
-    print("\n=== Mails individuales a editores ===")
+    # 2. Mail individual SOLO a los editores que están en DAILY_SUMMARY_EDITORS
+    print(f"\n=== Mails individuales (solo a: {sorted(DAILY_SUMMARY_EDITORS)}) ===")
+    from aliases import _normalize as _norm
     for editor, email in EDITOR_EMAILS.items():
-        # Buscar el editor en grouped con normalización flexible
-        from aliases import _normalize as _norm
+        if editor not in DAILY_SUMMARY_EDITORS:
+            print(f"   ⏭️  {editor}: skip (no en DAILY_SUMMARY_EDITORS)")
+            continue
+
         editor_clientes = []
         for ed_key, clientes in grouped.items():
             if _norm(ed_key) == _norm(editor):
