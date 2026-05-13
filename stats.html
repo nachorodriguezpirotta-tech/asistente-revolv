@@ -340,6 +340,11 @@ function renderEditores(data) {
     </div>
   </div>`;
 
+  // Gráfico de barras: entregas últimos 14 días
+  if (data.daily) {
+    html += renderChart(data.daily);
+  }
+
   // Aplicar sort si está seteado, sino orden default (por nombre)
   const editorRows = SORT_STATE.editors.key
     ? sortArray(data.by_editor, SORT_STATE.editors.key, SORT_STATE.editors.dir)
@@ -382,6 +387,89 @@ function renderEditores(data) {
   html += `</tbody></table></div>`;
 
   content.innerHTML = html;
+}
+
+function renderChart(daily) {
+  // Barras apiladas por editor + línea de crudos recibidos
+  const days = daily.days;
+  const editors = daily.editors;
+  // Paleta de colores
+  const palette = ['#4ade80', '#60a5fa', '#fbbf24', '#f87171', '#a78bfa', '#fb923c', '#34d399', '#f472b6'];
+  const editorColor = {};
+  editors.forEach((e, i) => { editorColor[e] = palette[i % palette.length]; });
+
+  // Calcular max para escalar
+  let maxStack = 0;
+  let maxCrudos = 0;
+  const stacks = days.map(d => {
+    const byEd = daily.deliveries_by_day[d] || {};
+    const total = Object.values(byEd).reduce((a, b) => a + b, 0);
+    if (total > maxStack) maxStack = total;
+    return { day: d, byEd, total };
+  });
+  for (const d of days) {
+    if ((daily.crudos_by_day[d] || 0) > maxCrudos) maxCrudos = daily.crudos_by_day[d];
+  }
+  const maxY = Math.max(maxStack, maxCrudos, 5);
+
+  // SVG dimensions
+  const W = 700, H = 220, padL = 30, padR = 20, padT = 16, padB = 32;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const barWidth = (innerW / days.length) * 0.7;
+  const gap = (innerW / days.length) * 0.3;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block;">`;
+  // Gridlines
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + (innerH * i / 4);
+    const v = Math.round(maxY * (1 - i / 4));
+    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#2a2f3a" stroke-width="0.5"/>`;
+    svg += `<text x="${padL-4}" y="${y+3}" text-anchor="end" fill="#5a6478" font-size="9">${v}</text>`;
+  }
+  // Bars + crudos line
+  const crudosPts = [];
+  stacks.forEach((s, i) => {
+    const x = padL + i * (innerW / days.length) + gap/2;
+    let yOff = 0;
+    for (const ed of editors) {
+      const v = s.byEd[ed] || 0;
+      if (v === 0) continue;
+      const h = (v / maxY) * innerH;
+      const y = padT + innerH - yOff - h;
+      svg += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${h.toFixed(1)}" fill="${editorColor[ed]}" opacity="0.85"><title>${ed}: ${v} entregas el ${s.day}</title></rect>`;
+      yOff += h;
+    }
+    // Punto para crudos
+    const crudos = daily.crudos_by_day[s.day] || 0;
+    const cy = padT + innerH - (crudos / maxY) * innerH;
+    crudosPts.push({ x: x + barWidth/2, y: cy, val: crudos, day: s.day });
+    // Día label
+    const dayLabel = s.day.slice(5);  // MM-DD
+    svg += `<text x="${(x + barWidth/2).toFixed(1)}" y="${H - padB + 12}" text-anchor="middle" fill="#5a6478" font-size="9">${dayLabel}</text>`;
+  });
+  // Línea crudos
+  if (crudosPts.length > 1) {
+    const path = crudosPts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+    svg += `<path d="${path}" stroke="#f87171" stroke-width="2" fill="none" stroke-dasharray="3,3"/>`;
+    for (const p of crudosPts) {
+      svg += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="#f87171"><title>Crudos ${p.day}: ${p.val}</title></circle>`;
+    }
+  }
+  svg += '</svg>';
+
+  // Leyenda
+  let legend = '<div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; font-size:11px; color:#8a93a3;">';
+  for (const ed of editors) {
+    legend += `<span><span style="display:inline-block; width:10px; height:10px; background:${editorColor[ed]}; border-radius:2px; vertical-align:middle; margin-right:4px;"></span>${ed}</span>`;
+  }
+  legend += `<span style="margin-left:auto;"><span style="display:inline-block; width:14px; height:2px; background:#f87171; vertical-align:middle; margin-right:4px;"></span>crudos recibidos</span>`;
+  legend += '</div>';
+
+  return `<div style="background:#1a1e27; border:1px solid #2a2f3a; border-radius:10px; padding:16px; margin-bottom:20px;">
+    <div style="font-size:12px; color:#8a93a3; margin-bottom:8px;">📈 ÚLTIMOS 14 DÍAS — entregas (barras apiladas por editor) + crudos (línea roja)</div>
+    ${svg}${legend}
+  </div>`;
 }
 
 function renderPendingList(items) {

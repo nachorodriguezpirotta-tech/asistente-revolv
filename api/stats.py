@@ -217,6 +217,45 @@ def get_client_stats(conn, cliente: str, now: datetime) -> dict:
     }
 
 
+def get_daily_aggregates(conn, days: int = 14) -> dict:
+    """Devuelve agregados diarios para gráficos: por día, entregas por editor + crudos recibidos."""
+    now = datetime.now()
+    days_list = [(now - timedelta(days=i)).date().isoformat() for i in range(days-1, -1, -1)]
+    days_set = set(days_list)
+
+    # Entregas por día por editor
+    rows = conn.execute("""
+        SELECT substr(completed_at, 1, 10) as day, editor, COUNT(*) as n
+        FROM tasks WHERE status='done' AND completed_at >= ?
+        GROUP BY day, editor
+    """, ((now - timedelta(days=days)).isoformat(timespec="seconds"),)).fetchall()
+    deliveries_by_day = {d: {} for d in days_list}
+    editors_set = set()
+    for r in rows:
+        if r["day"] in deliveries_by_day:
+            ed = r["editor"] or "—"
+            deliveries_by_day[r["day"]][ed] = r["n"]
+            editors_set.add(ed)
+
+    # Crudos recibidos por día
+    rows = conn.execute("""
+        SELECT substr(first_seen_at, 1, 10) as day, COUNT(*) as n
+        FROM known_files WHERE first_seen_at >= ? AND is_baseline=0
+        GROUP BY day
+    """, ((now - timedelta(days=days)).isoformat(timespec="seconds"),)).fetchall()
+    crudos_by_day = {d: 0 for d in days_list}
+    for r in rows:
+        if r["day"] in crudos_by_day:
+            crudos_by_day[r["day"]] = r["n"]
+
+    return {
+        "days": days_list,
+        "editors": sorted(editors_set),
+        "deliveries_by_day": deliveries_by_day,
+        "crudos_by_day": crudos_by_day,
+    }
+
+
 def _build_stats(conn):
     now = datetime.now()
     # === EDITORES === — usar lista activa desde cfg_editors (DB), no hardcoded
@@ -253,11 +292,15 @@ def _build_stats(conn):
     ghost_clients = [c for c in clients_stats if c["status"] == "ghost"][:20]
     hot_clients = [c for c in clients_stats if c["status"] == "hot"]
 
+    # Agregados diarios para gráficos
+    daily = get_daily_aggregates(conn, days=14)
+
     return {
         "ok": True,
         "now": now.isoformat(timespec="seconds"),
         "by_editor": stats_per_editor,
         "pending_detail": pending_detail,
+        "daily": daily,
         "totals": {
             "pending_videos": total_pending_videos,
             "pending_clientes": total_pending_clientes,
