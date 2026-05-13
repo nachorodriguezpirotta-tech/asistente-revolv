@@ -6,7 +6,8 @@
   "outputDirectory": null,
   "rewrites": [
     { "source": "/", "destination": "/index.html" },
-    { "source": "/stats", "destination": "/stats.html" }
+    { "source": "/stats", "destination": "/stats.html" },
+    { "source": "/manifest.json", "destination": "/manifest.json" }
   ],
   "functions": {
     "api/data.py": {

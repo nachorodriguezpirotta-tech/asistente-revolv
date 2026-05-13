@@ -2,8 +2,15 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Asistente Revolv</title>
+    <!-- PWA: instalable como app en celular -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0f1115">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Revolv">
+    <link rel="apple-touch-icon" href="/icon-192.png">
     <style>
         :root {
             --bg: #0a0a0a;
@@ -190,8 +197,9 @@
             text-align: center;
             font-family: inherit;
         }
-        .cliente-meta { display: flex; align-items: center; flex: 1; }
-        .delete-btn {
+        .cliente-meta { display: flex; align-items: center; flex: 1; gap: 8px; }
+        .card-actions { display: flex; gap: 4px; }
+        .delete-btn, .reassign-btn {
             background: transparent;
             border: none;
             color: var(--text-dim);
@@ -199,10 +207,26 @@
             padding: 4px 8px;
             border-radius: 6px;
             opacity: 0.4;
+            cursor: pointer;
             transition: opacity 0.15s, background 0.15s;
         }
-        .cliente-card:hover .delete-btn { opacity: 1; }
+        .cliente-card:hover .delete-btn,
+        .cliente-card:hover .reassign-btn { opacity: 1; }
         .delete-btn:hover { background: rgba(255, 71, 71, 0.15); }
+        .reassign-btn:hover { background: rgba(96, 165, 250, 0.15); color: #60a5fa; }
+        .drive-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            background: rgba(96, 165, 250, 0.12);
+            color: #60a5fa;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 13px;
+            transition: background 0.15s;
+        }
+        .drive-btn:hover { background: rgba(96, 165, 250, 0.25); }
         .empty {
             text-align: center;
             padding: 60px;
@@ -283,11 +307,20 @@ async function loadData() {
         const res = await fetch(url);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        LAST_DATA = data;
         render(data);
         updatedSpan.textContent = new Date().toLocaleTimeString();
     } catch (e) {
         content.innerHTML = `<div class="error">No pude cargar:\n${e.message}</div>`;
     }
+}
+let LAST_DATA = null;
+
+// PWA: registrar service worker para instalación como app
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
 }
 
 function render(data) {
@@ -331,8 +364,12 @@ function renderEditor(data) {
     for (const it of items) {
         const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
         const videos = it.videos || 1;
+        const driveBtn = it.drive_folder_id
+            ? `<a href="https://drive.google.com/drive/folders/${it.drive_folder_id}" target="_blank" class="drive-btn" title="Abrir carpeta en Drive">📁</a>`
+            : '';
         html += `<div class="cliente-card">
             <span class="cliente-meta">
+                ${driveBtn}
                 <span class="cliente-name">${escapeHtml(it.cliente)}</span>
                 <span class="cliente-count" onclick="editCount('${clienteEsc}', null, ${videos}, this)" title="Click para editar">${videos} video${videos !== 1 ? 's' : ''}</span>
             </span>
@@ -388,12 +425,19 @@ function renderAdmin(data) {
         for (const it of items) {
             const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
             const videos = it.videos || 1;
+            const driveBtn = it.drive_folder_id
+                ? `<a href="https://drive.google.com/drive/folders/${it.drive_folder_id}" target="_blank" class="drive-btn" title="Abrir carpeta en Drive">📁</a>`
+                : '';
             html += `<div class="cliente-card">
                 <span class="cliente-meta">
+                    ${driveBtn}
                     <span class="cliente-name">${escapeHtml(it.cliente)}</span>
                     <span class="cliente-count" onclick="editCount('${clienteEsc}', '${edEsc}', ${videos}, this)" title="Click para editar">${videos} video${videos !== 1 ? 's' : ''}</span>
                 </span>
-                <button class="delete-btn" onclick="deleteCliente('${clienteEsc}', '${edEsc}', this)" title="Marcar como hecho">🗑️</button>
+                <div class="card-actions">
+                    <button class="reassign-btn" onclick="reassignClient('${clienteEsc}', '${edEsc}', this)" title="Reasignar a otro editor">↪</button>
+                    <button class="delete-btn" onclick="deleteCliente('${clienteEsc}', '${edEsc}', this)" title="Marcar como hecho">🗑️</button>
+                </div>
             </div>`;
         }
         html += '</section>';
@@ -556,6 +600,39 @@ async function addClientToEditorPrompt() {
     const editor = prompt('Editor (nombre):');
     if (!editor || !editor.trim()) return;
     addClientToEditor(editor.trim());
+}
+
+async function reassignClient(cliente, currentEditor, btn) {
+    // Lista de editores disponibles
+    const editores = Object.keys(LAST_DATA?.by_editor || {}).filter(e => !e.startsWith('—'));
+    const opciones = editores.join(', ');
+    const nuevo = prompt(`Reasignar "${cliente}" a qué editor?\n\nActual: ${currentEditor}\nDisponibles: ${opciones}\n\nEscribí el nombre:`);
+    if (!nuevo || !nuevo.trim()) return;
+    const trimmed = nuevo.trim();
+    if (trimmed.toLowerCase() === currentEditor.toLowerCase()) {
+        alert('Es el mismo editor.');
+        return;
+    }
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/task', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                admin: 1, t: TOKEN,
+                action: 'reassign',
+                cliente: cliente,
+                current_editor: currentEditor,
+                new_editor: trimmed,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        await loadData();
+    } catch (e) {
+        btn.disabled = false;
+        alert('No se pudo reasignar:\n' + e.message);
+    }
 }
 
 async function deleteCliente(cliente, editor, btn) {

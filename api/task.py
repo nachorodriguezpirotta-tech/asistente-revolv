@@ -309,6 +309,48 @@ class handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
+        # MODO REASSIGN: cambiar editor de una task pending
+        if body.get("action") == "reassign":
+            if not is_admin or not check_token("ADMIN", token):
+                return json_response(self, {"error": "unauthorized (admin)"}, status=401)
+            cliente_r = (body.get("cliente") or "").strip()
+            current_editor = (body.get("current_editor") or "").strip()
+            new_editor = (body.get("new_editor") or "").strip()
+            if not cliente_r or not new_editor:
+                return json_response(self, {"error": "falta cliente o new_editor"}, status=400)
+
+            updated_count = {"n": 0}
+            def op_reassign(conn):
+                # Verificar que NO exista ya una task del nuevo editor con el mismo cliente
+                existing = conn.execute(
+                    "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                    (cliente_r, new_editor),
+                ).fetchone()
+                if existing:
+                    raise ValueError("ya_existe")
+                # Reasignar
+                if current_editor:
+                    r = conn.execute(
+                        "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                        (new_editor, cliente_r, current_editor),
+                    )
+                else:
+                    r = conn.execute(
+                        "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+                        (new_editor, cliente_r),
+                    )
+                updated_count["n"] = r.rowcount
+
+            try:
+                with_db(op_reassign, message=f"manual: reasignar {cliente_r}: {current_editor} → {new_editor}")
+                return json_response(self, {"ok": True, "cliente": cliente_r, "from": current_editor, "to": new_editor, "affected": updated_count["n"]})
+            except ValueError as e:
+                if "ya_existe" in str(e):
+                    return json_response(self, {"error": f"{new_editor} ya tiene pending de {cliente_r}"}, status=409)
+                return json_response(self, {"error": str(e)[:200]}, status=500)
+            except Exception as e:
+                return json_response(self, {"error": str(e)[:200]}, status=500)
+
         # MODO TASK: editar pending_count
         cliente = (body.get("cliente") or "").strip()
         try:

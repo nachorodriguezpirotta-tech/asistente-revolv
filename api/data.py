@@ -27,6 +27,12 @@ except Exception as _e:
     _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
 
 
+def _get_client_folder_map(conn) -> dict:
+    """Devuelve {cliente_normalizado: folder_id} de la tabla clients."""
+    rows = conn.execute("SELECT cliente, folder_id FROM clients").fetchall()
+    return {r["cliente"].strip().lower(): r["folder_id"] for r in rows}
+
+
 def get_editor_data(conn, editor: str) -> dict:
     # 1 entry por cliente con la suma de pending_count (videos pendientes)
     rows = conn.execute(
@@ -38,6 +44,8 @@ def get_editor_data(conn, editor: str) -> dict:
            ORDER BY TRIM(cliente)""",
         (editor,),
     ).fetchall()
+
+    folder_map = _get_client_folder_map(conn)
 
     # Progresos del editor (múltiples labels, ej. "Básicos" y "Avanzados")
     prog_rows = conn.execute(
@@ -57,6 +65,7 @@ def get_editor_data(conn, editor: str) -> dict:
                 "cliente": r["cliente"].strip(),
                 "videos": r["videos"] or 1,
                 "detected_at": r["oldest"],
+                "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
             }
             for r in rows
         ],
@@ -73,6 +82,7 @@ def get_all_data(conn) -> dict:
            GROUP BY editor, TRIM(cliente)
            ORDER BY editor, cliente"""
     ).fetchall()
+    folder_map = _get_client_folder_map(conn)
     by_editor = {}
     for r in rows:
         ed = r["editor"] or "— sin editor —"
@@ -81,6 +91,7 @@ def get_all_data(conn) -> dict:
             "cliente": r["cliente"],
             "videos": r["videos"] or 1,
             "detected_at": r["oldest"],
+            "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
         })
 
     # Asegurar que TODOS los editores canónicos aparezcan, aunque no tengan pendientes
