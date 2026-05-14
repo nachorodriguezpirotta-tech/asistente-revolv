@@ -1,0 +1,66 @@
+name: Angel Watcher (cloud, gratis con Gemini)
+
+# Corre el watcher de Electro Ángel en GHA. Cuando detecta un crudo nuevo:
+#   1. Descarga el video con Drive API
+#   2. Extrae 6 frames con ffmpeg (ya viene preinstalado en ubuntu-latest)
+#   3. Llama a Gemini 2.5 Flash (tier gratis: 1500 rpd) para generar el brief HTML
+#   4. Sube el HTML a la carpeta de Drive "Briefs Angel"
+#   5. Manda mail a TEST_EMAIL
+#   6. Commitea el state actualizado al repo
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # cada 10 minutos (GHA tiene latencia ~5min, total ~15min worst case)
+  workflow_dispatch: {}      # disparable manualmente
+
+concurrency:
+  group: angel-watcher
+  cancel-in-progress: false
+
+permissions:
+  contents: write  # para commitear angel_state.json
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15  # con margen por si Drive tarda
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify ffmpeg
+        run: ffmpeg -version | head -1
+
+      - name: Run angel watcher
+        env:
+          OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+          CI: 'true'
+        run: python angel_watcher.py
+
+      - name: Commit state if changed
+        run: |
+          git config user.name "asistente-bot"
+          git config user.email "bot@revolv.local"
+          if git status --porcelain angel_data/state/angel_state.json | grep -q .; then
+            git add angel_data/state/angel_state.json
+            git commit -m "[bot-angel] update angel state ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+            git pull --rebase
+            git push
+          fi

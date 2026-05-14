@@ -27,3 +27,8 @@ venv/
 # App bundle (se regenera localmente)
 Asistente Revolv.app/
 
+
+# Angel watcher: solo persistir el state, no work/logs/reports
+angel_data/work/
+angel_data/logs/
+angel_data/reports/
