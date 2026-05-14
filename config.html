@@ -321,16 +321,20 @@ function renderEditors() {
       <th>Email</th>
       <th title="Recibe mails de crudos, cierres y recordatorios">📬 Notif</th>
       <th title="Recibe resumen diario 8am">📋 Resumen</th>
-      <th>Activo</th>
+      <th>Estado</th>
       <th></th>
     </tr></thead><tbody>`;
     for (const ed of DATA.editors) {
+      let estado;
+      if (!ed.active) estado = '<span style="color:#5a6478">🔴 inactivo</span>';
+      else if (ed.on_vacation) estado = '<span style="color:#fbbf24">🌴 vacaciones</span>';
+      else estado = '🟢 activo';
       html += `<tr>
         <td class="name">${escape(ed.name)}</td>
         <td class="mono">${ed.email ? escape(ed.email) : '<span style="color:#5a6478">—</span>'}</td>
-        <td>${ed.receives_notifications ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
-        <td>${ed.receives_daily_summary ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
-        <td>${ed.active ? '🟢' : '<span style="color:#5a6478">🔴 inactivo</span>'}</td>
+        <td>${ed.receives_notifications && !ed.on_vacation ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
+        <td>${ed.receives_daily_summary && !ed.on_vacation ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
+        <td>${estado}</td>
         <td class="actions">
           <button class="icon-btn" onclick='openEditorModal(${JSON.stringify(ed)})'>Editar</button>
           <button class="icon-btn danger" onclick='deleteEditor(${JSON.stringify(ed.name)})'>Borrar</button>
@@ -362,6 +366,10 @@ function openEditorModal(ed) {
     <div class="field field-row" style="gap:12px;">
       <span class="toggle ${ed?.receives_daily_summary ? 'on' : ''}" id="m-receives" onclick="this.classList.toggle('on')"></span>
       <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-receives').click()">📋 Recibe resumen diario 8am</label>
+    </div>
+    <div class="field field-row" style="gap:12px; padding:10px; background:rgba(251,191,36,0.06); border-radius:8px;">
+      <span class="toggle ${ed?.on_vacation ? 'on' : ''}" id="m-vacation" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-vacation').click()">🌴 De vacaciones (no recibe mails ni recordatorios)</label>
     </div>
     <div class="field field-row" style="gap:12px;">
       <span class="toggle ${(ed?.active !== 0) ? 'on' : ''}" id="m-active" onclick="this.classList.toggle('on')"></span>
@@ -546,6 +554,7 @@ async function submitModal() {
         email: document.getElementById('m-email').value.trim(),
         receives_notifications: document.getElementById('m-notif').classList.contains('on'),
         receives_daily_summary: document.getElementById('m-receives').classList.contains('on'),
+        on_vacation: document.getElementById('m-vacation').classList.contains('on'),
         active: document.getElementById('m-active').classList.contains('on'),
       };
       if (!payload.name) return alert('Falta nombre');

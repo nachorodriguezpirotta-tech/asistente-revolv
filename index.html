@@ -199,6 +199,22 @@
             transform: translateX(20px);
         }
         .cliente-name { font-weight: 500; }
+        .count-control {
+            display: inline-flex; align-items: center; gap: 2px;
+            background: var(--bg-card); border-radius: 6px; padding: 2px;
+        }
+        .count-btn {
+            background: transparent; border: none; color: var(--text-dim);
+            width: 22px; height: 22px; border-radius: 4px;
+            cursor: pointer; font-size: 14px; font-weight: 700;
+            font-family: inherit; padding: 0;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background 0.1s, color 0.1s;
+        }
+        .count-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+        .count-btn:active { background: rgba(255,255,255,0.15); }
+        .count-btn.minus:hover { color: #f87171; }
+        .count-btn.plus:hover { color: #4ade80; }
         .cliente-count {
             color: var(--text-dim);
             font-size: 13px;
@@ -796,7 +812,11 @@ function renderEditor(data) {
             <span class="cliente-meta">
                 ${driveBtn}
                 <span class="cliente-name">${urgentMark} ${escapeHtml(it.cliente)}</span>
-                <span class="cliente-count" onclick="editCount('${clienteEsc}', null, ${videos}, this)" title="Click para editar">${videos} video${videos !== 1 ? 's' : ''}</span>
+                <span class="count-control">
+                    <button class="count-btn minus" onclick="adjustCount('${clienteEsc}', null, ${videos}, -1, this)" title="−1">−</button>
+                    <span class="cliente-count" onclick="editCount('${clienteEsc}', null, ${videos}, this)" title="Click para editar manualmente">${videos}</span>
+                    <button class="count-btn plus" onclick="adjustCount('${clienteEsc}', null, ${videos}, +1, this)" title="+1">+</button>
+                </span>
                 ${noteDisplay}
             </span>
             <button class="delete-btn" onclick="deleteCliente('${clienteEsc}', null, this)" title="Marcar como hecho">🗑️</button>
@@ -853,10 +873,12 @@ function renderAdmin(data) {
         const edProgresses = editorProgresses[ed] || [];
         const progHtml = renderAllProgresses(edProgresses, ed);
         const countLabel = items.length === 0 ? '<span style="color: var(--text-dim); font-weight: 400; font-size: 13px; font-style: italic;">sin pendientes</span>' : `<span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span>`;
-        html += `<section class="editor-block" data-editor="${edEsc}"
+        const onVacation = (data.editors_on_vacation || []).includes(ed);
+        const vacationLabel = onVacation ? '<span style="color:#fbbf24; font-weight:600; font-size:13px; margin-left:8px;">🌴 De vacaciones</span>' : '';
+        html += `<section class="editor-block${onVacation ? ' on-vacation' : ''}" data-editor="${edEsc}"
             ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
             <h2>
-                <span>${escapeHtml(ed)} ${countLabel}</span>
+                <span>${escapeHtml(ed)} ${countLabel}${vacationLabel}</span>
                 <button class="add-mini" onclick="addClientToEditor('${edEsc}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
             </h2>
             ${progHtml}`;
@@ -874,7 +896,11 @@ function renderAdmin(data) {
                 <span class="cliente-meta">
                     ${driveBtn}
                     <span class="cliente-name">${urgentMark} ${escapeHtml(it.cliente)}</span>
-                    <span class="cliente-count" onclick="editCount('${clienteEsc}', '${edEsc}', ${videos}, this)" title="Click para editar">${videos} video${videos !== 1 ? 's' : ''}</span>
+                    <span class="count-control">
+                        <button class="count-btn minus" onclick="adjustCount('${clienteEsc}', '${edEsc}', ${videos}, -1, this)" title="−1">−</button>
+                        <span class="cliente-count" onclick="editCount('${clienteEsc}', '${edEsc}', ${videos}, this)" title="Click para editar manualmente">${videos}</span>
+                        <button class="count-btn plus" onclick="adjustCount('${clienteEsc}', '${edEsc}', ${videos}, +1, this)" title="+1">+</button>
+                    </span>
                     ${noteDisplay}
                 </span>
                 <div class="card-actions">
@@ -1268,6 +1294,69 @@ async function onDrop(e) {
             render(LAST_DATA);
         }
         alert('No se pudo reasignar: ' + err.message);
+    }
+}
+
+async function adjustCount(cliente, editor, currentValue, delta, btn) {
+    const newCount = currentValue + delta;
+    if (newCount < 0) return;
+    const clienteName = cliente.replace(/&#39;/g, "'");
+    const editorName = editor ? editor.replace(/&#39;/g, "'") : null;
+    // Si llega a 0 → tratar como delete con undo
+    if (newCount === 0) {
+        const card = btn.closest('.cliente-card');
+        card.classList.add('removing');
+        setTimeout(() => card.remove(), 250);
+        let removed = null;
+        if (LAST_DATA?.by_editor && editorName) {
+            const list = LAST_DATA.by_editor[editorName];
+            const idx = list?.findIndex(x => x.cliente === clienteName);
+            if (idx >= 0) { removed = {list, item: list[idx], idx}; list.splice(idx, 1); }
+        } else if (LAST_DATA?.pendientes) {
+            const idx = LAST_DATA.pendientes.findIndex(x => x.cliente === clienteName);
+            if (idx >= 0) { removed = {list: LAST_DATA.pendientes, item: LAST_DATA.pendientes[idx], idx}; LAST_DATA.pendientes.splice(idx, 1); }
+        }
+        showUndoToast(
+            `${clienteName} marcado como hecho`,
+            async () => {
+                const params = new URLSearchParams({ cliente, t: TOKEN });
+                if (IS_ADMIN) { params.set('admin','1'); if (editor) params.set('editor', editor); }
+                else { params.set('editor', EDITOR); }
+                try {
+                    const res = await fetch('/api/task?' + params, { method: 'DELETE' });
+                    const data = await res.json();
+                    if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+                } catch (e) {
+                    if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); }
+                    alert('No se pudo: ' + e.message);
+                }
+            },
+            () => { if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); } }
+        );
+        return;
+    }
+    // Optimistic: actualizar count + re-render
+    const item = _findItem(clienteName, editorName);
+    const prev = item ? item.videos : null;
+    if (item) {
+        item.videos = newCount;
+        render(LAST_DATA);
+    }
+    // PATCH server
+    const body = { cliente, count: newCount, t: TOKEN };
+    if (IS_ADMIN) { body.admin = 1; if (editor) body.editor = editor; }
+    else { body.editor = EDITOR; }
+    try {
+        const res = await fetch('/api/task', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+    } catch (e) {
+        if (item) { item.videos = prev; render(LAST_DATA); }
+        alert('No se pudo: ' + e.message);
     }
 }
 

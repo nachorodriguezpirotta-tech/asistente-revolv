@@ -32,7 +32,7 @@ except Exception as _e:
 def _get_all_config(conn):
     """Devuelve {editors, nicknames, aliases, delivery_folders, pending_folders}."""
     editors = [dict(r) for r in conn.execute(
-        "SELECT name, email, receives_daily_summary, receives_notifications, active FROM cfg_editors ORDER BY name"
+        "SELECT name, email, receives_daily_summary, receives_notifications, on_vacation, active FROM cfg_editors ORDER BY name"
     ).fetchall()]
     nicknames = [dict(r) for r in conn.execute(
         "SELECT id, nickname, cliente_real, editor FROM cfg_nicknames ORDER BY nickname"
@@ -163,6 +163,8 @@ class handler(BaseHTTPRequestHandler):
 
         email = (data.get("email") or "").strip() or None
         receives = 1 if data.get("receives_daily_summary") else 0
+        receives_notif = 1 if data.get("receives_notifications") else 0
+        on_vacation = 1 if data.get("on_vacation") else 0
         active = 1 if data.get("active", True) else 0
 
         if action == "create":
@@ -170,15 +172,16 @@ class handler(BaseHTTPRequestHandler):
             if existing:
                 raise ValueError(f"editor '{name}' ya existe")
             conn.execute("""
-                INSERT INTO cfg_editors (name, email, receives_daily_summary, active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (name, email, receives, active, now, now))
+                INSERT INTO cfg_editors (name, email, receives_daily_summary, receives_notifications, on_vacation, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (name, email, receives, receives_notif, on_vacation, active, now, now))
             result["created"] = name
         else:  # update
             conn.execute("""
-                UPDATE cfg_editors SET email=?, receives_daily_summary=?, active=?, updated_at=?
+                UPDATE cfg_editors SET email=?, receives_daily_summary=?, receives_notifications=?,
+                    on_vacation=?, active=?, updated_at=?
                 WHERE name=?
-            """, (email, receives, active, now, name))
+            """, (email, receives, receives_notif, on_vacation, active, now, name))
             result["updated"] = name
 
     def _op_nickname(self, conn, action, data, result):

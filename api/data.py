@@ -144,14 +144,16 @@ def get_all_data(conn) -> dict:
         pass
 
     # Asegurar que TODOS los editores ACTIVOS aparezcan, aunque no tengan pendientes.
-    # Lee de cfg_editors (DB) que es la fuente de verdad runtime — incluye editores
-    # agregados desde el dashboard de configuración sin reiniciar nada.
+    # Lee de cfg_editors (DB) que es la fuente de verdad runtime.
+    editors_on_vacation = set()
     try:
-        ed_rows = conn.execute("SELECT name FROM cfg_editors WHERE active=1").fetchall()
+        ed_rows = conn.execute("SELECT name, COALESCE(on_vacation, 0) as on_vacation FROM cfg_editors WHERE active=1").fetchall()
         for r in ed_rows:
             ed_name = r["name"]
             if ed_name and ed_name not in by_editor:
                 by_editor[ed_name] = []
+            if r["on_vacation"]:
+                editors_on_vacation.add(ed_name)
     except Exception:
         # Fallback al hardcoded si la tabla no existe
         try:
@@ -186,6 +188,7 @@ def get_all_data(conn) -> dict:
         "editor_links": editor_links,
         "editor_progresses": editor_progresses,
         "pending_folders_count": pending_folders_count,
+        "editors_on_vacation": sorted(editors_on_vacation),
         "stats": {
             "pendientes": sum(len(v) for v in by_editor.values()),
             "editores": len(by_editor),

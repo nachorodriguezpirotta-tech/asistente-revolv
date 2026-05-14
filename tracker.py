@@ -165,16 +165,17 @@ def init_db():
             updated_at TEXT
         )
     """)
-    # Migration: agregar receives_notifications si la tabla ya existía sin ese campo
+    # Migration: agregar columnas faltantes en cfg_editors si la tabla ya existía
     try:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(cfg_editors)").fetchall()]
         if "receives_notifications" not in cols:
             conn.execute("ALTER TABLE cfg_editors ADD COLUMN receives_notifications INTEGER NOT NULL DEFAULT 0")
-            # Seed: solo los 4 activos reciben mails reales (Rami, Fran, Benja, Valen).
-            # Los otros tienen email solo para identificación de owner.
             for name in ("Rami", "Fran", "Benja", "Valen"):
                 conn.execute("UPDATE cfg_editors SET receives_notifications=1 WHERE name=?", (name,))
-            conn.commit()
+        if "on_vacation" not in cols:
+            # 🌴 Modo vacaciones: editor activo pero pausado (no mails, no recordatorios)
+            conn.execute("ALTER TABLE cfg_editors ADD COLUMN on_vacation INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
     except Exception:
         pass
     conn.execute("""
@@ -733,14 +734,27 @@ def cfg_get_editor_emails() -> dict:
 
 
 def cfg_get_notification_emails() -> dict:
-    """Devuelve {editor_name: email} de editores que SÍ deben recibir mails
-    (crudos nuevos, cierres, recordatorios). Es un subset de cfg_get_editor_emails."""
+    """Devuelve {editor_name: email} de editores que SÍ deben recibir mails.
+    Excluye editores en modo vacaciones."""
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT name, email FROM cfg_editors WHERE active=1 AND receives_notifications=1 AND email IS NOT NULL AND email != ''"
-    ).fetchall()
+    rows = conn.execute("""
+        SELECT name, email FROM cfg_editors
+        WHERE active=1 AND receives_notifications=1
+          AND COALESCE(on_vacation, 0) = 0
+          AND email IS NOT NULL AND email != ''
+    """).fetchall()
     conn.close()
     return {r["name"]: r["email"] for r in rows}
+
+
+def cfg_is_on_vacation(editor: str) -> bool:
+    """¿El editor está en modo vacaciones?"""
+    if not editor:
+        return False
+    conn = get_conn()
+    row = conn.execute("SELECT on_vacation FROM cfg_editors WHERE name=?", (editor,)).fetchone()
+    conn.close()
+    return bool(row and row["on_vacation"])
 
 
 def cfg_get_daily_summary_editors() -> set:
