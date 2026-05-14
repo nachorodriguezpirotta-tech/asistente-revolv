@@ -253,6 +253,42 @@
             font-size: 11px; color: #fbbf24; font-style: italic;
             margin-left: 8px; opacity: 0.85;
         }
+        /* Toast con UNDO (estilo Gmail) */
+        #toast-container {
+            position: fixed;
+            bottom: 24px; left: 50%; transform: translateX(-50%);
+            z-index: 2000;
+            display: flex; flex-direction: column; gap: 8px;
+            pointer-events: none;
+        }
+        .toast {
+            background: #1a1e27; color: #e8eaed;
+            border: 1px solid #2a2f3a;
+            border-radius: 10px;
+            padding: 12px 18px;
+            font-size: 14px;
+            display: flex; align-items: center; gap: 16px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+            pointer-events: auto;
+            min-width: 280px; max-width: 90vw;
+            animation: toastIn 0.2s ease-out;
+        }
+        .toast.fading { animation: toastOut 0.3s ease-in forwards; }
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes toastOut {
+            to { opacity: 0; transform: translateY(20px); }
+        }
+        .toast .msg { flex: 1; }
+        .toast .undo-btn {
+            background: transparent; border: 1px solid #4ade80; color: #4ade80;
+            padding: 5px 12px; border-radius: 6px;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+            font-family: inherit;
+        }
+        .toast .undo-btn:hover { background: rgba(74, 222, 128, 0.12); }
         .drive-btn {
             display: inline-flex;
             align-items: center;
@@ -379,6 +415,7 @@
 </head>
 <body>
     <div id="ptr" class="ptr-indicator"><span class="arrow">↓</span><span class="label">Tirá para refrescar</span></div>
+    <div id="toast-container"></div>
     <header class="main-header">
         <div style="flex:1; min-width:0;">
             <h1><span class="red-dot"></span>Asistente Revolv</h1>
@@ -927,14 +964,9 @@ function editCount(cliente, editor, currentValue, spanEl) {
             input.replaceWith(spanEl);
             return;
         }
-        // Si pone 0 → es como borrar
+        // Si pone 0 → es como borrar (sin confirm, con UNDO toast)
         if (newCount === 0) {
-            if (!confirm(`¿Marcar todo ${cliente} como hecho?`)) {
-                input.replaceWith(spanEl);
-                return;
-            }
             const card = input.closest('.cliente-card');
-            // Optimistic: borrar la card + LAST_DATA
             if (card) {
                 card.classList.add('removing');
                 setTimeout(() => card.remove(), 250);
@@ -950,17 +982,23 @@ function editCount(cliente, editor, currentValue, spanEl) {
                 const idx = LAST_DATA.pendientes.findIndex(x => x.cliente === clienteName);
                 if (idx >= 0) { removed = {list: LAST_DATA.pendientes, item: LAST_DATA.pendientes[idx], idx}; LAST_DATA.pendientes.splice(idx, 1); }
             }
-            const params = new URLSearchParams({ cliente, t: TOKEN });
-            if (IS_ADMIN) { params.set('admin', '1'); if (editor) params.set('editor', editor); }
-            else { params.set('editor', EDITOR); }
-            try {
-                const res = await fetch('/api/task?' + params, { method: 'DELETE' });
-                const data = await res.json();
-                if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
-            } catch (e) {
-                if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); }
-                alert('No se pudo: ' + e.message);
-            }
+            showUndoToast(
+                `${clienteName} marcado como hecho`,
+                async () => {
+                    const params = new URLSearchParams({ cliente, t: TOKEN });
+                    if (IS_ADMIN) { params.set('admin', '1'); if (editor) params.set('editor', editor); }
+                    else { params.set('editor', EDITOR); }
+                    try {
+                        const res = await fetch('/api/task?' + params, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+                    } catch (e) {
+                        if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); }
+                        alert('No se pudo: ' + e.message);
+                    }
+                },
+                () => { if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); } }
+            );
             return;
         }
         // PATCH
@@ -1264,6 +1302,47 @@ async function toggleUrgent(cliente, editor, urgent, btn) {
     }
 }
 
+// Toast con UNDO: muestra mensaje + botón "Deshacer" por 5 segundos.
+// Si se toca el botón → onUndo(). Si pasan 5 seg → onCommit() (acción real al server).
+function showUndoToast(msg, onCommit, onUndo, durationMs = 5000) {
+    const container = document.getElementById('toast-container');
+    if (!container) {
+        // fallback: ejecutar commit directo
+        try { onCommit(); } catch(e) {}
+        return;
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.innerHTML = `
+      <span class="msg">${escapeHtml(msg)}</span>
+      <button class="undo-btn">Deshacer</button>
+    `;
+    container.appendChild(toast);
+
+    let committed = false, undone = false;
+    const btn = toast.querySelector('.undo-btn');
+
+    const commit = () => {
+        if (committed || undone) return;
+        committed = true;
+        try { onCommit(); } catch(e) {}
+        fadeOut();
+    };
+    const undo = () => {
+        if (committed || undone) return;
+        undone = true;
+        try { onUndo(); } catch(e) {}
+        fadeOut();
+    };
+    const fadeOut = () => {
+        toast.classList.add('fading');
+        setTimeout(() => toast.remove(), 300);
+    };
+
+    btn.addEventListener('click', undo);
+    setTimeout(commit, durationMs);
+}
+
 // Helper: encontrar item por cliente/editor en LAST_DATA
 function _findItem(clienteName, editorName) {
     if (!LAST_DATA) return null;
@@ -1387,8 +1466,8 @@ function reassignClient(cliente, currentEditor, btn) {
     });
 }
 
-async function deleteCliente(cliente, editor, btn) {
-    if (!confirm(`¿Marcar como hecho TODOS los pendientes de ${cliente}?`)) return;
+function deleteCliente(cliente, editor, btn) {
+    // Sin confirm: borrado inmediato + toast "Deshacer" por 5 seg.
     const card = btn.closest('.cliente-card');
     const clienteName = cliente.replace(/&#39;/g, "'");
     const editorName = editor ? editor.replace(/&#39;/g, "'") : null;
@@ -1404,18 +1483,27 @@ async function deleteCliente(cliente, editor, btn) {
         const idx = LAST_DATA.pendientes.findIndex(x => x.cliente === clienteName);
         if (idx >= 0) { removed = { list: LAST_DATA.pendientes, item: LAST_DATA.pendientes[idx], idx }; LAST_DATA.pendientes.splice(idx, 1); }
     }
-    const params = new URLSearchParams({ cliente, t: TOKEN });
-    if (IS_ADMIN) { params.set('admin','1'); if (editor) params.set('editor', editor); }
-    else { params.set('editor', EDITOR); }
-    try {
-        const res = await fetch('/api/task?' + params.toString(), { method: 'DELETE' });
-        const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-    } catch (e) {
-        // Rollback
-        if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); }
-        alert('No se pudo eliminar: ' + e.message);
-    }
+    showUndoToast(
+        `${clienteName} marcado como hecho`,
+        async () => {
+            // COMMIT: hacer el DELETE real al server
+            const params = new URLSearchParams({ cliente, t: TOKEN });
+            if (IS_ADMIN) { params.set('admin','1'); if (editor) params.set('editor', editor); }
+            else { params.set('editor', EDITOR); }
+            try {
+                const res = await fetch('/api/task?' + params.toString(), { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+            } catch (e) {
+                if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); }
+                alert('No se pudo eliminar: ' + e.message);
+            }
+        },
+        () => {
+            // UNDO: revertir LAST_DATA y re-render
+            if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); }
+        }
+    );
 }
 
 async function openAddDialog() {
