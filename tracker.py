@@ -93,6 +93,13 @@ def init_db():
     if "count_locked" not in cols:
         # Si el usuario editó el count desde el dashboard, no sobrescribir con estimaciones del scan
         conn.execute("ALTER TABLE tasks ADD COLUMN count_locked INTEGER NOT NULL DEFAULT 0")
+    if "note" not in cols:
+        # Nota libre del admin sobre la task (ej. "paga doble", "urgente esta semana")
+        conn.execute("ALTER TABLE tasks ADD COLUMN note TEXT")
+    if "urgent" not in cols:
+        # Si urgent=1: recibe recordatorios más frecuentes (cada 2d vs 5d normal),
+        # aparece destacada arriba del listado, badge rojo.
+        conn.execute("ALTER TABLE tasks ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0")
 
     # Tabla de "bloqueos de cliente": cuando el usuario borra un cliente manualmente,
     # NO se debe re-crear automáticamente hasta que pase un tiempo (24 horas).

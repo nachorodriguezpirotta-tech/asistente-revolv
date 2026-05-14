@@ -134,12 +134,12 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
 
     print(f"📧 {len(grouped)} mails a mandar (1 por cliente):\n")
 
-    from aliases import get_editor_email
+    from aliases import get_editor_email_for_notification
 
     for (cliente, editor, folder_id), items in grouped.items():
         subject, body_text, body_html = _build_mail(cliente, editor, items, folder_id)
         task_ids = [it["task_id"] for it in items]
-        editor_email = get_editor_email(editor)
+        editor_email = get_editor_email_for_notification(editor)
         destinatarios = [to]
         if editor_email and editor_email.lower() != to.lower():
             destinatarios.append(editor_email)
@@ -275,9 +275,9 @@ Archivo: {file_name}{link_text}
 </body></html>
 """
         # Determinar destinatarios: admin + editor (si tiene mail mapeado)
-        from aliases import get_editor_email
+        from aliases import get_editor_email_for_notification
         destinatarios = [to]
-        editor_email = get_editor_email(editor) if editor and editor != "—" else None
+        editor_email = get_editor_email_for_notification(editor) if editor and editor != "—" else None
         if editor_email and editor_email.lower() != to.lower():
             destinatarios.append(editor_email)
 

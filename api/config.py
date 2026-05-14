@@ -32,7 +32,7 @@ except Exception as _e:
 def _get_all_config(conn):
     """Devuelve {editors, nicknames, aliases, delivery_folders, pending_folders}."""
     editors = [dict(r) for r in conn.execute(
-        "SELECT name, email, receives_daily_summary, active FROM cfg_editors ORDER BY name"
+        "SELECT name, email, receives_daily_summary, receives_notifications, active FROM cfg_editors ORDER BY name"
     ).fetchall()]
     nicknames = [dict(r) for r in conn.execute(
         "SELECT id, nickname, cliente_real, editor FROM cfg_nicknames ORDER BY nickname"

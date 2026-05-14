@@ -366,6 +366,63 @@ class handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
+        # MODO SET_NOTE: agregar/editar nota de una task pending
+        if body.get("action") == "set_note":
+            if not is_admin or not check_token("ADMIN", token):
+                return json_response(self, {"error": "unauthorized (admin)"}, status=401)
+            cliente_n = (body.get("cliente") or "").strip()
+            editor_n = (body.get("editor") or "").strip()
+            note = body.get("note", "")
+            note = note.strip() if note else None
+            if not cliente_n:
+                return json_response(self, {"error": "falta cliente"}, status=400)
+
+            def op_note(conn):
+                if editor_n:
+                    conn.execute(
+                        "UPDATE tasks SET note=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                        (note, cliente_n, editor_n),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE tasks SET note=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+                        (note, cliente_n),
+                    )
+
+            try:
+                with_db(op_note, message=f"manual: note {cliente_n}")
+                return json_response(self, {"ok": True, "cliente": cliente_n, "note": note})
+            except Exception as e:
+                return json_response(self, {"error": str(e)[:200]}, status=500)
+
+        # MODO SET_URGENT: marcar/desmarcar urgente
+        if body.get("action") == "set_urgent":
+            if not is_admin or not check_token("ADMIN", token):
+                return json_response(self, {"error": "unauthorized (admin)"}, status=401)
+            cliente_u = (body.get("cliente") or "").strip()
+            editor_u = (body.get("editor") or "").strip()
+            urgent = 1 if body.get("urgent") else 0
+            if not cliente_u:
+                return json_response(self, {"error": "falta cliente"}, status=400)
+
+            def op_urgent(conn):
+                if editor_u:
+                    conn.execute(
+                        "UPDATE tasks SET urgent=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                        (urgent, cliente_u, editor_u),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE tasks SET urgent=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+                        (urgent, cliente_u),
+                    )
+
+            try:
+                with_db(op_urgent, message=f"manual: urgent={urgent} {cliente_u}")
+                return json_response(self, {"ok": True, "cliente": cliente_u, "urgent": bool(urgent)})
+            except Exception as e:
+                return json_response(self, {"error": str(e)[:200]}, status=500)
+
         # MODO REASSIGN: cambiar editor de una task pending
         if body.get("action") == "reassign":
             if not is_admin or not check_token("ADMIN", token):

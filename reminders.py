@@ -15,7 +15,10 @@ from config import TEST_EMAIL
 from tracker import get_conn, meta_get, meta_set
 from mail_client import send_mail
 
-DAYS_THRESHOLD = 5
+DAYS_THRESHOLD = 5         # Normal: pending > 5 días sin entregar → recordatorio
+DAYS_THRESHOLD_URGENT = 2  # Urgente: > 2 días basta para recordatorio
+THROTTLE_DAYS = 7          # Normal: max 1 reminder cada 7 días por editor
+THROTTLE_DAYS_URGENT = 3   # Urgente: max 1 reminder cada 3 días
 META_KEY_LAST_REMINDER = "reminders_last_sent_"  # + editor_name
 
 
@@ -33,16 +36,19 @@ def run(dry_run: bool = False):
     conn = get_conn()
     now = datetime.now()
 
-    # Editores activos con sus emails
+    # Editores activos QUE RECIBEN NOTIFICACIONES (solo los marcados).
+    # Los demás tienen email solo para identificación, no reciben recordatorios.
     eds = conn.execute(
-        "SELECT name, email FROM cfg_editors WHERE active=1 AND email IS NOT NULL AND email != ''"
+        "SELECT name, email FROM cfg_editors WHERE active=1 AND receives_notifications=1 AND email IS NOT NULL AND email != ''"
     ).fetchall()
     editors_active = {r["name"]: r["email"] for r in eds}
 
-    # Pending por editor con tiempo desde el más viejo
+    # Pending por editor con tiempo desde el más viejo + flag urgente
     rows = conn.execute("""
         SELECT editor, MIN(detected_at) as oldest, COUNT(*) as count_clientes,
-               SUM(COALESCE(pending_count, 1)) as total_videos
+               SUM(COALESCE(pending_count, 1)) as total_videos,
+               MAX(COALESCE(urgent, 0)) as has_urgent,
+               SUM(CASE WHEN COALESCE(urgent,0)=1 THEN 1 ELSE 0 END) as urgent_count
         FROM tasks WHERE status='pending' AND editor IS NOT NULL
         GROUP BY editor
     """).fetchall()
@@ -57,14 +63,17 @@ def run(dry_run: bool = False):
         if not oldest:
             continue
         days = (now - oldest).total_seconds() / 86400
-        if days < DAYS_THRESHOLD:
+        has_urgent = bool(r["has_urgent"])
+        threshold = DAYS_THRESHOLD_URGENT if has_urgent else DAYS_THRESHOLD
+        if days < threshold:
             continue
-        # Throttle: solo recordar 1 vez cada 7 días por editor
+        # Throttle: depende de urgent
+        throttle = THROTTLE_DAYS_URGENT if has_urgent else THROTTLE_DAYS
         last_sent = meta_get(META_KEY_LAST_REMINDER + editor)
         if last_sent:
             last_dt = _parse_iso(last_sent)
-            if last_dt and (now - last_dt).total_seconds() / 86400 < 7:
-                print(f"  ⏭ {editor}: skip (último recordatorio hace <7 días)")
+            if last_dt and (now - last_dt).total_seconds() / 86400 < throttle:
+                print(f"  ⏭ {editor}: skip (último recordatorio hace <{throttle}d, urgent={has_urgent})")
                 continue
         to_remind.append({
             "editor": editor,
@@ -72,6 +81,8 @@ def run(dry_run: bool = False):
             "days": round(days, 1),
             "clientes": r["count_clientes"],
             "videos": r["total_videos"],
+            "urgent": has_urgent,
+            "urgent_count": r["urgent_count"],
         })
 
     if not to_remind:
@@ -92,11 +103,13 @@ def run(dry_run: bool = False):
         clientes = r["clientes"]
         days = r["days"]
 
-        subject = f"⏰ {videos} video{'s' if videos != 1 else ''} esperando, hace {days:.0f} días"
+        urgent_prefix = "🚨 URGENTE: " if r.get("urgent") else "⏰ "
+        urgent_extra = f"\n\nEntre ellos, {r['urgent_count']} marcado{'s' if r['urgent_count'] != 1 else ''} como URGENTE." if r.get("urgent") else ""
+        subject = f"{urgent_prefix}{videos} video{'s' if videos != 1 else ''} esperando, hace {days:.0f} días"
         text = f"""Hola {editor},
 
 Tenés {videos} video{'s' if videos != 1 else ''} pendiente{'s' if videos != 1 else ''} de {clientes} cliente{'s' if clientes != 1 else ''}.
-El más viejo lleva {days:.0f} días esperando.
+El más viejo lleva {days:.0f} días esperando.{urgent_extra}
 
 Ya están listos para que les des una pasada cuando puedas.
 

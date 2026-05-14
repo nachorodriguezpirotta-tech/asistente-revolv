@@ -66,13 +66,16 @@ def get_all_clients(conn) -> dict:
 
 def get_editor_data(conn, editor: str) -> dict:
     # 1 entry por cliente con la suma de pending_count (videos pendientes)
+    # Urgentes primero (MAX(urgent)=1)
     rows = conn.execute(
         """SELECT cliente, MIN(id) as id, SUM(COALESCE(pending_count, 1)) as videos,
-                  MIN(detected_at) as oldest
+                  MIN(detected_at) as oldest,
+                  MAX(COALESCE(urgent, 0)) as urgent,
+                  MAX(COALESCE(note, '')) as note
            FROM tasks
            WHERE editor = ? AND status = 'pending'
            GROUP BY TRIM(cliente)
-           ORDER BY TRIM(cliente)""",
+           ORDER BY MAX(COALESCE(urgent, 0)) DESC, TRIM(cliente)""",
         (editor,),
     ).fetchall()
 
@@ -97,6 +100,8 @@ def get_editor_data(conn, editor: str) -> dict:
                 "videos": r["videos"] or 1,
                 "detected_at": r["oldest"],
                 "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
+                "urgent": bool(r["urgent"]) if "urgent" in r.keys() else False,
+                "note": r["note"] if "note" in r.keys() else None,
             }
             for r in rows
         ],
@@ -107,11 +112,13 @@ def get_editor_data(conn, editor: str) -> dict:
 def get_all_data(conn) -> dict:
     rows = conn.execute(
         """SELECT editor, TRIM(cliente) as cliente, MIN(id) as id,
-                  SUM(COALESCE(pending_count, 1)) as videos, MIN(detected_at) as oldest
+                  SUM(COALESCE(pending_count, 1)) as videos, MIN(detected_at) as oldest,
+                  MAX(COALESCE(urgent, 0)) as urgent,
+                  MAX(COALESCE(note, '')) as note
            FROM tasks
            WHERE status = 'pending'
            GROUP BY editor, TRIM(cliente)
-           ORDER BY editor, cliente"""
+           ORDER BY editor, MAX(COALESCE(urgent, 0)) DESC, cliente"""
     ).fetchall()
     folder_map = _get_client_folder_map(conn)
     by_editor = {}
@@ -123,6 +130,8 @@ def get_all_data(conn) -> dict:
             "videos": r["videos"] or 1,
             "detected_at": r["oldest"],
             "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
+            "urgent": bool(r["urgent"]) if "urgent" in r.keys() else False,
+            "note": r["note"] if "note" in r.keys() else None,
         })
 
     # Conteo de carpetas Drive pendientes de aprobación (para badge en dashboard)

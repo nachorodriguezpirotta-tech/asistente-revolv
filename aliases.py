@@ -89,10 +89,39 @@ def _safe_db_call(fn, default):
 
 
 def get_editor_emails_runtime() -> dict:
-    """{editor_name: email} desde DB. Fallback a hardcoded EDITOR_EMAILS."""
+    """{editor_name: email} de TODOS los editores activos.
+    USO: identificar editor por owner del archivo en Drive (clasificador).
+    NO usar para mandar mails — usar get_notification_emails_runtime() para eso."""
     from tracker import cfg_get_editor_emails
     db = _safe_db_call(cfg_get_editor_emails, None)
     return db if db is not None else dict(EDITOR_EMAILS)
+
+
+def get_notification_emails_runtime() -> dict:
+    """{editor_name: email} de editores que SÍ reciben mails reales (crudos, cierres, reminders).
+    Subset de get_editor_emails_runtime — depende de receives_notifications=1 en cfg_editors."""
+    from tracker import cfg_get_notification_emails
+    db = _safe_db_call(cfg_get_notification_emails, None)
+    if db is not None:
+        return db
+    # Fallback hardcoded: solo los 4 activos
+    out = {}
+    for name in ("Rami", "Fran", "Benja", "Valen"):
+        if name in EDITOR_EMAILS:
+            out[name] = EDITOR_EMAILS[name]
+    return out
+
+
+def get_editor_email_for_notification(editor: str):
+    """Mail del editor SOLO si está marcado para recibir notificaciones.
+    Devuelve None si el editor existe pero no está en la lista de notif."""
+    if not editor:
+        return None
+    emails = get_notification_emails_runtime()
+    for k, v in emails.items():
+        if _normalize(k) == _normalize(editor):
+            return v
+    return None
 
 
 def get_editors_list_runtime() -> list:

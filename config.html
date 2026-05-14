@@ -287,7 +287,8 @@ function renderEditors() {
     html += `<div class="table-wrap"><table><thead><tr>
       <th>Nombre</th>
       <th>Email</th>
-      <th>Resumen 8am</th>
+      <th title="Recibe mails de crudos, cierres y recordatorios">📬 Notif</th>
+      <th title="Recibe resumen diario 8am">📋 Resumen</th>
       <th>Activo</th>
       <th></th>
     </tr></thead><tbody>`;
@@ -295,6 +296,7 @@ function renderEditors() {
       html += `<tr>
         <td class="name">${escape(ed.name)}</td>
         <td class="mono">${ed.email ? escape(ed.email) : '<span style="color:#5a6478">—</span>'}</td>
+        <td>${ed.receives_notifications ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
         <td>${ed.receives_daily_summary ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
         <td>${ed.active ? '🟢' : '<span style="color:#5a6478">🔴 inactivo</span>'}</td>
         <td class="actions">
@@ -319,11 +321,15 @@ function openEditorModal(ed) {
     </div>
     <div class="field"><label>Email</label>
       <input id="m-email" type="email" value="${escapeAttr(ed?.email || '')}" placeholder="editor@gmail.com">
-      <div class="field-hint">Necesario para recibir notificaciones</div>
+      <div class="field-hint">Se usa para identificar quién sube videos en Drive (y, si activás abajo, también para mandarle mails)</div>
+    </div>
+    <div class="field field-row" style="gap:12px;">
+      <span class="toggle ${ed?.receives_notifications ? 'on' : ''}" id="m-notif" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-notif').click()">📬 Recibe mails (crudos nuevos, cierres, recordatorios)</label>
     </div>
     <div class="field field-row" style="gap:12px;">
       <span class="toggle ${ed?.receives_daily_summary ? 'on' : ''}" id="m-receives" onclick="this.classList.toggle('on')"></span>
-      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-receives').click()">Recibe resumen diario 8am</label>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-receives').click()">📋 Recibe resumen diario 8am</label>
     </div>
     <div class="field field-row" style="gap:12px;">
       <span class="toggle ${(ed?.active !== 0) ? 'on' : ''}" id="m-active" onclick="this.classList.toggle('on')"></span>
@@ -506,6 +512,7 @@ async function submitModal() {
       payload = {
         name: document.getElementById('m-name').value.trim(),
         email: document.getElementById('m-email').value.trim(),
+        receives_notifications: document.getElementById('m-notif').classList.contains('on'),
         receives_daily_summary: document.getElementById('m-receives').classList.contains('on'),
         active: document.getElementById('m-active').classList.contains('on'),
       };
