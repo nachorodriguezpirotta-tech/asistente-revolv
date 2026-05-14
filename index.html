@@ -933,13 +933,34 @@ function editCount(cliente, editor, currentValue, spanEl) {
                 input.replaceWith(spanEl);
                 return;
             }
+            const card = input.closest('.cliente-card');
+            // Optimistic: borrar la card + LAST_DATA
+            if (card) {
+                card.classList.add('removing');
+                setTimeout(() => card.remove(), 250);
+            }
+            const clienteName = (cliente || '').replace(/&#39;/g, "'");
+            const editorName = editor ? editor.replace(/&#39;/g, "'") : null;
+            let removed = null;
+            if (LAST_DATA?.by_editor && editorName) {
+                const list = LAST_DATA.by_editor[editorName];
+                const idx = list?.findIndex(x => x.cliente === clienteName);
+                if (idx >= 0) { removed = {list, item: list[idx], idx}; list.splice(idx, 1); }
+            } else if (LAST_DATA?.pendientes) {
+                const idx = LAST_DATA.pendientes.findIndex(x => x.cliente === clienteName);
+                if (idx >= 0) { removed = {list: LAST_DATA.pendientes, item: LAST_DATA.pendientes[idx], idx}; LAST_DATA.pendientes.splice(idx, 1); }
+            }
             const params = new URLSearchParams({ cliente, t: TOKEN });
             if (IS_ADMIN) { params.set('admin', '1'); if (editor) params.set('editor', editor); }
             else { params.set('editor', EDITOR); }
             try {
-                await fetch('/api/task?' + params, { method: 'DELETE' });
-                loadData();
-            } catch (e) { alert(e.message); input.replaceWith(spanEl); }
+                const res = await fetch('/api/task?' + params, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+            } catch (e) {
+                if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); }
+                alert('No se pudo: ' + e.message);
+            }
             return;
         }
         // PATCH
@@ -959,6 +980,11 @@ function editCount(cliente, editor, currentValue, spanEl) {
             // Actualizar UI sin recargar
             spanEl.textContent = newCount + ' video' + (newCount !== 1 ? 's' : '');
             input.replaceWith(spanEl);
+            // Sincronizar LAST_DATA con el nuevo count
+            const clienteName = (cliente || '').replace(/&#39;/g, "'");
+            const editorName = editor ? editor.replace(/&#39;/g, "'") : null;
+            const item = _findItem(clienteName, editorName);
+            if (item) item.videos = newCount;
         } catch (e) {
             alert('No se pudo actualizar:\n' + e.message);
             input.replaceWith(spanEl);
@@ -1168,6 +1194,20 @@ async function onDrop(e) {
     if (!newEditor || newEditor === DRAGGING.editor) return;
     const { cliente, editor: currentEditor } = DRAGGING;
     DRAGGING = null;
+    // Optimistic
+    let moved = null;
+    if (LAST_DATA?.by_editor) {
+        const fromList = LAST_DATA.by_editor[currentEditor];
+        const idx = fromList?.findIndex(x => x.cliente === cliente);
+        if (idx >= 0) {
+            const item = fromList[idx];
+            fromList.splice(idx, 1);
+            if (!LAST_DATA.by_editor[newEditor]) LAST_DATA.by_editor[newEditor] = [];
+            LAST_DATA.by_editor[newEditor].push(item);
+            moved = { item, fromList, idx };
+            render(LAST_DATA);
+        }
+    }
     try {
         const res = await fetch('/api/task', {
             method: 'PATCH',
@@ -1180,14 +1220,31 @@ async function onDrop(e) {
         });
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        await loadData();
     } catch (err) {
-        alert('No se pudo reasignar:\n' + err.message);
+        // Rollback
+        if (moved && LAST_DATA?.by_editor) {
+            const toList = LAST_DATA.by_editor[newEditor];
+            const toIdx = toList?.findIndex(x => x.cliente === cliente);
+            if (toIdx >= 0) toList.splice(toIdx, 1);
+            moved.fromList.splice(moved.idx, 0, moved.item);
+            render(LAST_DATA);
+        }
+        alert('No se pudo reasignar: ' + err.message);
     }
 }
 
 async function toggleUrgent(cliente, editor, urgent, btn) {
-    btn.disabled = true;
+    const newUrgent = urgent === 1;
+    const clienteName = cliente.replace(/&#39;/g, "'");
+    const editorName = editor.replace(/&#39;/g, "'");
+    // Optimistic: update LAST_DATA + re-render al toque
+    const item = _findItem(clienteName, editorName);
+    const prev = item ? item.urgent : null;
+    if (item) {
+        item.urgent = newUrgent;
+        render(LAST_DATA);
+    }
+    // Background server call
     try {
         const res = await fetch('/api/task', {
             method: 'PATCH',
@@ -1195,33 +1252,45 @@ async function toggleUrgent(cliente, editor, urgent, btn) {
             body: JSON.stringify({
                 admin: 1, t: TOKEN,
                 action: 'set_urgent',
-                cliente, editor, urgent: urgent === 1,
+                cliente, editor, urgent: newUrgent,
             }),
         });
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        await loadData();
     } catch (e) {
-        btn.disabled = false;
-        alert('Error: ' + e.message);
+        // Rollback
+        if (item) { item.urgent = prev; render(LAST_DATA); }
+        alert('No se pudo guardar: ' + e.message);
     }
 }
 
-async function editNote(cliente, editor, btn) {
-    // Buscar nota actual del cliente
-    let currentNote = '';
-    const editors = LAST_DATA?.by_editor || {};
-    for (const ed of Object.keys(editors)) {
-        for (const it of editors[ed]) {
-            if (it.cliente === cliente.replace(/&#39;/g, "'") && (!editor || ed === editor.replace(/&#39;/g, "'"))) {
-                currentNote = it.note || '';
-                break;
-            }
-        }
+// Helper: encontrar item por cliente/editor en LAST_DATA
+function _findItem(clienteName, editorName) {
+    if (!LAST_DATA) return null;
+    if (LAST_DATA.by_editor) {
+        const list = LAST_DATA.by_editor[editorName] || [];
+        return list.find(x => x.cliente === clienteName);
     }
-    const newNote = prompt(`Nota para ${cliente}:\n(vacío para borrar)`, currentNote);
-    if (newNote === null) return; // canceló
-    btn.disabled = true;
+    if (LAST_DATA.pendientes) {
+        return LAST_DATA.pendientes.find(x => x.cliente === clienteName);
+    }
+    return null;
+}
+
+async function editNote(cliente, editor, btn) {
+    const clienteName = cliente.replace(/&#39;/g, "'");
+    const editorName = editor.replace(/&#39;/g, "'");
+    const item = _findItem(clienteName, editorName);
+    const currentNote = item?.note || '';
+    const newNote = prompt(`Nota para ${clienteName}:\n(vacío para borrar)`, currentNote);
+    if (newNote === null) return;
+    const trimmed = newNote.trim();
+    // Optimistic
+    const prev = item ? item.note : null;
+    if (item) {
+        item.note = trimmed || null;
+        render(LAST_DATA);
+    }
     try {
         const res = await fetch('/api/task', {
             method: 'PATCH',
@@ -1229,15 +1298,14 @@ async function editNote(cliente, editor, btn) {
             body: JSON.stringify({
                 admin: 1, t: TOKEN,
                 action: 'set_note',
-                cliente, editor, note: newNote.trim(),
+                cliente, editor, note: trimmed,
             }),
         });
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        await loadData();
     } catch (e) {
-        btn.disabled = false;
-        alert('Error: ' + e.message);
+        if (item) { item.note = prev; render(LAST_DATA); }
+        alert('No se pudo guardar: ' + e.message);
     }
 }
 
@@ -1272,8 +1340,23 @@ function reassignClient(cliente, currentEditor, btn) {
     overlay.querySelectorAll('.editor-pick').forEach(b => {
         b.addEventListener('click', async () => {
             const newEditor = b.dataset.editor;
-            b.disabled = true;
-            b.textContent = 'Moviendo...';
+            // OPTIMISTIC: mover la card en LAST_DATA + re-render + cerrar modal
+            const clienteName = cliente.replace(/&#39;/g, "'");
+            const currentEditorName = currentEditor.replace(/&#39;/g, "'");
+            let moved = null;
+            if (LAST_DATA?.by_editor) {
+                const fromList = LAST_DATA.by_editor[currentEditorName];
+                const idx = fromList?.findIndex(x => x.cliente === clienteName);
+                if (idx >= 0) {
+                    const item = fromList[idx];
+                    fromList.splice(idx, 1);
+                    if (!LAST_DATA.by_editor[newEditor]) LAST_DATA.by_editor[newEditor] = [];
+                    LAST_DATA.by_editor[newEditor].push(item);
+                    moved = { item, fromList, idx };
+                    render(LAST_DATA);
+                }
+            }
+            overlay.remove();
             try {
                 const res = await fetch('/api/task', {
                     method: 'PATCH',
@@ -1286,11 +1369,17 @@ function reassignClient(cliente, currentEditor, btn) {
                 });
                 const data = await res.json();
                 if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-                overlay.remove();
-                await loadData();
+                // OK — el cambio ya se hizo localmente, nada más para hacer
             } catch (err) {
-                alert('Error: ' + err.message);
-                b.disabled = false;
+                // Rollback: devolver al editor original
+                if (moved && LAST_DATA?.by_editor) {
+                    const toList = LAST_DATA.by_editor[newEditor];
+                    const toIdx = toList?.findIndex(x => x.cliente === clienteName);
+                    if (toIdx >= 0) toList.splice(toIdx, 1);
+                    moved.fromList.splice(moved.idx, 0, moved.item);
+                    render(LAST_DATA);
+                }
+                alert('No se pudo reasignar: ' + err.message);
             }
         });
         b.addEventListener('mouseenter', () => { b.style.background = 'var(--bg-card-2)'; b.style.borderColor = '#60a5fa'; });
@@ -1300,27 +1389,32 @@ function reassignClient(cliente, currentEditor, btn) {
 
 async function deleteCliente(cliente, editor, btn) {
     if (!confirm(`¿Marcar como hecho TODOS los pendientes de ${cliente}?`)) return;
-    btn.disabled = true;
     const card = btn.closest('.cliente-card');
-    const params = new URLSearchParams({
-        cliente: cliente,
-        t: TOKEN,
-    });
-    if (IS_ADMIN) {
-        params.set('admin', '1');
-        if (editor) params.set('editor', editor);
-    } else {
-        params.set('editor', EDITOR);
+    const clienteName = cliente.replace(/&#39;/g, "'");
+    const editorName = editor ? editor.replace(/&#39;/g, "'") : null;
+    // Optimistic: animar y borrar de LAST_DATA
+    card.classList.add('removing');
+    setTimeout(() => card.remove(), 250);
+    let removed = null;
+    if (LAST_DATA?.by_editor && editorName) {
+        const list = LAST_DATA.by_editor[editorName];
+        const idx = list?.findIndex(x => x.cliente === clienteName);
+        if (idx >= 0) { removed = { list, item: list[idx], idx }; list.splice(idx, 1); }
+    } else if (LAST_DATA?.pendientes) {
+        const idx = LAST_DATA.pendientes.findIndex(x => x.cliente === clienteName);
+        if (idx >= 0) { removed = { list: LAST_DATA.pendientes, item: LAST_DATA.pendientes[idx], idx }; LAST_DATA.pendientes.splice(idx, 1); }
     }
+    const params = new URLSearchParams({ cliente, t: TOKEN });
+    if (IS_ADMIN) { params.set('admin','1'); if (editor) params.set('editor', editor); }
+    else { params.set('editor', EDITOR); }
     try {
         const res = await fetch('/api/task?' + params.toString(), { method: 'DELETE' });
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        card.classList.add('removing');
-        setTimeout(() => card.remove(), 250);
     } catch (e) {
-        btn.disabled = false;
-        alert('No se pudo eliminar:\n' + e.message);
+        // Rollback
+        if (removed) { removed.list.splice(removed.idx, 0, removed.item); render(LAST_DATA); }
+        alert('No se pudo eliminar: ' + e.message);
     }
 }
 
