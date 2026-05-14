@@ -318,6 +318,49 @@ def _build_stats(conn):
     }
 
 
+def _build_editor_self_stats(conn, editor: str):
+    """Stats personales para un editor (vista 'Mis stats')."""
+    now = datetime.now()
+    my_stats = get_editor_stats(conn, editor, now)
+    my_pending = get_editor_pending_detail(conn, editor)
+
+    # Ranking semanal: comparar contra otros editores activos
+    week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
+    leaderboard = [dict(r) for r in conn.execute("""
+        SELECT editor, COUNT(*) as delivered
+        FROM tasks WHERE status='done' AND completed_at >= ? AND editor IS NOT NULL
+        GROUP BY editor ORDER BY delivered DESC
+    """, (week_ago,)).fetchall()]
+    rank = None
+    for i, ed in enumerate(leaderboard, 1):
+        if ed["editor"] == editor:
+            rank = i
+            break
+
+    # Histograma últimos 14 días (solo del editor)
+    days_list = [(now - timedelta(days=i)).date().isoformat() for i in range(13, -1, -1)]
+    rows = conn.execute("""
+        SELECT substr(completed_at, 1, 10) as day, COUNT(*) as n
+        FROM tasks WHERE status='done' AND editor=? AND completed_at >= ?
+        GROUP BY day
+    """, (editor, (now - timedelta(days=14)).isoformat(timespec="seconds"))).fetchall()
+    by_day = {d: 0 for d in days_list}
+    for r in rows:
+        if r["day"] in by_day:
+            by_day[r["day"]] = r["n"]
+
+    return {
+        "ok": True,
+        "editor": editor,
+        "stats": my_stats,
+        "pending_detail": my_pending,
+        "leaderboard": leaderboard[:5],
+        "rank": rank,
+        "total_editors": len(leaderboard),
+        "daily": {"days": days_list, "by_day": by_day},
+    }
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
@@ -326,15 +369,19 @@ class handler(BaseHTTPRequestHandler):
 
             params = parse_qs(urlparse(self.path).query)
             admin = params.get("admin", [""])[0] == "1"
+            editor = (params.get("editor", [""])[0] or "").strip()
             token = (params.get("t", [""])[0] or "").strip()
 
-            if not admin:
-                return json_response(self, {"error": "admin token required"}, status=401)
-            if not check_token("ADMIN", token):
-                return json_response(self, {"error": "unauthorized"}, status=401)
+            if admin and check_token("ADMIN", token):
+                data = read_db(_build_stats)
+                return json_response(self, data)
 
-            data = read_db(_build_stats)
-            return json_response(self, data)
+            if editor and check_token(editor, token):
+                # Vista personal del editor
+                data = read_db(lambda conn: _build_editor_self_stats(conn, editor))
+                return json_response(self, data)
+
+            return json_response(self, {"error": "unauthorized"}, status=401)
         except Exception as e:
             return json_response(self, {
                 "error": str(e),

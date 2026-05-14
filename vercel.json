@@ -8,6 +8,7 @@
     { "source": "/", "destination": "/index.html" },
     { "source": "/stats", "destination": "/stats.html" },
     { "source": "/config", "destination": "/config.html" },
+    { "source": "/mistats", "destination": "/mistats.html" },
     { "source": "/manifest.json", "destination": "/manifest.json" }
   ],
   "functions": {

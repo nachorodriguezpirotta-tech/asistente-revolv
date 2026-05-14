@@ -255,6 +255,24 @@ def init_db():
         # Si aliases.py falla por algún motivo, no romper init_db
         pass
 
+    # Tabla mail_log: audit log de TODOS los mails enviados.
+    # Útil para debug ("¿se mandó este mail?") y visibilidad histórica en /config.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mail_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sent_at TEXT NOT NULL,
+            to_email TEXT NOT NULL,
+            subject TEXT,
+            kind TEXT,
+            cliente TEXT,
+            editor TEXT,
+            msg_id TEXT,
+            success INTEGER NOT NULL DEFAULT 1,
+            error TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_log_sent ON mail_log(sent_at)")
+
     # Tabla pending_completion_mails: cola persistente de mails de cierre/decremento.
     # Cuando el closer detecta un editado nuevo, INSERT acá ANTES de mandar mail.
     # El notifier lee filas con mail_sent_at IS NULL, manda, y marca.
@@ -634,6 +652,32 @@ def mark_completion_mail_sent(row_id: int):
     )
     conn.commit()
     conn.close()
+
+
+def log_mail(to_email: str, subject: str, kind: str = "",
+             cliente: Optional[str] = None, editor: Optional[str] = None,
+             msg_id: Optional[str] = None, success: bool = True,
+             error: Optional[str] = None):
+    """Registra un mail enviado (o intentado) en mail_log para auditoría."""
+    try:
+        conn = get_conn()
+        conn.execute("""
+            INSERT INTO mail_log (sent_at, to_email, subject, kind, cliente, editor, msg_id, success, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (now_iso(), to_email, subject, kind, cliente, editor, msg_id, 1 if success else 0, error))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def list_mail_log(limit: int = 200) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM mail_log ORDER BY sent_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def claim_completion_mail(row_id: int) -> bool:

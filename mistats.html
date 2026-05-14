@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mis Stats — Asistente Revolv</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#0f1115; color:#e8eaed;
+    padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .page { padding:16px; max-width:680px; margin:0 auto; }
+  .app-header { position:sticky; top:0; z-index:50; background:#0f1115; padding:12px 16px;
+    padding-top:calc(12px + env(safe-area-inset-top)); border-bottom:1px solid #2a2f3a;
+    display:flex; align-items:center; gap:12px; }
+  .back-btn { display:inline-flex; align-items:center; justify-content:center; min-width:40px; min-height:40px;
+    background:rgba(255,255,255,0.06); border-radius:10px; color:#e8eaed; text-decoration:none;
+    font-size:18px; font-weight:600; }
+  .header-title h1 { margin:0; font-size:17px; }
+  .header-title .subtitle { font-size:11px; color:#8a93a3; }
+  h2 { font-size:14px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px; margin:24px 0 10px; font-weight:600; }
+  .cards { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:14px; }
+  .card { background:#1a1e27; border:1px solid #2a2f3a; border-radius:10px; padding:14px 16px; }
+  .card .label { font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:#8a93a3; margin-bottom:6px; }
+  .card .value { font-size:28px; font-weight:700; color:#e8eaed; }
+  .card .extra { font-size:12px; color:#5a6478; margin-top:4px; }
+  .rank-badge { background:#3a3210; color:#fbbf24; padding:4px 10px; border-radius:6px; font-weight:600; font-size:13px; display:inline-block; }
+  .leaderboard { background:#1a1e27; border:1px solid #2a2f3a; border-radius:10px; padding:14px 16px; }
+  .lb-item { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #2a2f3a; font-size:13px; }
+  .lb-item:last-child { border-bottom:none; }
+  .lb-item.me { color:#4ade80; font-weight:600; }
+  .pending-list { background:#1a1e27; border:1px solid #2a2f3a; border-radius:10px; padding:8px 16px; }
+  .pending-item { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #2a2f3a; font-size:13px; }
+  .pending-item:last-child { border-bottom:none; }
+  .days-badge { padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+  .days-badge.critical { background:#3a1a1a; color:#f87171; }
+  .days-badge.warning { background:#3a2e10; color:#fbbf24; }
+  .days-badge.ok { background:#1a2e1a; color:#4ade80; }
+  .loading, .error { padding:32px; text-align:center; color:#8a93a3; }
+  .error { color:#ff7676; }
+  svg { width:100%; height:auto; }
+</style>
+</head>
+<body>
+  <header class="app-header">
+    <a href="javascript:goBack()" class="back-btn">←</a>
+    <div class="header-title">
+      <h1>📊 Mis stats</h1>
+      <div class="subtitle" id="subtitle">Cargando...</div>
+    </div>
+  </header>
+  <div class="page" id="content"><div class="loading">Cargando...</div></div>
+
+<script>
+const params = new URLSearchParams(location.search);
+let EDITOR = params.get('editor') || '';
+let TOKEN = params.get('t') || '';
+if (TOKEN && EDITOR) {
+  try { localStorage.setItem('revolv_auth', JSON.stringify({ editor: EDITOR, token: TOKEN, admin: false })); } catch(e) {}
+} else {
+  try {
+    const saved = JSON.parse(localStorage.getItem('revolv_auth') || 'null');
+    if (saved && saved.token && saved.editor) { EDITOR = saved.editor; TOKEN = saved.token; }
+  } catch(e) {}
+}
+
+function goBack() { location.href = `/?editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`; }
+
+if (!TOKEN || !EDITOR) {
+  document.getElementById('content').innerHTML = '<div class="error">Falta token o editor</div>';
+} else {
+  document.getElementById('subtitle').textContent = EDITOR;
+  load();
+}
+
+async function load() {
+  try {
+    const res = await fetch(`/api/stats?editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+    render(data);
+  } catch (e) {
+    document.getElementById('content').innerHTML = `<div class="error">No pude cargar:<br>${e.message}</div>`;
+  }
+}
+
+function render(data) {
+  const s = data.stats;
+  const turn = s.avg_turnaround_hours
+    ? (s.avg_turnaround_hours < 24 ? `${s.avg_turnaround_hours}h` : `${(s.avg_turnaround_hours/24).toFixed(1)} días`)
+    : '—';
+  const healthEmoji = { ok: '🟢', warning: '🟡', critical: '🔴' }[s.health] || '⚪️';
+
+  let html = `<h2>Esta semana</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="label">Entregaste 7d</div>
+        <div class="value">${s.delivered_week}</div>
+        <div class="extra">${s.delivered_month} en 30d</div>
+      </div>
+      <div class="card">
+        <div class="label">${healthEmoji} Pendientes</div>
+        <div class="value">${s.pending_videos}</div>
+        <div class="extra">${s.pending_clientes} cliente${s.pending_clientes !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="card">
+        <div class="label">Tiempo promedio</div>
+        <div class="value">${turn}</div>
+        <div class="extra">de crudo → entrega</div>
+      </div>
+      <div class="card">
+        <div class="label">${data.rank ? '🏆 Ranking' : '—'}</div>
+        <div class="value">${data.rank ? '#' + data.rank : '—'}</div>
+        <div class="extra">de ${data.total_editors} editores activos</div>
+      </div>
+    </div>`;
+
+  // Gráfico simple barras 14 días
+  if (data.daily && data.daily.days) {
+    html += `<h2>Últimos 14 días</h2>${renderChart(data.daily)}`;
+  }
+
+  // Leaderboard
+  if (data.leaderboard && data.leaderboard.length > 0) {
+    html += `<h2>🏆 Top de la semana</h2><div class="leaderboard">`;
+    for (let i = 0; i < data.leaderboard.length; i++) {
+      const ed = data.leaderboard[i];
+      const isMe = ed.editor === EDITOR;
+      const medal = ['🥇','🥈','🥉','4.','5.'][i] || (i+1)+'.';
+      html += `<div class="lb-item ${isMe ? 'me' : ''}">
+        <span>${medal} ${ed.editor}${isMe ? ' (vos)' : ''}</span>
+        <span>${ed.delivered}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Pending detail
+  if (data.pending_detail && data.pending_detail.length > 0) {
+    html += `<h2>Tus pendientes</h2><div class="pending-list">`;
+    for (const p of data.pending_detail) {
+      const cls = p.days_waiting >= 7 ? 'critical' : p.days_waiting >= 3 ? 'warning' : 'ok';
+      html += `<div class="pending-item">
+        <span><strong>${escape(p.cliente)}</strong> · ${p.videos} video${p.videos !== 1 ? 's' : ''}</span>
+        <span class="days-badge ${cls}">${p.days_waiting}d</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  document.getElementById('content').innerHTML = html;
+}
+
+function renderChart(daily) {
+  const days = daily.days;
+  const vals = days.map(d => daily.by_day[d] || 0);
+  const max = Math.max(...vals, 5);
+  const W = 600, H = 140, padL = 24, padR = 8, padT = 8, padB = 20;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const bw = (innerW / days.length) * 0.7;
+  let svg = `<div style="background:#1a1e27; border:1px solid #2a2f3a; border-radius:10px; padding:12px;">
+    <svg viewBox="0 0 ${W} ${H}">`;
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + innerH * i / 4;
+    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#2a2f3a" stroke-width="0.5"/>`;
+    svg += `<text x="${padL-4}" y="${y+3}" text-anchor="end" fill="#5a6478" font-size="9">${Math.round(max*(1-i/4))}</text>`;
+  }
+  vals.forEach((v, i) => {
+    const x = padL + i*(innerW/days.length) + (innerW/days.length - bw)/2;
+    const h = (v/max) * innerH;
+    const y = padT + innerH - h;
+    svg += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="#4ade80" opacity="0.85"><title>${days[i]}: ${v}</title></rect>`;
+    if (i % 2 === 0) {
+      svg += `<text x="${(x+bw/2).toFixed(1)}" y="${H-padB+10}" text-anchor="middle" fill="#5a6478" font-size="8">${days[i].slice(5)}</text>`;
+    }
+  });
+  svg += `</svg></div>`;
+  return svg;
+}
+
+function escape(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+</script>
+</body>
+</html>

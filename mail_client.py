@@ -35,10 +35,12 @@ def _get_service():
 
 
 def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = None,
-              from_name: str = "Asistente Revolv") -> str:
+              from_name: str = "Asistente Revolv",
+              kind: str = "", cliente: Optional[str] = None, editor: Optional[str] = None) -> str:
     """
     Manda un mail desde la cuenta autorizada.
     Retorna el message_id.
+    Registra cada envío (éxito/falla) en mail_log para auditoría.
     """
     msg = MIMEMultipart("alternative")
     msg["To"] = to
@@ -51,12 +53,29 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
 
-    service = _get_service()
-    sent = service.users().messages().send(
-        userId="me",
-        body={"raw": raw},
-    ).execute()
-    return sent["id"]
+    try:
+        service = _get_service()
+        sent = service.users().messages().send(
+            userId="me",
+            body={"raw": raw},
+        ).execute()
+        msg_id = sent["id"]
+        # Log success
+        try:
+            from tracker import log_mail
+            log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
+                     editor=editor, msg_id=msg_id, success=True)
+        except Exception:
+            pass
+        return msg_id
+    except Exception as e:
+        try:
+            from tracker import log_mail
+            log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
+                     editor=editor, msg_id=None, success=False, error=str(e)[:300])
+        except Exception:
+            pass
+        raise
 
 
 if __name__ == "__main__":

@@ -50,12 +50,21 @@ def _get_all_config(conn):
         ).fetchall()]
     except Exception:
         pass
+    # Mail log (últimos 100)
+    mail_log = []
+    try:
+        mail_log = [dict(r) for r in conn.execute(
+            "SELECT sent_at, to_email, subject, kind, cliente, editor, success FROM mail_log ORDER BY sent_at DESC LIMIT 100"
+        ).fetchall()]
+    except Exception:
+        pass
     return {
         "editors": editors,
         "nicknames": nicknames,
         "aliases": aliases,
         "delivery_folders": delivery,
         "pending_folders": pending_folders,
+        "mail_log": mail_log,
     }
 
 

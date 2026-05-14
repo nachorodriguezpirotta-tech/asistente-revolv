@@ -737,7 +737,11 @@ function renderAllProgresses(progresses, editorName) {
 
 function renderEditor(data) {
     const items = data.pendientes || [];
-    let html = renderAllProgresses(data.progresses, EDITOR);
+    let html = `<div style="margin-bottom:14px;">
+      <a href="/mistats.html?editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}"
+         style="display:inline-block; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">📊 Mis stats</a>
+    </div>`;
+    html += renderAllProgresses(data.progresses, EDITOR);
     if (items.length === 0) {
         content.innerHTML = html + '<div class="empty">✅ No tenés pendientes.</div>';
         return;

@@ -111,6 +111,7 @@
       <button class="tab" data-tab="nicknames">🏷️ Apodos</button>
       <button class="tab" data-tab="aliases">📂 Aliases</button>
       <button class="tab" data-tab="delivery">📁 Extras</button>
+      <button class="tab" data-tab="maillog">📨 Mails</button>
     </div>
 
     <div id="content"><div class="loading">Cargando…</div></div>
@@ -194,6 +195,37 @@ function render() {
   else if (ACTIVE_TAB === 'nicknames') renderNicknames();
   else if (ACTIVE_TAB === 'aliases') renderAliases();
   else if (ACTIVE_TAB === 'delivery') renderDelivery();
+  else if (ACTIVE_TAB === 'maillog') renderMailLog();
+}
+
+function renderMailLog() {
+  const logs = DATA.mail_log || [];
+  let html = `<div class="section-header">
+    <div><strong>${logs.length}</strong> últimos mails enviados</div>
+  </div>
+  <div style="font-size:12px; color:#8a93a3; margin-bottom:10px;">Historial reciente para verificar que cada mail haya salido.</div>`;
+  if (logs.length === 0) {
+    html += '<div class="empty">Sin registros aún.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Cuándo</th>
+      <th>Para</th>
+      <th>Asunto</th>
+      <th>OK</th>
+    </tr></thead><tbody>`;
+    for (const m of logs) {
+      const when = (m.sent_at || '').replace('T', ' ').slice(0, 16);
+      const ok = m.success ? '✅' : '<span style="color:#f87171">❌</span>';
+      html += `<tr>
+        <td class="mono">${escape(when)}</td>
+        <td class="mono">${escape(m.to_email || '')}</td>
+        <td>${escape(m.subject || '')}</td>
+        <td>${ok}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
 }
 
 // ──────────── DETECTADAS (carpetas Drive pendientes de aprobar) ────────────
