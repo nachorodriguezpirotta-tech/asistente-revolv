@@ -127,19 +127,46 @@ def run_closer(verbose: bool = True) -> dict:
 
         first_time = not edited_baseline_done(cliente)
 
+        # Detectar si la pending fue cargada MANUALMENTE (file_id LIKE 'manual:%').
+        # En ese caso, los editados existentes son histórico → baseline silencioso,
+        # NO mandar mails de cierre por archivos viejos. Solo se va a notificar de
+        # entregas POSTERIORES a la corrida actual.
+        is_manual_pending = False
+        try:
+            conn = get_conn()
+            row = conn.execute(
+                "SELECT file_id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' ORDER BY detected_at ASC LIMIT 1",
+                (cliente,)
+            ).fetchone()
+            conn.close()
+            if row and row["file_id"] and str(row["file_id"]).startswith("manual:"):
+                is_manual_pending = True
+        except Exception:
+            pass
+
         if first_time:
             # Para clientes sin baseline previo, separar archivos viejos vs nuevos
             # según el detected_at de la tarea pendiente más vieja.
             # Archivos creados ANTES de la tarea → baseline (no cierran).
             # Archivos creados DESPUÉS → "nuevos" → cierran tareas pending oldest first.
+            #
+            # SI la task pending es MANUAL: tratar TODOS los archivos existentes
+            # como baseline. El user sabe lo que está cargando, no le sirve recibir
+            # mails por archivos viejos que ya estaban entregados antes.
             baseline_files = []
             new_files = []
-            for f in editados:
-                f_created = _parse_iso(f.get("createdTime")) or _parse_iso(f.get("modifiedTime"))
-                if oldest_pending and f_created and f_created.replace(tzinfo=None) > oldest_pending:
-                    new_files.append(f)
-                else:
-                    baseline_files.append(f)
+            if is_manual_pending:
+                # Manual: todo el historial es baseline, no mandar mails retroactivos
+                baseline_files = list(editados)
+                if verbose:
+                    print(f"  📸 [{cliente}] task MANUAL: marcando {len(editados)} editados existentes como baseline (sin mails retroactivos)")
+            else:
+                for f in editados:
+                    f_created = _parse_iso(f.get("createdTime")) or _parse_iso(f.get("modifiedTime"))
+                    if oldest_pending and f_created and f_created.replace(tzinfo=None) > oldest_pending:
+                        new_files.append(f)
+                    else:
+                        baseline_files.append(f)
 
             # Marcar viejos como baseline
             for f in baseline_files:
