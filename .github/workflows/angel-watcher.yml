@@ -10,7 +10,7 @@ name: Angel Watcher (cloud, gratis con Gemini)
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # cada 10 minutos (GHA tiene latencia ~5min, total ~15min worst case)
+    - cron: '7 * * * *'      # cada hora al minuto 7 (Angel sube 1-2 videos por semana, no hace falta más)
   workflow_dispatch: {}      # disparable manualmente
 
 concurrency:
