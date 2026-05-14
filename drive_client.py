@@ -327,13 +327,19 @@ def estimate_pending_videos(raw_folder_id: Optional[str], client_folder_id: Opti
     Estima cuántos videos lógicos hay esperando entrega.
 
     Heurística:
-      - Cada subcarpeta dentro de /Material/ = 1 video (cliente organiza así)
-      - Archivos sueltos en raíz de /Material/ → agrupados por sesión temporal
-        (mismos archivos subidos dentro de ±1 hora = 1 video)
-      - Si NO hay /Material/ pero el cliente tiene archivos en raíz: 1 video
-        (asumimos que es 1 entrega pendiente)
+      - Cada subcarpeta dentro de /Material/ que tiene AL MENOS UN archivo NO conocido
+        (no está aún en known_files) = 1 video pendiente.
+      - Subcarpetas con TODOS los archivos ya procesados (videos viejos que ya
+        fueron contados/entregados) = NO se cuentan.
+      - Archivos sueltos en raíz de /Material/ NO conocidos → agrupados por
+        sesión temporal (±1 hora = 1 video).
+      - Si NO hay /Material/ pero el cliente tiene archivos en raíz: 1 video.
+
+    Esto resuelve el caso: Natalia tiene Reel 1..12, ya entregó videos en
+    Reel 1..11, sube 1 archivo nuevo a Reel 12 → cuenta 1 (no 12).
     """
     from datetime import datetime, timedelta
+    from tracker import is_file_known
 
     def _parse(s):
         if not s:
@@ -343,32 +349,53 @@ def estimate_pending_videos(raw_folder_id: Optional[str], client_folder_id: Opti
         except Exception:
             return None
 
+    def _has_unknown_file(folder_id: str) -> bool:
+        """¿La carpeta tiene al menos un archivo de video que NO esté ya conocido?"""
+        try:
+            files = _list_files(folder_id, only_videos=True)
+            for f in files:
+                if not is_file_known(f["id"]):
+                    return True
+            return False
+        except Exception:
+            # Si falla el listado, ser conservador: NO contar (mejor que sobre-contar)
+            return False
+
     if not raw_folder_id:
-        # Sin /Material/: si hay actividad reciente en raíz del cliente, asumimos 1 video
+        # Sin /Material/: si hay actividad reciente NO conocida en raíz, 1 video
         if client_folder_id:
-            recent = _list_files(client_folder_id, only_videos=True)
-            return 1 if recent else 0
+            try:
+                recent = _list_files(client_folder_id, only_videos=True)
+                for f in recent:
+                    if not is_file_known(f["id"]):
+                        return 1
+            except Exception:
+                pass
         return 0
 
-    # 1. Subcarpetas dentro de /Material/ = 1 video cada una (incluye shortcuts a carpetas)
+    # 1. Subcarpetas dentro de /Material/ con archivos no conocidos
     subfolders = _list_subfolders(raw_folder_id)
-    # Shortcuts a carpetas: cada uno cuenta como 1 video lógico también
+    sub_count = sum(1 for sf in subfolders if _has_unknown_file(sf["id"]))
+
+    # Shortcuts a carpetas: idem
     service = get_service()
     sc_res = service.files().list(
         q=f"'{raw_folder_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.shortcut'",
         fields="files(id, name, shortcutDetails)",
         pageSize=100,
     ).execute()
-    shortcuts_to_folders = [
-        sc for sc in sc_res.get("files", [])
-        if sc.get("shortcutDetails", {}).get("targetMimeType") == "application/vnd.google-apps.folder"
-    ]
-    sub_count = len(subfolders) + len(shortcuts_to_folders)
+    for sc in sc_res.get("files", []):
+        details = sc.get("shortcutDetails", {})
+        if details.get("targetMimeType") == "application/vnd.google-apps.folder":
+            target = details.get("targetId")
+            if target and _has_unknown_file(target):
+                sub_count += 1
 
-    # 2. Archivos sueltos en raíz de /Material/ → agrupar por sesión temporal
+    # 2. Archivos sueltos NO CONOCIDOS en raíz de /Material/ → agrupar por sesión temporal
     files = _list_files(raw_folder_id, only_videos=True)
+    unknown_files = [f for f in files if not is_file_known(f["id"])]
     times = sorted(
-        [t for t in (_parse(f.get("createdTime")) for f in files) if t is not None]
+        [t for t in (_parse(f.get("createdTime")) for f in unknown_files) if t is not None]
     )
     sessions = 0
     last_t = None
@@ -377,8 +404,7 @@ def estimate_pending_videos(raw_folder_id: Optional[str], client_folder_id: Opti
             sessions += 1
         last_t = t
 
-    # Si hay archivos sin createdTime, contar al menos 1 sesión
-    files_without_time = sum(1 for f in files if not f.get("createdTime"))
+    files_without_time = sum(1 for f in unknown_files if not f.get("createdTime"))
     if files_without_time and sessions == 0:
         sessions = 1
 

@@ -152,11 +152,24 @@ def init_db():
             name TEXT PRIMARY KEY,
             email TEXT,
             receives_daily_summary INTEGER NOT NULL DEFAULT 0,
+            receives_notifications INTEGER NOT NULL DEFAULT 0,
             active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT,
             updated_at TEXT
         )
     """)
+    # Migration: agregar receives_notifications si la tabla ya existía sin ese campo
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(cfg_editors)").fetchall()]
+        if "receives_notifications" not in cols:
+            conn.execute("ALTER TABLE cfg_editors ADD COLUMN receives_notifications INTEGER NOT NULL DEFAULT 0")
+            # Seed: solo los 4 activos reciben mails reales (Rami, Fran, Benja, Valen).
+            # Los otros tienen email solo para identificación de owner.
+            for name in ("Rami", "Fran", "Benja", "Valen"):
+                conn.execute("UPDATE cfg_editors SET receives_notifications=1 WHERE name=?", (name,))
+            conn.commit()
+    except Exception:
+        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cfg_nicknames (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -383,6 +396,17 @@ def claim_file(file_id: str, cliente: str, folder_id: str, name: str,
     conn.commit()
     conn.close()
     return inserted
+
+
+def is_file_baseline(file_id: str) -> bool:
+    """¿El archivo está marcado como baseline (ya existía antes del baseline,
+    no es trabajo pendiente)?"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT is_baseline FROM known_files WHERE file_id = ?", (file_id,)
+    ).fetchone()
+    conn.close()
+    return bool(row and row["is_baseline"])
 
 
 def is_file_known(file_id: str) -> bool:
@@ -646,10 +670,23 @@ def cfg_list_editors() -> list[dict]:
 
 
 def cfg_get_editor_emails() -> dict:
-    """Devuelve {editor_name: email}. Solo editores activos con email."""
+    """Devuelve {editor_name: email} de TODOS los editores activos con email.
+    Esta lista se usa para IDENTIFICAR al editor por owner del archivo en Drive,
+    NO necesariamente para mandarles mails."""
     conn = get_conn()
     rows = conn.execute(
         "SELECT name, email FROM cfg_editors WHERE active=1 AND email IS NOT NULL AND email != ''"
+    ).fetchall()
+    conn.close()
+    return {r["name"]: r["email"] for r in rows}
+
+
+def cfg_get_notification_emails() -> dict:
+    """Devuelve {editor_name: email} de editores que SÍ deben recibir mails
+    (crudos nuevos, cierres, recordatorios). Es un subset de cfg_get_editor_emails."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT name, email FROM cfg_editors WHERE active=1 AND receives_notifications=1 AND email IS NOT NULL AND email != ''"
     ).fetchall()
     conn.close()
     return {r["name"]: r["email"] for r in rows}
