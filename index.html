@@ -573,9 +573,26 @@ async function loadData() {
 let LAST_DATA = null;
 
 // PWA: registrar service worker para instalación como app
+// (con cleanup forzado de SW viejos que estaban cacheando contenido obsoleto)
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then(() => updateNotifButton()).catch(() => {});
+  window.addEventListener('load', async () => {
+    try {
+      // Forzar invalidación de cualquier SW viejo
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) { try { await r.update(); } catch(_) {} }
+      // Borrar caches del browser por si el SW viejo dejó stuff
+      if (window.caches) {
+        const keys = await caches.keys();
+        for (const k of keys) {
+          if (k.startsWith('revolv-shell-')) {
+            await caches.delete(k);
+          }
+        }
+      }
+      // Registrar el nuevo (que ahora es el kill switch, se autodestruye)
+      await navigator.serviceWorker.register('/sw.js');
+    } catch (e) { /* no romper */ }
+    try { updateNotifButton(); } catch(_) {}
   });
 }
 
