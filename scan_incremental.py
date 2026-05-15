@@ -33,6 +33,7 @@ from drive_client import (
     get_start_page_token, list_changes_since,
     _is_video, find_raw_subfolder,
 )
+from scan import _is_file_too_old
 from tracker import (
     init_db, get_conn, meta_get, meta_set,
     is_file_known, claim_file, create_task, has_pending_for_client_editor,
@@ -196,15 +197,20 @@ def run(notify: bool = False):
             if is_file_known(f["id"]):
                 continue
             size = int(f["size"]) if f.get("size") else None
-            # Buscar folder_id (parent que matchea raw_to_client)
             raw_folder_id = next((p for p in (f.get("parents") or []) if p in raw_to_client), None)
+            # Archivo muy viejo (>3d) → baseline, no avisar.
+            # Evita falsos positivos con archivos descubiertos tarde.
+            is_old = _is_file_too_old(f.get("createdTime"))
             claimed = claim_file(
                 file_id=f["id"], cliente=cliente_real,
                 folder_id=raw_folder_id or "(?)",
                 name=f["name"], size=size, created_time=f.get("createdTime"),
-                is_baseline=False,
+                is_baseline=is_old,
             )
             if not claimed:
+                continue
+            if is_old:
+                # Archivo viejo registrado como baseline, no avisar
                 continue
             # Si admin ya asignó manualmente este cliente a un editor, no duplicar
             if has_manual_pending_for_client(cliente_real):

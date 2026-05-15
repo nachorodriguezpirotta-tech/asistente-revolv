@@ -49,6 +49,29 @@ def _clients_already_baselined(conn):
     return {r[0].strip() for r in rows}
 
 
+def _is_file_too_old(created_time_str, max_age_days=3):
+    """Si createdTime es más viejo que max_age_days, asumimos que es histórico:
+    el archivo existía hace tiempo y recién lo descubrimos hoy por algún motivo
+    (carpeta no scaneada antes, archivo movido/renombrado, etc.).
+    Tratarlo como baseline para no mandar mail de 'crudo nuevo' por algo viejo."""
+    if not created_time_str:
+        return False
+    try:
+        from datetime import datetime, timedelta, timezone
+        # Drive usa "2026-05-06T11:41:04.366Z" o sin milis "2026-05-06T11:41:04Z"
+        s = created_time_str.replace("Z", "+00:00")
+        # Sacar fracción de segundo si la hay
+        if "." in s and "+" in s:
+            base, tz = s.rsplit("+", 1)
+            base = base.split(".")[0]
+            s = base + "+" + tz
+        ct = datetime.fromisoformat(s)
+        age = datetime.now(timezone.utc) - ct
+        return age > timedelta(days=max_age_days)
+    except Exception:
+        return False
+
+
 def _process_standard_client(c, packs):
     """Procesa un cliente con estructura /Material/ standard.
     Devuelve (new_tasks_list, sin_editor_list, had_new_file).
@@ -65,12 +88,20 @@ def _process_standard_client(c, packs):
         if is_file_known(f["id"]):
             continue
         size = int(f["size"]) if f.get("size") else None
+        # Archivo viejo (createdTime > 3 días atrás) → tratar como baseline,
+        # NO crear task ni mandar mail. Evita falsos positivos de archivos
+        # descubiertos tarde (caso Fer Trips IMG_0792.MOV).
+        is_old_file = _is_file_too_old(f.get("createdTime"))
         claimed = claim_file(
             file_id=f["id"], cliente=cliente_real, folder_id=c.raw_folder_id,
             name=f["name"], size=size, created_time=f.get("createdTime"),
-            is_baseline=False,
+            is_baseline=is_old_file,
         )
         if not claimed:
+            continue
+        if is_old_file:
+            # Archivo viejo: queda registrado en known_files (no se vuelve a procesar)
+            # pero NO crea task ni manda mail
             continue
         had_new_file = True
         # Si el admin ya asignó manualmente este cliente a un editor (count_locked=1),
@@ -223,6 +254,9 @@ def run(notify: bool = False):
                 size = int(f["size"]) if f.get("size") else None
                 created = _parse_created(f.get("createdTime"))
                 is_baseline_file = first_time and (not created or created < recent_threshold)
+                # Archivo muy viejo (>3 días) → tratar como baseline aunque no sea first_time
+                if not is_baseline_file and _is_file_too_old(f.get("createdTime")):
+                    is_baseline_file = True
                 claimed = claim_file(
                     file_id=f["id"], cliente=cliente_name, folder_id=folder["id"],
                     name=f["name"], size=size, created_time=f.get("createdTime"),
