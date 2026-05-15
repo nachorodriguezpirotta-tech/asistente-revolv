@@ -269,6 +269,35 @@
             font-size: 11px; color: #fbbf24; font-style: italic;
             margin-left: 8px; opacity: 0.85;
         }
+        .days-badge {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            vertical-align: middle;
+        }
+        .days-badge.ok { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+        .days-badge.warning { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+        .days-badge.critical { background: rgba(248, 113, 113, 0.18); color: #f87171; }
+        /* Resumen banner arriba */
+        .summary-banner {
+            display: flex; flex-wrap: wrap; gap: 8px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 10px; padding: 10px 14px; margin-bottom: 14px;
+            font-size: 13px;
+        }
+        .summary-banner .stat { display: flex; align-items: center; gap: 5px; }
+        .summary-banner .stat strong { color: var(--text); font-weight: 700; }
+        .summary-banner .stat .lbl { color: var(--text-dim); }
+        .summary-banner .sep { color: var(--text-dim); opacity: 0.4; padding: 0 4px; }
+        .summary-banner .stat.urgent strong { color: #f87171; }
+        @media (max-width: 600px) {
+            .summary-banner { font-size: 12px; padding: 8px 10px; }
+            .summary-banner .sep { padding: 0 2px; }
+        }
         /* Toast con UNDO (estilo Gmail) */
         #toast-container {
             position: fixed;
@@ -807,7 +836,8 @@ function renderAllProgresses(progresses, editorName) {
 
 function renderEditor(data) {
     const items = data.pendientes || [];
-    let html = `<div style="margin-bottom:14px;">
+    let html = renderSummaryBanner(data.stats);
+    html += `<div style="margin-bottom:14px;">
       <a href="/mistats.html?editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}"
          style="display:inline-block; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">📊 Mis stats</a>
     </div>`;
@@ -829,6 +859,7 @@ function renderEditor(data) {
             <span class="cliente-meta">
                 ${driveBtn}
                 <span class="cliente-name">${urgentMark} ${escapeHtml(it.cliente)}</span>
+                ${daysBadge(it.detected_at)}
                 <span class="count-control">
                     <button class="count-btn minus" onclick="adjustCount('${clienteEsc}', null, ${videos}, -1, this)" title="−1">−</button>
                     <span class="cliente-count" onclick="editCount('${clienteEsc}', null, ${videos}, this)" title="Click para editar manualmente">${videos}</span>
@@ -883,7 +914,7 @@ function renderAdmin(data) {
     linksHtml += '</div></details>';
 
     const editorProgresses = data.editor_progresses || {};
-    let html = linksHtml;
+    let html = renderSummaryBanner(data.stats) + linksHtml;
     for (const ed of editores) {
         const items = byEditor[ed];
         const edEsc = escapeHtml(ed).replace(/'/g, '&#39;');
@@ -913,6 +944,7 @@ function renderAdmin(data) {
                 <span class="cliente-meta">
                     ${driveBtn}
                     <span class="cliente-name">${urgentMark} ${escapeHtml(it.cliente)}</span>
+                    ${daysBadge(it.detected_at)}
                     <span class="count-control">
                         <button class="count-btn minus" onclick="adjustCount('${clienteEsc}', '${edEsc}', ${videos}, -1, this)" title="−1">−</button>
                         <span class="cliente-count" onclick="editCount('${clienteEsc}', '${edEsc}', ${videos}, this)" title="Click para editar manualmente">${videos}</span>
@@ -1615,6 +1647,33 @@ function deleteCliente(cliente, editor, btn) {
 async function openAddDialog() {
     // Si es editor, ya tenemos el editor; si es admin, lo elige en el modal
     showAddClientDialog(IS_ADMIN ? null : EDITOR);
+}
+
+function renderSummaryBanner(stats) {
+    if (!stats) return '';
+    const p = stats.pending_total || 0;
+    const c = stats.pending_clientes || 0;
+    const w = stats.delivered_week || 0;
+    const u = stats.urgent_count || 0;
+    const urgentChip = u > 0 ? `<span class="sep">·</span><span class="stat urgent">🚨 <strong>${u}</strong> <span class="lbl">urgente${u !== 1 ? 's' : ''}</span></span>` : '';
+    return `<div class="summary-banner">
+        <span class="stat">📋 <strong>${p}</strong> <span class="lbl">pendiente${p !== 1 ? 's' : ''} en ${c} cliente${c !== 1 ? 's' : ''}</span></span>
+        <span class="sep">·</span>
+        <span class="stat">✅ <strong>${w}</strong> <span class="lbl">entrega${w !== 1 ? 's' : ''} esta semana</span></span>
+        ${urgentChip}
+    </div>`;
+}
+
+function daysBadge(detected_at) {
+    if (!detected_at) return '';
+    try {
+        const d = new Date(detected_at.replace(' ', 'T'));
+        const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+        if (days < 0) return '';
+        const cls = days >= 7 ? 'critical' : days >= 3 ? 'warning' : 'ok';
+        const label = days === 0 ? 'hoy' : (days + 'd');
+        return `<span class="days-badge ${cls}" title="Esperando hace ${days} día${days !== 1 ? 's' : ''}">${label}</span>`;
+    } catch (e) { return ''; }
 }
 
 function escapeHtml(s) {

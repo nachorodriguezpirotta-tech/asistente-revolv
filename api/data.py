@@ -91,21 +91,40 @@ def get_editor_data(conn, editor: str) -> dict:
         for r in prog_rows
     ]
 
+    # Mini-stats personales del editor
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
+    delivered_week = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE editor=? AND status='done' AND completed_at >= ?",
+        (editor, week_ago),
+    ).fetchone()[0]
+    urgent_count = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE editor=? AND status='pending' AND COALESCE(urgent, 0) = 1",
+        (editor,),
+    ).fetchone()[0]
+    pendientes_list = [
+        {
+            "id": r["id"],
+            "cliente": r["cliente"].strip(),
+            "videos": r["videos"] or 1,
+            "detected_at": r["oldest"],
+            "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
+            "urgent": bool(r["urgent"]) if "urgent" in r.keys() else False,
+            "note": r["note"] if "note" in r.keys() else None,
+        }
+        for r in rows
+    ]
     return {
         "editor": editor,
-        "pendientes": [
-            {
-                "id": r["id"],
-                "cliente": r["cliente"].strip(),
-                "videos": r["videos"] or 1,
-                "detected_at": r["oldest"],
-                "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
-                "urgent": bool(r["urgent"]) if "urgent" in r.keys() else False,
-                "note": r["note"] if "note" in r.keys() else None,
-            }
-            for r in rows
-        ],
+        "pendientes": pendientes_list,
         "progresses": progresses,
+        "stats": {
+            "pending_total": sum(p["videos"] for p in pendientes_list),
+            "pending_clientes": len(pendientes_list),
+            "delivered_week": int(delivered_week),
+            "urgent_count": int(urgent_count),
+        },
     }
 
 
@@ -181,8 +200,24 @@ def get_all_data(conn) -> dict:
             "label": r["label"], "current": r["current"], "total": r["total"]
         })
 
-    # Stats
+    # Stats — resumen del estado actual para banner arriba del dashboard
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
     closed_total = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='done'").fetchone()[0]
+    delivered_week = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE status='done' AND completed_at >= ?",
+        (week_ago,)
+    ).fetchone()[0]
+    pending_total = conn.execute(
+        "SELECT COALESCE(SUM(COALESCE(pending_count, 1)), 0) FROM tasks WHERE status='pending'"
+    ).fetchone()[0]
+    pending_clientes = conn.execute(
+        "SELECT COUNT(DISTINCT TRIM(cliente)) FROM tasks WHERE status='pending'"
+    ).fetchone()[0]
+    urgent_count = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE status='pending' AND COALESCE(urgent, 0) = 1"
+    ).fetchone()[0]
     return {
         "by_editor": by_editor,
         "editor_links": editor_links,
@@ -193,6 +228,10 @@ def get_all_data(conn) -> dict:
             "pendientes": sum(len(v) for v in by_editor.values()),
             "editores": len(by_editor),
             "cerradas_total": closed_total,
+            "pending_total": int(pending_total),
+            "pending_clientes": int(pending_clientes),
+            "delivered_week": int(delivered_week),
+            "urgent_count": int(urgent_count),
         },
     }
 
