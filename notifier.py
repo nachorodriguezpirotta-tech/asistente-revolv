@@ -274,24 +274,24 @@ Archivo: {file_name}{link_text}
 <p style="color:#888;font-size:12px;">— Asistente Revolv</p>
 </body></html>
 """
-        # Determinar destinatarios: admin + editor (si tiene mail mapeado)
-        from aliases import get_editor_email_for_notification
+        # MAILS DE CIERRE: SOLO al admin (Ignacio), NO al editor.
+        # Razón: el editor sabe perfectamente que entregó. No le sirve recibir
+        # un mail diciéndole 'entregaste X'. El admin sí quiere enterarse.
+        # Cambio por pedido directo del user.
         destinatarios = [to]
-        editor_email = get_editor_email_for_notification(editor) if editor and editor != "—" else None
-        if editor_email and editor_email.lower() != to.lower():
-            destinatarios.append(editor_email)
 
         any_sent = False
         for dest in destinatarios:
             try:
-                msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html)
+                msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html,
+                                   kind="completion", cliente=cliente, editor=editor)
                 print(f"  ✅ mail cierre enviado a {dest}: {editor} → {cliente} (msg_id={msg_id})")
                 any_sent = True
                 sent += 1
             except Exception as e:
                 print(f"  ❌ falló mail cierre a {dest} [{cliente}]: {e}")
 
-        # Push notification de cierre
+        # Push notification de cierre: SOLO al admin también (mismo criterio)
         if any_sent:
             try:
                 from push_sender import send_push
@@ -302,8 +302,7 @@ Archivo: {file_name}{link_text}
                     push_title = f"📹 {cliente}"
                     push_body = f"{editor} entregó 1 video — quedan {new_count}"
                 send_push(editor=None, title=push_title, body=push_body, url="/?admin=1", tag=f"cierre-{cliente}")
-                if editor and editor != "—":
-                    send_push(editor=editor, title=push_title, body=push_body, url=f"/?editor={editor}", tag=f"cierre-{cliente}")
+                # NO se manda push al editor (igual que el mail)
             except Exception as e:
                 print(f"     ⚠️ push cierre: {e}")
 
