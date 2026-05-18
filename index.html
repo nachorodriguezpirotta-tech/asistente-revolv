@@ -479,6 +479,7 @@
         <button class="add-btn-main" onclick="openAddDialog()">+ Agregar pendiente</button>
         <button id="notif-btn" onclick="toggleNotifications()" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border:none; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; min-height:40px;">🔔 Activar notificaciones</button>
         <a id="stats-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">📊 Stats</a>
+        <a id="calendar-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">📅 Calendario</a>
         <a id="config-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px; position:relative;">⚙️ Config<span id="config-badge" style="display:none; background:#f87171; color:white; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">0</span></a>
       </div>
 
@@ -573,6 +574,11 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
         if (statsLink) {
             statsLink.href = `/stats.html?t=${encodeURIComponent(TOKEN)}`;
             statsLink.style.display = 'inline-block';
+        }
+        const calLink = document.getElementById('calendar-link');
+        if (calLink) {
+            calLink.href = `/calendar.html?t=${encodeURIComponent(TOKEN)}`;
+            calLink.style.display = 'inline-block';
         }
         const cfgLink = document.getElementById('config-link');
         if (cfgLink) {
@@ -923,10 +929,12 @@ function renderAdmin(data) {
         const countLabel = items.length === 0 ? '<span style="color: var(--text-dim); font-weight: 400; font-size: 13px; font-style: italic;">sin pendientes</span>' : `<span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length}</span>`;
         const onVacation = (data.editors_on_vacation || []).includes(ed);
         const vacationLabel = onVacation ? '<span style="color:#fbbf24; font-weight:600; font-size:13px; margin-left:8px;">🌴 De vacaciones</span>' : '';
+        const spk = (data.editor_sparkline || {})[ed];
+        const spkHtml = spk ? sparklineSvg(spk) : '';
         html += `<section class="editor-block${onVacation ? ' on-vacation' : ''}" data-editor="${edEsc}"
             ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
             <h2>
-                <span>${escapeHtml(ed)} ${countLabel}${vacationLabel}</span>
+                <span>${escapeHtml(ed)} ${countLabel}${spkHtml}${vacationLabel}</span>
                 <button class="add-mini" onclick="addClientToEditor('${edEsc}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
             </h2>
             ${progHtml}`;
@@ -1662,6 +1670,23 @@ function renderSummaryBanner(stats) {
         <span class="stat">✅ <strong>${w}</strong> <span class="lbl">entrega${w !== 1 ? 's' : ''} esta semana</span></span>
         ${urgentChip}
     </div>`;
+}
+
+function sparklineSvg(values) {
+    // Mini SVG: 7 barras de últimos 7 días
+    if (!values || values.length === 0) return '';
+    const max = Math.max(...values, 1);
+    const W = 70, H = 18, bw = 7, gap = 2;
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="vertical-align:middle; margin-left:8px;">`;
+    values.forEach((v, i) => {
+        const x = i * (bw + gap);
+        const h = v > 0 ? Math.max(2, (v / max) * H) : 1;
+        const y = H - h;
+        const fill = v > 0 ? '#4ade80' : '#2a2f3a';
+        svg += `<rect x="${x}" y="${y}" width="${bw}" height="${h}" fill="${fill}" rx="1"><title>Día ${i-6}: ${v} entregas</title></rect>`;
+    });
+    svg += '</svg>';
+    return svg;
 }
 
 function daysBadge(detected_at) {

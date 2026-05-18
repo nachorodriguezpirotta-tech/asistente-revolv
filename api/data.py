@@ -218,12 +218,39 @@ def get_all_data(conn) -> dict:
     urgent_count = conn.execute(
         "SELECT COUNT(*) FROM tasks WHERE status='pending' AND COALESCE(urgent, 0) = 1"
     ).fetchone()[0]
+    # Sparkline por editor: entregas últimos 7 días (lista de 7 enteros, hoy al final)
+    editor_sparkline = {}
+    try:
+        from datetime import timedelta
+        days = [(now - timedelta(days=i)).date().isoformat() for i in range(6, -1, -1)]
+        week_back = (now - timedelta(days=7)).isoformat(timespec="seconds")
+        spk_rows = conn.execute("""
+            SELECT editor, substr(completed_at, 1, 10) as day, COUNT(*) as n
+            FROM tasks WHERE status='done' AND completed_at >= ? AND editor IS NOT NULL
+            GROUP BY editor, day
+        """, (week_back,)).fetchall()
+        # Inicializar con ceros
+        for ed in by_editor.keys():
+            editor_sparkline[ed] = [0] * len(days)
+        # Llenar
+        for r in spk_rows:
+            ed = r["editor"]
+            if ed in editor_sparkline:
+                try:
+                    idx = days.index(r["day"])
+                    editor_sparkline[ed][idx] = r["n"]
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+
     return {
         "by_editor": by_editor,
         "editor_links": editor_links,
         "editor_progresses": editor_progresses,
         "pending_folders_count": pending_folders_count,
         "editors_on_vacation": sorted(editors_on_vacation),
+        "editor_sparkline": editor_sparkline,
         "stats": {
             "pendientes": sum(len(v) for v in by_editor.values()),
             "editores": len(by_editor),

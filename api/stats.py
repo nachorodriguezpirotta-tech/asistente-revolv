@@ -361,6 +361,96 @@ def _build_editor_self_stats(conn, editor: str):
     }
 
 
+def _build_client_detail(conn, cliente: str):
+    """Detalle histórico de un cliente: crudos por mes, editados por mes,
+    tiempo promedio, lista de últimos archivos, editores que entregaron."""
+    now = datetime.now()
+    # Crudos por mes (últimos 6 meses)
+    crudos_by_month = {}
+    rows = conn.execute("""
+        SELECT substr(first_seen_at, 1, 7) as mes, COUNT(*) as n
+        FROM known_files WHERE TRIM(cliente)=TRIM(?) AND is_baseline=0
+        GROUP BY mes ORDER BY mes DESC LIMIT 6
+    """, (cliente,)).fetchall()
+    for r in rows:
+        crudos_by_month[r["mes"]] = r["n"]
+    # Editados por mes
+    editados_by_month = {}
+    rows = conn.execute("""
+        SELECT substr(first_seen_at, 1, 7) as mes, COUNT(*) as n
+        FROM known_edited_files WHERE TRIM(cliente)=TRIM(?) AND is_baseline=0
+        GROUP BY mes ORDER BY mes DESC LIMIT 6
+    """, (cliente,)).fetchall()
+    for r in rows:
+        editados_by_month[r["mes"]] = r["n"]
+
+    # Últimos 10 archivos de cada tipo
+    last_crudos = [dict(r) for r in conn.execute("""
+        SELECT name, first_seen_at FROM known_files
+        WHERE TRIM(cliente)=TRIM(?) AND is_baseline=0
+        ORDER BY first_seen_at DESC LIMIT 10
+    """, (cliente,)).fetchall()]
+    last_editados = [dict(r) for r in conn.execute("""
+        SELECT name, first_seen_at FROM known_edited_files
+        WHERE TRIM(cliente)=TRIM(?) AND is_baseline=0
+        ORDER BY first_seen_at DESC LIMIT 10
+    """, (cliente,)).fetchall()]
+
+    # Editores que entregaron (count de tasks done)
+    editors_history = [dict(r) for r in conn.execute("""
+        SELECT editor, COUNT(*) as n FROM tasks
+        WHERE TRIM(cliente)=TRIM(?) AND status='done' AND editor IS NOT NULL
+        GROUP BY editor ORDER BY n DESC
+    """, (cliente,)).fetchall()]
+
+    # Tiempo promedio entrega (detected_at → completed_at)
+    rows = conn.execute("""
+        SELECT detected_at, completed_at FROM tasks
+        WHERE TRIM(cliente)=TRIM(?) AND status='done'
+          AND detected_at IS NOT NULL AND completed_at IS NOT NULL
+    """, (cliente,)).fetchall()
+    turnarounds = []
+    for r in rows:
+        det = _parse_iso(r["detected_at"])
+        comp = _parse_iso(r["completed_at"])
+        if det and comp and comp > det:
+            turnarounds.append((comp - det).total_seconds() / 3600)
+    avg_turnaround_hours = round(sum(turnarounds) / len(turnarounds), 1) if turnarounds else None
+
+    # Editor actual asignado (de pending o último task)
+    current = conn.execute("""
+        SELECT editor FROM tasks WHERE TRIM(cliente)=TRIM(?)
+        ORDER BY (status='pending') DESC, id DESC LIMIT 1
+    """, (cliente,)).fetchone()
+    current_editor = current["editor"] if current else None
+
+    # Pending actual
+    pending = conn.execute(
+        "SELECT COALESCE(SUM(COALESCE(pending_count, 1)), 0) FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+        (cliente,),
+    ).fetchone()[0]
+
+    # Folder ID
+    fid_row = conn.execute("SELECT folder_id FROM clients WHERE TRIM(cliente)=TRIM(?)", (cliente,)).fetchone()
+    drive_folder_id = fid_row["folder_id"] if fid_row else None
+
+    return {
+        "ok": True,
+        "cliente": cliente,
+        "current_editor": current_editor,
+        "pending_videos": int(pending or 0),
+        "drive_folder_id": drive_folder_id,
+        "crudos_by_month": crudos_by_month,
+        "editados_by_month": editados_by_month,
+        "last_crudos": last_crudos,
+        "last_editados": last_editados,
+        "editors_history": editors_history,
+        "avg_turnaround_hours": avg_turnaround_hours,
+        "total_crudos": sum(crudos_by_month.values()),
+        "total_editados": sum(editados_by_month.values()),
+    }
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
@@ -371,13 +461,16 @@ class handler(BaseHTTPRequestHandler):
             admin = params.get("admin", [""])[0] == "1"
             editor = (params.get("editor", [""])[0] or "").strip()
             token = (params.get("t", [""])[0] or "").strip()
+            cliente_detail = (params.get("client_detail", [""])[0] or "").strip()
 
             if admin and check_token("ADMIN", token):
+                if cliente_detail:
+                    data = read_db(lambda conn: _build_client_detail(conn, cliente_detail))
+                    return json_response(self, data)
                 data = read_db(_build_stats)
                 return json_response(self, data)
 
             if editor and check_token(editor, token):
-                # Vista personal del editor
                 data = read_db(lambda conn: _build_editor_self_stats(conn, editor))
                 return json_response(self, data)
 

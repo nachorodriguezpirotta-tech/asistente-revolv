@@ -9,6 +9,7 @@
     { "source": "/stats", "destination": "/stats.html" },
     { "source": "/config", "destination": "/config.html" },
     { "source": "/mistats", "destination": "/mistats.html" },
+    { "source": "/calendar", "destination": "/calendar.html" },
     { "source": "/manifest.json", "destination": "/manifest.json" }
   ],
   "functions": {
@@ -29,6 +30,10 @@
       "maxDuration": 10
     },
     "api/push.py": {
+      "memory": 256,
+      "maxDuration": 10
+    },
+    "api/calendar.py": {
       "memory": 256,
       "maxDuration": 10
     }

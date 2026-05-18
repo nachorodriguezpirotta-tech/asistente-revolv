@@ -581,7 +581,8 @@ function renderClientTable(clients, id) {
       ? (c.days_since_crudo < 1 ? 'hoy' : `${c.days_since_crudo}d`)
       : '<span class="badge-empty">nunca</span>';
 
-    html += `<tr class="client-row" data-name="${c.cliente.toLowerCase()}" data-editor="${(c.editor || '').toLowerCase()}" data-status="${status}">
+    const clienteEnc = c.cliente.replace(/"/g, '&quot;');
+    html += `<tr class="client-row clickable-row" data-name="${c.cliente.toLowerCase()}" data-editor="${(c.editor || '').toLowerCase()}" data-status="${status}" onclick='openClientDetail(${JSON.stringify(c.cliente)})' style="cursor:pointer;">
       <td class="name"><span class="health ${status}"></span>${c.cliente}</td>
       <td>${c.editor || '<span class="badge-empty">—</span>'}</td>
       <td class="num">${c.pending_videos || '<span class="badge-empty">0</span>'}</td>
@@ -593,6 +594,119 @@ function renderClientTable(clients, id) {
   }
   html += '</tbody></table></div>';
   return html;
+}
+
+async function openClientDetail(cliente) {
+  // Modal overlay con loading
+  const overlay = document.createElement('div');
+  overlay.id = 'client-detail-overlay';
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:300; padding:16px;';
+  overlay.innerHTML = `<div style="background:#1a1e27; border:1px solid #2a2f3a; border-radius:12px; padding:24px; max-width:680px; width:100%; max-height:85vh; overflow-y:auto; color:#e8eaed;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <h2 style="margin:0; font-size:18px;">🎬 ${escape(cliente)}</h2>
+      <button onclick="document.getElementById('client-detail-overlay').remove()" style="background:transparent; border:1px solid #2a2f3a; color:#8a93a3; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:13px;">Cerrar</button>
+    </div>
+    <div id="client-detail-body"><div style="padding:32px; text-align:center; color:#8a93a3;">Cargando...</div></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  try {
+    const res = await fetch(`/api/stats?admin=1&t=${encodeURIComponent(TOKEN)}&client_detail=${encodeURIComponent(cliente)}`);
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
+    renderClientDetail(d);
+  } catch (e) {
+    document.getElementById('client-detail-body').innerHTML = `<div style="color:#f87171; padding:20px;">Error: ${escape(e.message)}</div>`;
+  }
+}
+
+function renderClientDetail(d) {
+  const body = document.getElementById('client-detail-body');
+  if (!body) return;
+  const turn = d.avg_turnaround_hours
+    ? (d.avg_turnaround_hours < 24 ? `${d.avg_turnaround_hours}h` : `${(d.avg_turnaround_hours/24).toFixed(1)} días`)
+    : '—';
+  const driveLink = d.drive_folder_id ? `<a href="https://drive.google.com/drive/folders/${d.drive_folder_id}" target="_blank" style="color:#60a5fa; text-decoration:none; font-size:13px;">📁 Abrir carpeta en Drive</a>` : '';
+
+  const editorsHtml = (d.editors_history || []).map(e =>
+    `<li><strong>${escape(e.editor)}</strong>: ${e.n} entrega${e.n !== 1 ? 's' : ''}</li>`
+  ).join('') || '<li style="color:#5a6478">Ninguno</li>';
+
+  const lastCrudosHtml = (d.last_crudos || []).slice(0, 5).map(f =>
+    `<div style="font-size:12px; padding:4px 0; border-bottom:1px solid #2a2f3a;">${escape(f.name)} <span style="color:#5a6478; margin-left:8px;">${f.first_seen_at?.slice(0,10) || ''}</span></div>`
+  ).join('') || '<div style="color:#5a6478; font-size:12px;">Sin crudos registrados</div>';
+
+  const lastEditadosHtml = (d.last_editados || []).slice(0, 5).map(f =>
+    `<div style="font-size:12px; padding:4px 0; border-bottom:1px solid #2a2f3a;">${escape(f.name)} <span style="color:#5a6478; margin-left:8px;">${f.first_seen_at?.slice(0,10) || ''}</span></div>`
+  ).join('') || '<div style="color:#5a6478; font-size:12px;">Sin editados registrados</div>';
+
+  // Gráfico simple por mes
+  const months = Array.from(new Set([...Object.keys(d.crudos_by_month || {}), ...Object.keys(d.editados_by_month || {})])).sort();
+  let chartHtml = '<div style="color:#5a6478; font-size:12px;">Sin actividad</div>';
+  if (months.length > 0) {
+    const maxV = Math.max(...months.flatMap(m => [d.crudos_by_month[m] || 0, d.editados_by_month[m] || 0]), 1);
+    chartHtml = months.slice(-6).map(m => {
+      const crudos = d.crudos_by_month[m] || 0;
+      const editados = d.editados_by_month[m] || 0;
+      const wC = Math.max((crudos/maxV)*100, crudos > 0 ? 3 : 0);
+      const wE = Math.max((editados/maxV)*100, editados > 0 ? 3 : 0);
+      return `<div style="margin-bottom:6px; font-size:11px;">
+        <div style="color:#8a93a3; margin-bottom:2px;">${m}</div>
+        <div style="display:flex; gap:4px; align-items:center;">
+          <div style="background:#60a5fa; height:14px; width:${wC}%; border-radius:2px; display:flex; align-items:center; padding-left:4px; color:white; font-size:10px; font-weight:600;">${crudos > 0 ? crudos : ''}</div>
+        </div>
+        <div style="display:flex; gap:4px; align-items:center; margin-top:2px;">
+          <div style="background:#4ade80; height:14px; width:${wE}%; border-radius:2px; display:flex; align-items:center; padding-left:4px; color:#0f1115; font-size:10px; font-weight:600;">${editados > 0 ? editados : ''}</div>
+        </div>
+      </div>`;
+    }).join('') + '<div style="font-size:10px; color:#5a6478; margin-top:8px;">🔵 crudos · 🟢 editados</div>';
+  }
+
+  body.innerHTML = `
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px; margin-bottom:18px;">
+      <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px; padding:10px;">
+        <div style="font-size:10px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px;">Pending</div>
+        <div style="font-size:22px; font-weight:700;">${d.pending_videos || 0}</div>
+        <div style="font-size:11px; color:#5a6478;">Editor: ${d.current_editor || '—'}</div>
+      </div>
+      <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px; padding:10px;">
+        <div style="font-size:10px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px;">Total crudos</div>
+        <div style="font-size:22px; font-weight:700; color:#60a5fa;">${d.total_crudos}</div>
+        <div style="font-size:11px; color:#5a6478;">recibidos</div>
+      </div>
+      <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px; padding:10px;">
+        <div style="font-size:10px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px;">Total editados</div>
+        <div style="font-size:22px; font-weight:700; color:#4ade80;">${d.total_editados}</div>
+        <div style="font-size:11px; color:#5a6478;">entregados</div>
+      </div>
+      <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px; padding:10px;">
+        <div style="font-size:10px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px;">Tiempo prom.</div>
+        <div style="font-size:22px; font-weight:700;">${turn}</div>
+        <div style="font-size:11px; color:#5a6478;">crudo → entrega</div>
+      </div>
+    </div>
+    ${driveLink ? '<div style="margin-bottom:16px;">' + driveLink + '</div>' : ''}
+
+    <h3 style="font-size:13px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px; margin:18px 0 8px;">📈 Actividad últimos meses</h3>
+    <div style="background:#14171f; border:1px solid #2a2f3a; border-radius:8px; padding:12px;">${chartHtml}</div>
+
+    <h3 style="font-size:13px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px; margin:18px 0 8px;">👥 Quién editó</h3>
+    <div style="background:#14171f; border:1px solid #2a2f3a; border-radius:8px; padding:12px;">
+      <ul style="margin:0; padding-left:18px; line-height:1.6; font-size:13px;">${editorsHtml}</ul>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:18px;">
+      <div>
+        <h3 style="font-size:13px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px; margin:0 0 8px;">📥 Últimos crudos</h3>
+        <div style="background:#14171f; border:1px solid #2a2f3a; border-radius:8px; padding:10px;">${lastCrudosHtml}</div>
+      </div>
+      <div>
+        <h3 style="font-size:13px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px; margin:0 0 8px;">📤 Últimos editados</h3>
+        <div style="background:#14171f; border:1px solid #2a2f3a; border-radius:8px; padding:10px;">${lastEditadosHtml}</div>
+      </div>
+    </div>
+  `;
 }
 
 function filterClientTable() {
