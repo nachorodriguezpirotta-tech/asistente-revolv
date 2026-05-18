@@ -231,18 +231,23 @@ def run(notify: bool = False):
         sig = classify(f, parent_name=None, cliente_name=cliente_real)
         if sig is False:
             # Owner matchea el cliente → SÍ es crudo (subió fuera de /Material/)
-            # Tratarlo como crudo: claim + crear task igual que arriba
             if is_file_known(f["id"]):
                 continue
             size = int(f["size"]) if f.get("size") else None
+            # Archivo viejo (createdTime >3 días) → baseline silencioso.
+            # Caso real Sandy: archivos del 9/may detectados el 17/may por
+            # cambio de carpeta. NO son nuevos, NO mandar mail.
+            is_old = _is_file_too_old(f.get("createdTime"))
             claimed = claim_file(
                 file_id=f["id"], cliente=cliente_real,
                 folder_id="(incremental-fuera-material)",
                 name=f["name"], size=size, created_time=f.get("createdTime"),
-                is_baseline=False,
+                is_baseline=is_old,
             )
             if not claimed:
                 continue
+            if is_old:
+                continue  # archivo viejo, registrado como baseline, sin mail
             if has_manual_pending_for_client(cliente_real):
                 continue
             editor = get_editor_for_client(cliente_real, packs)
