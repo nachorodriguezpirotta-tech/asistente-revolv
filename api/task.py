@@ -233,18 +233,30 @@ class handler(BaseHTTPRequestHandler):
 
         # MODO CLIENTE: borrar TODAS las tasks pending de un cliente (+ editor opcional)
         if cliente:
+            # "— sin editor —" es el label que el dashboard pone para tasks con
+            # editor=NULL en la DB. Si viene ese string, lo tratamos como "sin editor".
+            is_no_editor_placeholder = bool(editor and editor.startswith("—"))
+            if is_no_editor_placeholder:
+                editor = ""
             target_editor = editor if not is_admin else (editor or None)
             deleted = {"count": 0, "cliente": cliente, "editor": target_editor}
 
             def op_cliente(conn):
                 from datetime import datetime, timedelta
-                # Intentar con el nombre tal cual primero
                 if target_editor:
+                    # Editor específico → borrar solo de ese editor
                     rows = conn.execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
                         (cliente, target_editor),
                     )
+                elif is_no_editor_placeholder or (editor == "" and not is_admin):
+                    # "Sin editor" → borrar las tasks con editor=NULL o ''
+                    rows = conn.execute(
+                        "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND (editor IS NULL OR editor='') AND status='pending'",
+                        (cliente,),
+                    )
                 else:
+                    # Admin sin editor especificado: borrar TODAS las tasks del cliente
                     rows = conn.execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
                         (cliente,),
