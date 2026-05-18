@@ -232,37 +232,39 @@ def _owner_signal(file: dict, cliente_name: Optional[str] = None) -> Optional[bo
 def classify(file: dict, parent_name: Optional[str] = None,
              cliente_name: Optional[str] = None) -> Optional[bool]:
     """
-    Clasifica un archivo de video.
-    Retorna True (editado), False (crudo) o None (ambiguo).
+    Clasifica un archivo de video. Retorna True (editado), False (crudo) o None (ambiguo).
 
-    `file` es un dict de Drive API (al menos con key 'name').
-                Si incluye `owners` y/o `lastModifyingUser`, se usa como señal PRIMARIA.
-    `parent_name` es el nombre de la carpeta inmediatamente arriba.
-    `cliente_name` (opcional): nombre del cliente. Si owner del archivo matchea
-        el nombre del cliente (fuzzy), se asume crudo. Ej: cliente='Electro Angel'
-        + owner='electroangel@gmail.com' → CRUDO.
+    PRIORIDAD DE SEÑALES (de mayor a menor confianza):
+      1. Editor conocido subió → EDITADO (override total). El cliente JAMÁS sube
+         con cuenta del editor.
+      2. Nombre del archivo claramente editado ('Video 15', 'Reel 4', '16 - X')
+         → EDITADO. Aunque lo suba el cliente (raro pero posible), el patrón de
+         numeración es señal fuerte de edición.
+      3. Nombre del archivo claramente crudo ('IMG_4123', 'MVI_0234', 'hf_xxx')
+         → CRUDO. Patrón típico de cámara/celu, nadie edita y lo deja con ese
+         nombre original.
+      4. Owner matchea el cliente (fuzzy) → CRUDO. Si el cliente lo subió Y el
+         nombre no decía claramente editado, asumir que es material.
+      5. Carpeta padre → fallback (/Material/ → crudo, /Editados/ → editado).
     """
-    # Señal PRIMARIA: owner del archivo. Si tenemos info confiable, override total.
-    owner_sig = _owner_signal(file, cliente_name=cliente_name)
-    if owner_sig is not None:
-        return owner_sig
+    # 1. Editor conocido → EDITADO (override total)
+    candidates = _get_owner_emails(file)
+    if _EDITOR_EMAILS_LOWER and any(em in _EDITOR_EMAILS_LOWER for em in candidates):
+        return True
 
-    # Fallback a heurísticas si no hay owner info
-    parent_sig = _parent_signals(parent_name)
+    # 2 + 3. Nombre del archivo (señal MUY fuerte)
     name_sig = _name_signals(file.get("name", ""))
-
-    # Si las dos señales coinciden → confianza máxima
-    if parent_sig is not None and name_sig is not None:
-        if parent_sig == name_sig:
-            return parent_sig
-        # Conflicto: parent dice una cosa, nombre otra. Priorizar parent
-        # (porque la organización en carpetas es más explícita que el nombre).
-        return parent_sig
-
-    if parent_sig is not None:
-        return parent_sig
     if name_sig is not None:
         return name_sig
+
+    # 4. Owner matchea el cliente → CRUDO
+    if _is_owner_the_client(file, cliente_name):
+        return False
+
+    # 5. Carpeta padre (fallback)
+    parent_sig = _parent_signals(parent_name)
+    if parent_sig is not None:
+        return parent_sig
 
     return None  # ambiguo
 
