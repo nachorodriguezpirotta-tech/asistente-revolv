@@ -25,7 +25,7 @@ from tracker import (
     edited_baseline_done,
     close_oldest_pending, count_pending_for_client,
     close_all_pending_for_client, decrement_pending_count,
-    enqueue_completion_mail, upsert_client,
+    enqueue_completion_mail, upsert_client, is_correction_for_client,
 )
 from aliases import resolve_alias, reverse_alias, CLIENT_DELIVERY_FOLDERS, _normalize as _alias_norm
 
@@ -244,15 +244,36 @@ def run_closer(verbose: bool = True) -> dict:
             )
             if not claimed:
                 continue  # otro workflow ya lo procesó
+
+            # ¿Es una CORRECCIÓN de un video previo? Detecta si ya hubo un editado
+            # con el mismo número (Video 1 / Reel 5 / etc) del mismo cliente.
+            # Si es corrección: NO decrementar pending_count, mandar mail de corrección.
+            real_editor = identify_editor_by_owner(f) or client_editor
+            if is_correction_for_client(cliente, f["name"], current_file_id=f["id"]):
+                if verbose:
+                    print(f"  🔧 [{cliente}] corrección detectada: {f['name']} (NO decuenta)")
+                enqueue_completion_mail(
+                    task_id=None,  # no hay task que decrementar
+                    cliente=cliente,
+                    editor=real_editor,
+                    file_id=f["id"],
+                    file_name=f["name"],
+                    edited_folder_id=f.get("_parent_id"),
+                    client_folder_id=folder["id"],
+                    new_count=0,
+                    closed=False,
+                    is_correction=True,
+                )
+                summary["nuevos_editados"] += 1
+                continue
+
             result = decrement_pending_count(cliente, completed_by_file_id=f["id"])
             if result["task_id"] is not None:
-                # Determinar el editor REAL que entregó: prioridad al owner del archivo
-                # (si subió Agus aunque la task estuviera asignada a Benja, el editor
-                # real es Agus). Si el owner no es editor conocido, usar el de la task.
+                # Si identify_editor_by_owner no encontró, usamos el de la task
                 real_editor = identify_editor_by_owner(f) or result["editor"] or client_editor
                 cierre_data = {
                     "cliente": cliente,
-                    "editor": real_editor,  # quien realmente entregó
+                    "editor": real_editor,
                     "file_name": f["name"],
                     "file_id": f["id"],
                     "edited_folder_id": f.get("_parent_id"),

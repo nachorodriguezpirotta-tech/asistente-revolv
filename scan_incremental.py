@@ -40,7 +40,7 @@ from tracker import (
     has_manual_pending_for_client, find_similar_pending_client,
     is_client_blocked, set_pending_count,
     is_edited_known, claim_edited_file, decrement_pending_count,
-    enqueue_completion_mail,
+    enqueue_completion_mail, is_correction_for_client,
 )
 from sheets_client import read_packs, get_editor_for_client
 from aliases import resolve_alias, reverse_alias
@@ -272,11 +272,27 @@ def run(notify: bool = False):
         )
         if not claimed:
             continue
+
+        # ¿Es CORRECCIÓN de un editado previo del mismo cliente?
+        from classifier import identify_editor_by_owner
+        if is_correction_for_client(cliente_real, f["name"], current_file_id=f["id"]):
+            real_editor = identify_editor_by_owner(f) or "—"
+            enqueue_completion_mail(
+                task_id=None,
+                cliente=cliente_real,
+                editor=real_editor,
+                file_id=f["id"],
+                file_name=f["name"],
+                edited_folder_id=(f.get("parents") or [None])[0],
+                client_folder_id=None,
+                new_count=0,
+                closed=False,
+                is_correction=True,
+            )
+            continue
+
         result = decrement_pending_count(cliente_real, completed_by_file_id=f["id"])
         if result["task_id"] is not None:
-            # Editor REAL = quien subió el archivo (Drive owner), si es editor conocido.
-            # Si no, usar el de la task. Esto refleja la realidad cuando un editor cubre a otro.
-            from classifier import identify_editor_by_owner
             real_editor = identify_editor_by_owner(f) or result["editor"] or "—"
             cierre_data = {
                 "cliente": cliente_real,

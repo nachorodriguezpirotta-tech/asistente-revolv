@@ -227,6 +227,7 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
         edited_folder_id = c.get("edited_folder_id")
         new_count = c.get("new_count", 0)
         closed = c.get("closed", False)
+        is_correction = bool(c.get("is_correction"))
 
         # Link a la CARPETA específica donde está el editado (ej. Mayo/Editados, Pack 1).
         # Tenemos varios fallbacks por si una opción no está disponible:
@@ -243,7 +244,20 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
             video_url = None
             video_label = None
 
-        if closed:
+        if is_correction:
+            # Corrección: NO decuenta del pending. Solo informa.
+            subject = f"🔧 Corrección: {editor} subió de nuevo {file_name} de {cliente}"
+            estado_text = (
+                f"{editor} subió una CORRECCIÓN del video {file_name} de {cliente}.\n"
+                f"El pending count NO cambia (la corrección no cuenta como entrega nueva)."
+            )
+            estado_html = (
+                f"<p>{editor} subió una <strong>corrección</strong> de "
+                f"<code>{file_name}</code> de <strong>{cliente}</strong>.</p>"
+                f"<p style='color:#666;font-size:13px;'>El pending count NO cambia. "
+                f"La corrección reemplaza el editado previo del mismo video.</p>"
+            )
+        elif closed:
             subject = f"✅ {editor} completó {cliente}"
             estado_text = f"{editor} entregó el último video de {cliente}. Cliente cerrado en el dashboard."
             estado_html = f"<p>{editor} entregó el <strong>último video</strong> de <strong>{cliente}</strong>. Cliente cerrado en el dashboard.</p>"

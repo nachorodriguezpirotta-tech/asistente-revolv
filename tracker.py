@@ -296,6 +296,13 @@ def init_db():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_completion_unsent ON pending_completion_mails(mail_sent_at) WHERE mail_sent_at IS NULL")
+    # Migration: agregar columna is_correction si no existe
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(pending_completion_mails)").fetchall()]
+        if "is_correction" not in cols:
+            conn.execute("ALTER TABLE pending_completion_mails ADD COLUMN is_correction INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
 
     # Tabla de progreso por editor — soporta MÚLTIPLES contadores por editor.
     # Migración si existe versión vieja sin columna 'label':
@@ -612,17 +619,19 @@ def has_manual_pending_for_client(cliente: str) -> bool:
 def enqueue_completion_mail(task_id: Optional[int], cliente: str, editor: Optional[str],
                             file_id: Optional[str], file_name: Optional[str],
                             edited_folder_id: Optional[str], client_folder_id: Optional[str],
-                            new_count: int, closed: bool) -> int:
-    """Encola un mail de cierre/decremento para envío. Si el envío falla, queda en cola
-    para retry. Retorna el id del row insertado."""
+                            new_count: int, closed: bool,
+                            is_correction: bool = False) -> int:
+    """Encola un mail de cierre/decremento/corrección para envío.
+    Si is_correction=True, el mail va a ser diferente (subject 'Corrección') y
+    NO se asocia decremento del pending_count (eso lo maneja el caller)."""
     conn = get_conn()
     cur = conn.execute("""
         INSERT INTO pending_completion_mails
         (task_id, cliente, editor, file_id, file_name, edited_folder_id, client_folder_id,
-         new_count, closed, created_at, mail_sent_at, retry_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)
+         new_count, closed, created_at, mail_sent_at, retry_count, is_correction)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?)
     """, (task_id, cliente, editor, file_id, file_name, edited_folder_id, client_folder_id,
-          new_count, 1 if closed else 0, now_iso()))
+          new_count, 1 if closed else 0, now_iso(), 1 if is_correction else 0))
     row_id = cur.lastrowid
     conn.commit()
     conn.close()
@@ -745,6 +754,55 @@ def cfg_get_notification_emails() -> dict:
     """).fetchall()
     conn.close()
     return {r["name"]: r["email"] for r in rows}
+
+
+def _video_key(name: str) -> Optional[str]:
+    """Extrae la 'key' canónica de un video editado para detectar correcciones.
+    Ej:
+      'Video 1.mp4'           → 'video 1'
+      'Video 1 corrección.mp4' → 'video 1'
+      'Video 1 v2.mp4'        → 'video 1'
+      'Video 1 final.mp4'     → 'video 1'
+      'Reel 5.mov'            → 'reel 5'
+      'IMG_4123.MOV'          → None (no es editado numerado)
+    """
+    if not name:
+        return None
+    import re
+    norm = name.lower().strip()
+    # quitar extensión
+    norm = re.sub(r'\.[a-z0-9]+$', '', norm)
+    # buscar 'video N' / 'reel N' / 'tanda N'
+    m = re.search(r'\b(video|reel|tanda)\s*(\d+)', norm)
+    if m:
+        return f"{m.group(1)} {m.group(2)}"
+    # También '15 - X' (formato '16 - OCTAVIAN' etc.)
+    m = re.match(r'^(\d+)\s*[-–_]\s*', norm)
+    if m:
+        return f"num {m.group(1)}"
+    return None
+
+
+def is_correction_for_client(cliente: str, file_name: str, current_file_id: Optional[str] = None) -> bool:
+    """¿Este archivo es corrección de un editado previo del MISMO cliente?
+    Compara el patrón numerado (Video N / Reel N) contra known_edited_files.
+    `current_file_id`: para excluir el propio archivo si ya está en la tabla."""
+    key = _video_key(file_name)
+    if not key:
+        return False
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT file_id, name FROM known_edited_files WHERE TRIM(cliente) = TRIM(?)",
+        (cliente,)
+    ).fetchall()
+    conn.close()
+    for r in rows:
+        if current_file_id and r["file_id"] == current_file_id:
+            continue
+        prev_key = _video_key(r["name"])
+        if prev_key and prev_key == key:
+            return True
+    return False
 
 
 def cfg_is_on_vacation(editor: str) -> bool:
