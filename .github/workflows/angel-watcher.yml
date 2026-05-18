@@ -63,7 +63,7 @@ jobs:
           git config user.email "bot@revolv.local"
           if git status --porcelain angel_data/state/angel_state.json | grep -q .; then
             git add angel_data/state/angel_state.json
-            git commit -m "[bot-angel] update angel state ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+            git commit -m "[bot-angel] update angel state ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]"
             git pull --rebase
             git push
           fi
