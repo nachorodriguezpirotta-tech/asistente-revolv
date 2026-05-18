@@ -79,6 +79,15 @@ def send_push(editor: Optional[str], title: str, body: str, url: Optional[str] =
         print("⚠️ pywebpush no instalado")
         return 0
 
+    # Si el editor está en vacaciones, no mandar push (igual que mails)
+    if editor:
+        try:
+            from tracker import cfg_is_on_vacation
+            if cfg_is_on_vacation(editor):
+                return 0
+        except Exception:
+            pass
+
     subs = list_subscriptions(editor)
     if not subs:
         return 0

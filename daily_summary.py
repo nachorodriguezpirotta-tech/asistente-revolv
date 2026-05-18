@@ -157,10 +157,12 @@ def build_mail_para_editor(editor: str, clientes: list):
 
 def run(dry_run: bool = False):
     from aliases import (
-        get_editor_emails_runtime, get_daily_summary_editors_runtime,
+        get_notification_emails_runtime, get_daily_summary_editors_runtime,
         get_editor_email,
     )
-    EDITOR_EMAILS = get_editor_emails_runtime()
+    from tracker import cfg_is_on_vacation
+    # Usar notification_emails (filtra vacaciones) en vez de editor_emails (incluye todos)
+    EDITOR_EMAILS = get_notification_emails_runtime()
     DAILY_SUMMARY_EDITORS = get_daily_summary_editors_runtime()
 
     grouped = get_pending_grouped()
@@ -186,6 +188,9 @@ def run(dry_run: bool = False):
     for editor, email in EDITOR_EMAILS.items():
         if editor not in DAILY_SUMMARY_EDITORS:
             print(f"   ⏭️  {editor}: skip (no en DAILY_SUMMARY_EDITORS)")
+            continue
+        if cfg_is_on_vacation(editor):
+            print(f"   🌴 {editor}: skip (en vacaciones)")
             continue
 
         editor_clientes = []

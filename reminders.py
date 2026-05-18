@@ -36,11 +36,13 @@ def run(dry_run: bool = False):
     conn = get_conn()
     now = datetime.now()
 
-    # Editores activos QUE RECIBEN NOTIFICACIONES (solo los marcados).
-    # Los demás tienen email solo para identificación, no reciben recordatorios.
-    eds = conn.execute(
-        "SELECT name, email FROM cfg_editors WHERE active=1 AND receives_notifications=1 AND email IS NOT NULL AND email != ''"
-    ).fetchall()
+    # Editores activos QUE RECIBEN NOTIFICACIONES y NO están en vacaciones.
+    eds = conn.execute("""
+        SELECT name, email FROM cfg_editors
+        WHERE active=1 AND receives_notifications=1
+          AND COALESCE(on_vacation, 0) = 0
+          AND email IS NOT NULL AND email != ''
+    """).fetchall()
     editors_active = {r["name"]: r["email"] for r in eds}
 
     # Pending por editor con tiempo desde el más viejo + flag urgente
