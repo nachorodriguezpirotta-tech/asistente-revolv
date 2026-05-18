@@ -301,5 +301,11 @@ if __name__ == "__main__":
     print(f"   Tareas cerradas:      {s['tareas_cerradas']}")
     if s["cierres"]:
         print()
-        for c, fn, tid in s["cierres"]:
-            print(f"   ✅ #{tid} {c} ← {fn}")
+        for c in s["cierres"]:
+            # cierres son dicts con 'cliente', 'file_name', etc — no tuples
+            cli = c.get("cliente", "?")
+            fn = c.get("file_name", "?")
+            new_count = c.get("new_count", 0)
+            closed = c.get("closed", False)
+            marker = "✅" if closed else "📹"
+            print(f"   {marker} {cli} ← {fn} (resta {new_count}, closed={closed})")
