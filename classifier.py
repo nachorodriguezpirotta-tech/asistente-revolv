@@ -237,14 +237,14 @@ def classify(file: dict, parent_name: Optional[str] = None,
     PRIORIDAD DE SEÑALES (de mayor a menor confianza):
       1. Editor conocido subió → EDITADO (override total). El cliente JAMÁS sube
          con cuenta del editor.
-      2. Nombre del archivo claramente editado ('Video 15', 'Reel 4', '16 - X')
-         → EDITADO. Aunque lo suba el cliente (raro pero posible), el patrón de
-         numeración es señal fuerte de edición.
-      3. Nombre del archivo claramente crudo ('IMG_4123', 'MVI_0234', 'hf_xxx')
-         → CRUDO. Patrón típico de cámara/celu, nadie edita y lo deja con ese
-         nombre original.
-      4. Owner matchea el cliente (fuzzy) → CRUDO. Si el cliente lo subió Y el
-         nombre no decía claramente editado, asumir que es material.
+      2. Owner matchea el cliente (fuzzy) → CRUDO (override). Si el cliente
+         mismo subió el archivo, ES MATERIAL por más que se llame "Video 1" —
+         muchos clientes nombran sus crudos así (caso Shaila Ochoa, etc).
+      3. Nombre del archivo claramente editado ('Video 15', 'Reel 4', '16 - X')
+         → EDITADO. Aplica cuando el owner NO es el cliente (típicamente Drive
+         de Revolv o un editor no-listado todavía).
+      4. Nombre del archivo claramente crudo ('IMG_4123', 'MVI_0234', 'hf_xxx')
+         → CRUDO. Patrón típico de cámara/celu.
       5. Carpeta padre → fallback (/Material/ → crudo, /Editados/ → editado).
     """
     # 1. Editor conocido → EDITADO (override total)
@@ -252,14 +252,17 @@ def classify(file: dict, parent_name: Optional[str] = None,
     if _EDITOR_EMAILS_LOWER and any(em in _EDITOR_EMAILS_LOWER for em in candidates):
         return True
 
-    # 2 + 3. Nombre del archivo (señal MUY fuerte)
+    # 2. Owner es el cliente (fuzzy) → CRUDO (override sobre nombre)
+    # Si el cliente sube desde su cuenta, ES MATERIAL por más que se llame "Video 1".
+    # Caso real: Shaila Ochoa sube crudos llamados "Video 1 - sabias que la IA"
+    # desde shaila@shailaochoa.com. NO podemos confundirlo con un editado.
+    if _is_owner_the_client(file, cliente_name):
+        return False
+
+    # 3 + 4. Nombre del archivo (señal fuerte cuando owner no matchea)
     name_sig = _name_signals(file.get("name", ""))
     if name_sig is not None:
         return name_sig
-
-    # 4. Owner matchea el cliente → CRUDO
-    if _is_owner_the_client(file, cliente_name):
-        return False
 
     # 5. Carpeta padre (fallback)
     parent_sig = _parent_signals(parent_name)
