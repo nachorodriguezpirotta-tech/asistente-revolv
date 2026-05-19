@@ -101,6 +101,16 @@ def init_db():
         # aparece destacada arriba del listado, badge rojo.
         conn.execute("ALTER TABLE tasks ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0")
 
+    # Migration: subfolder_name en known_files / known_edited_files. Sirve para
+    # auto-detectar clientes con subcarpetas tipo "Youtube"/"Reels" y para
+    # inferir el editor por subfolder mirando histórico de entregas.
+    kf_cols = [r[1] for r in conn.execute("PRAGMA table_info(known_files)").fetchall()]
+    if "subfolder_name" not in kf_cols:
+        conn.execute("ALTER TABLE known_files ADD COLUMN subfolder_name TEXT")
+    ke_cols = [r[1] for r in conn.execute("PRAGMA table_info(known_edited_files)").fetchall()]
+    if "subfolder_name" not in ke_cols:
+        conn.execute("ALTER TABLE known_edited_files ADD COLUMN subfolder_name TEXT")
+
     # Tabla de "bloqueos de cliente": cuando el usuario borra un cliente manualmente,
     # NO se debe re-crear automáticamente hasta que pase un tiempo (24 horas).
     conn.execute("""
@@ -221,6 +231,23 @@ def init_db():
             editor TEXT NOT NULL,
             created_at TEXT,
             UNIQUE(cliente, subfolder)
+        )
+    """)
+
+    # Alertas idempotentes: una vez por (cliente, subfolder). Cuando aparece un
+    # crudo en una subfolder "tipo" (Youtube/Reels/Shorts/...) que no está
+    # mapeada en cfg_subfolder_editors, registramos acá para mandar UN mail al
+    # admin. Si después aparecen más crudos en la misma subfolder, NO repetimos.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS subfolder_alerts (
+            cliente TEXT NOT NULL,
+            subfolder TEXT NOT NULL,
+            alerted_at TEXT NOT NULL,
+            inferred_type TEXT,
+            example_file TEXT,
+            example_file_id TEXT,
+            default_editor_assigned TEXT,
+            PRIMARY KEY (cliente, subfolder)
         )
     """)
 
@@ -422,27 +449,36 @@ def set_baseline(folder_id: str):
 
 
 def add_known_file(file_id: str, cliente: str, folder_id: str, name: str,
-                   size: Optional[int], created_time: Optional[str], is_baseline: bool = False):
+                   size: Optional[int], created_time: Optional[str], is_baseline: bool = False,
+                   subfolder_name: Optional[str] = None):
     conn = get_conn()
     conn.execute("""
         INSERT OR IGNORE INTO known_files
-        (file_id, cliente, folder_id, name, size, created_time, first_seen_at, is_baseline)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (file_id, cliente, folder_id, name, size, created_time, now_iso(), 1 if is_baseline else 0))
+        (file_id, cliente, folder_id, name, size, created_time, first_seen_at, is_baseline, subfolder_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (file_id, cliente, folder_id, name, size, created_time, now_iso(), 1 if is_baseline else 0,
+          subfolder_name))
     conn.commit()
     conn.close()
 
 
 def claim_file(file_id: str, cliente: str, folder_id: str, name: str,
-               size: Optional[int], created_time: Optional[str], is_baseline: bool = False) -> bool:
+               size: Optional[int], created_time: Optional[str], is_baseline: bool = False,
+               subfolder_name: Optional[str] = None) -> bool:
     """Versión atómica: INSERT y retorna True si efectivamente insertó (primero en verlo),
-    False si ya existía (otro proceso/workflow lo claimó). Sirve como lock anti-race condition."""
+    False si ya existía (otro proceso/workflow lo claimó). Sirve como lock anti-race condition.
+
+    `subfolder_name`: nombre de la subfolder dentro de /Material/ donde estaba el
+    archivo al detectarlo. '' = root de Material. NULL = desconocido (caller no
+    pudo determinarlo). Sirve para auto-inferir editor por subfolder y para
+    alertar al admin de subfolders "tipo" no-mapeadas."""
     conn = get_conn()
     cur = conn.execute("""
         INSERT OR IGNORE INTO known_files
-        (file_id, cliente, folder_id, name, size, created_time, first_seen_at, is_baseline)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (file_id, cliente, folder_id, name, size, created_time, now_iso(), 1 if is_baseline else 0))
+        (file_id, cliente, folder_id, name, size, created_time, first_seen_at, is_baseline, subfolder_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (file_id, cliente, folder_id, name, size, created_time, now_iso(), 1 if is_baseline else 0,
+          subfolder_name))
     inserted = cur.rowcount > 0
     conn.commit()
     conn.close()
@@ -619,6 +655,162 @@ def set_pending_count(cliente: str, editor: Optional[str], count: int, lock: boo
     conn.commit()
     conn.close()
     return n
+
+
+# ─── HELPERS: subfolders "de tipo" + inferencia + alertas ──────────────────────
+
+# Patrones que indican que la subfolder es un TIPO DE CONTENIDO (probable editor
+# distinto), NO un agrupador por proyecto/tanda/fecha. La key del dict es el
+# "tipo canónico" para mostrar en la alerta.
+#
+# Reglas:
+#   - Match SUBSTRING case-insensitive del nombre _normalizado_.
+#   - Si la subfolder es "Youtube tanda 5" → tipo=youtube (substring "youtube").
+#   - Si es "Tanda 5" / "Pack 1" / "Mayo 2026" / "Polara 3" → NO tipo (None).
+_SUBFOLDER_TYPE_PATTERNS = {
+    "youtube":  ["youtube", "yt ", " yt", "long form", "long-form", "podcast", "vsl", "tutorial"],
+    "reels":    ["reels", "reel ", " reel"],
+    "shorts":   ["shorts", "short ", " short"],
+    "tiktok":   ["tiktok", " tt", "tt "],
+    "twitch":   ["twitch", "stream", "vod"],
+    "ads":      ["anuncio", "ads ", " ads", "creativo", "publicidad"],
+}
+
+
+def _classify_subfolder_type(subfolder_name: Optional[str]) -> Optional[str]:
+    """Si el nombre de la subfolder indica un TIPO de contenido (distinto editor
+    probable), retorna el tipo canónico ('youtube', 'reels', 'shorts',
+    'tiktok', etc). Si parece un agrupador por proyecto/tanda → retorna None.
+
+    Ejemplos:
+      'Youtube'           → 'youtube'
+      'YT enero 24'       → 'youtube'
+      'Reels'             → 'reels'
+      'Shorts'            → 'shorts'
+      'TikTok'            → 'tiktok'
+      'Tanda 5'           → None
+      'Pack 1'            → None
+      'Ad Polara'         → None
+      'Polara 3'          → None
+      'Mayo 2026'         → None"""
+    if not subfolder_name:
+        return None
+    import unicodedata
+    s = unicodedata.normalize("NFD", subfolder_name)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    n = " " + " ".join(s.lower().split()) + " "  # padding para matches con espacios
+    for tipo, patterns in _SUBFOLDER_TYPE_PATTERNS.items():
+        for p in patterns:
+            if p in n:
+                return tipo
+    return None
+
+
+def infer_subfolder_editor_from_history(cliente: str, subfolder: str,
+                                          min_consistent_deliveries: int = 2) -> Optional[str]:
+    """Mira el histórico de entregas para este (cliente, subfolder) e infiere
+    el editor responsable si hay consenso.
+
+    Lógica:
+      - Buscar tasks DONE cuyos crudos originales estaban en esta subfolder
+        (matcheo por known_files.subfolder_name + tasks.file_id).
+      - Si >= `min_consistent_deliveries` tasks fueron entregadas por el MISMO
+        editor, retornar ese editor.
+      - Si varios editores entregaron mezclados (sin consenso), retornar None.
+
+    Notas:
+      - Match de subfolder es por igualdad exacta normalizada (no substring;
+        para no contaminar con subfolders nombradas parecido).
+      - Si no hay datos, retorna None.
+    """
+    if not cliente or not subfolder:
+        return None
+    import unicodedata
+    def _norm(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return " ".join(s.lower().split())
+    target = _norm(subfolder)
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT t.editor
+        FROM tasks t
+        JOIN known_files kf ON kf.file_id = t.file_id
+        WHERE TRIM(t.cliente) = TRIM(?)
+          AND t.status = 'done'
+          AND kf.subfolder_name IS NOT NULL
+          AND TRIM(kf.subfolder_name) <> ''
+    """, (cliente,)).fetchall()
+    conn.close()
+    if not rows:
+        return None
+    # Filtrar por subfolder normalizada
+    by_editor = {}
+    for r in rows:
+        # No tenemos el subfolder en el row, lo refiltramos abajo. Mejor query:
+        pass
+    # Refacto: query con subfolder en el resultado para filtrar acá
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT t.editor AS editor, kf.subfolder_name AS sf
+        FROM tasks t
+        JOIN known_files kf ON kf.file_id = t.file_id
+        WHERE TRIM(t.cliente) = TRIM(?)
+          AND t.status = 'done'
+          AND t.editor IS NOT NULL
+          AND kf.subfolder_name IS NOT NULL
+    """, (cliente,)).fetchall()
+    conn.close()
+    counts = {}
+    for r in rows:
+        if _norm(r["sf"] or "") == target:
+            counts[r["editor"]] = counts.get(r["editor"], 0) + 1
+    if not counts:
+        return None
+    # Consenso: un editor solo, con >= min entregas
+    if len(counts) == 1:
+        editor, n = list(counts.items())[0]
+        if n >= min_consistent_deliveries:
+            return editor
+    return None
+
+
+def register_subfolder_alert(cliente: str, subfolder: str, inferred_type: Optional[str],
+                              example_file: Optional[str], example_file_id: Optional[str],
+                              default_editor: Optional[str]) -> bool:
+    """Registra que detectamos una subfolder "tipo" no-mapeada. Retorna True si
+    es la PRIMERA vez (caller debe mandar el mail), False si ya estaba alertada."""
+    if not cliente or not subfolder:
+        return False
+    conn = get_conn()
+    try:
+        cur = conn.execute("""
+            INSERT INTO subfolder_alerts
+                (cliente, subfolder, alerted_at, inferred_type, example_file,
+                 example_file_id, default_editor_assigned)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (cliente, subfolder, now_iso(), inferred_type, example_file,
+              example_file_id, default_editor))
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception:
+        # Ya existía (PK conflict)
+        return False
+    finally:
+        conn.close()
+
+
+def upsert_subfolder_editor(cliente: str, subfolder: str, editor: str) -> None:
+    """Crea/actualiza una entrada en cfg_subfolder_editors. Útil para inferencia
+    automática y para una API admin futura."""
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO cfg_subfolder_editors (cliente, subfolder, editor, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(cliente, subfolder) DO UPDATE SET editor=excluded.editor
+    """, (cliente, subfolder or "", editor, now_iso()))
+    conn.commit()
+    conn.close()
 
 
 def get_editor_for_subfolder(cliente: str, subfolder_name: Optional[str]) -> Optional[str]:

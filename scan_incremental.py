@@ -41,7 +41,9 @@ from tracker import (
     is_client_blocked, set_pending_count,
     is_edited_known, claim_edited_file, decrement_pending_count,
     enqueue_completion_mail, is_correction_for_client,
-    get_editor_for_subfolder,
+    get_editor_for_subfolder, _classify_subfolder_type,
+    infer_subfolder_editor_from_history, register_subfolder_alert,
+    upsert_subfolder_editor,
 )
 from sheets_client import read_packs, get_editor_for_client
 from aliases import resolve_alias, reverse_alias
@@ -249,33 +251,61 @@ def run(notify: bool = False):
                 continue
             size = int(f["size"]) if f.get("size") else None
             raw_folder_id = next((p for p in (f.get("parents") or []) if p in raw_to_client), None)
+            # Detectar subfolder ANTES de claimear (para guardarlo en la row)
+            subfolder_name = _get_immediate_subfolder_name(f, raw_to_client, ancestry_cache)
             # Archivo muy viejo (>3d) → baseline, no avisar.
-            # Evita falsos positivos con archivos descubiertos tarde.
             is_old = _is_file_too_old(f.get("createdTime"))
             claimed = claim_file(
                 file_id=f["id"], cliente=cliente_real,
                 folder_id=raw_folder_id or "(?)",
                 name=f["name"], size=size, created_time=f.get("createdTime"),
                 is_baseline=is_old,
+                subfolder_name=subfolder_name,
             )
             if not claimed:
                 continue
             if is_old:
-                # Archivo viejo registrado como baseline, no avisar
                 continue
             # Detectar duplicado por apodo/nombre similar (ej. 'Cisco' vs 'Cisco Amengual')
             if find_similar_pending_client(cliente_real):
                 continue
-            # Resolver editor: PRIMERO chequear override por subfolder (caso
-            # Roger Marti: /Material/ root → Valen, /Material/Youtube → Fran).
-            # Si no hay override, caer al Sheet (get_editor_for_client).
-            subfolder_name = _get_immediate_subfolder_name(f, raw_to_client, ancestry_cache)
-            editor = get_editor_for_subfolder(cliente_real, subfolder_name) \
-                  or get_editor_for_client(cliente_real, packs)
-            # NO duplicar si ya hay task manual pending para ESTE editor específico.
-            # Caso Roger Marti: tiene manual pending Roger/Fran (Youtube), pero un
-            # reel nuevo debe poder crear task Roger/Valen. Antes el check era
-            # cliente-only y bloqueaba todo.
+            # Resolver editor con prioridad:
+            #   1. cfg_subfolder_editors (override manual configurado)
+            #   2. Inferencia automática del histórico (si misma subfolder ya
+            #      tiene >=2 entregas todas del mismo editor → usar ese editor
+            #      y auto-poblar cfg_subfolder_editors para próxima vez)
+            #   3. Sheet (get_editor_for_client) como default
+            editor = get_editor_for_subfolder(cliente_real, subfolder_name)
+            if not editor and subfolder_name:
+                inferred = infer_subfolder_editor_from_history(cliente_real, subfolder_name)
+                if inferred:
+                    editor = inferred
+                    # Persistir la inferencia para que el próximo scan no recalcule
+                    upsert_subfolder_editor(cliente_real, subfolder_name, inferred)
+                    print(f"   🧠 Inferido del histórico: {cliente_real}/{subfolder_name} → {inferred}")
+            if not editor:
+                editor = get_editor_for_client(cliente_real, packs)
+            # Alerta al admin si la subfolder es "tipo" (Youtube/Reels/Shorts/...)
+            # y NO está mapeada en cfg_subfolder_editors. Mandar UN solo mail
+            # por (cliente, subfolder).
+            if subfolder_name:
+                tipo = _classify_subfolder_type(subfolder_name)
+                already_mapped = get_editor_for_subfolder(cliente_real, subfolder_name)
+                if tipo and not already_mapped:
+                    is_new_alert = register_subfolder_alert(
+                        cliente=cliente_real, subfolder=subfolder_name,
+                        inferred_type=tipo, example_file=f["name"],
+                        example_file_id=f["id"], default_editor=editor,
+                    )
+                    if is_new_alert:
+                        # Encolar mail de alerta al admin (envío diferido en notifier)
+                        from notifier import enqueue_subfolder_alert
+                        enqueue_subfolder_alert(
+                            cliente=cliente_real, subfolder=subfolder_name,
+                            tipo=tipo, file_name=f["name"], file_id=f["id"],
+                            default_editor=editor,
+                        )
+            # NO duplicar si ya hay task manual pending para ESTE editor específico
             if has_manual_pending_for_client(cliente_real, editor):
                 continue
             if has_pending_for_client_editor(cliente_real, editor):

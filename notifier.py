@@ -346,6 +346,65 @@ Archivo: {file_name}{link_text}
     return sent
 
 
+# ─── ALERTAS DE SUBFOLDER NO-MAPEADA ─────────────────────────────────────────
+
+def enqueue_subfolder_alert(cliente: str, subfolder: str, tipo: str,
+                              file_name: str, file_id: str,
+                              default_editor: Optional[str]) -> None:
+    """Manda mail INMEDIATO al admin avisando que detectamos una subfolder
+    "tipo" (Youtube/Reels/Shorts/...) sin mapeo. Asignamos al editor default
+    del Sheet pero el admin debería decidir si está bien.
+
+    Idempotencia: el caller (scan_incremental) ya chequea
+    register_subfolder_alert que es una sola vez por (cliente, subfolder)."""
+    subject = f"🆕 Subfolder nueva: {cliente} / {subfolder}"
+    file_url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else None
+    editor_txt = default_editor or "(sin editor)"
+    text = f"""Detecté un crudo nuevo en una subfolder que no tengo mapeada:
+
+  Cliente:   {cliente}
+  Subfolder: {subfolder}  (tipo detectado: {tipo})
+  Archivo:   {file_name}
+  Owner:     {file_url or '(sin link)'}
+
+Asigné al editor por default del Sheet: {editor_txt}
+
+Si la subfolder '{subfolder}' va a OTRO editor (típico cuando un cliente
+tiene reels + youtube con editores distintos), avisame para configurarlo.
+
+A partir de ese momento, todos los crudos en /Material/{subfolder}/ van a
+asignarse automáticamente al editor que digas.
+
+— Asistente Revolv (auto-detección de subfolders)
+"""
+    html = f"""<!DOCTYPE html>
+<html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;line-height:1.55;">
+<h2 style="margin:0 0 12px;">🆕 Subfolder nueva detectada</h2>
+<p>Apareció un crudo en una subfolder dentro de <code>/Material/</code> que
+<strong>no tengo mapeada a ningún editor</strong>.</p>
+<table style="border-collapse:collapse;margin:12px 0;font-size:14px;">
+  <tr><td style="padding:4px 12px 4px 0;color:#666;">Cliente</td><td><strong>{cliente}</strong></td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#666;">Subfolder</td><td><code>{subfolder}</code> <span style="color:#888;font-size:12px;">(tipo: {tipo})</span></td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#666;">Archivo</td><td>{file_name}</td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#666;">Editor asignado por default</td><td><strong>{editor_txt}</strong> <span style="color:#888;font-size:12px;">(del Sheet)</span></td></tr>
+</table>
+{f'<p><a href="{file_url}" style="background:#ff4747;color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-weight:600;">📁 Ver archivo en Drive</a></p>' if file_url else ''}
+<p style="background:#fff7e6;border-left:3px solid #ffaa00;padding:10px 14px;border-radius:4px;font-size:13px;">
+<strong>¿Está bien {editor_txt}?</strong> Si esta subfolder ('{subfolder}') la maneja
+OTRO editor, avisame y la configuro. Una vez configurada, todos los próximos
+crudos en <code>/Material/{subfolder}/</code> van a asignarse automáticamente.
+</p>
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
+<p style="color:#888;font-size:12px;">— Asistente Revolv · auto-detección de subfolders</p>
+</body></html>
+"""
+    try:
+        msg_id = send_mail(to=TEST_EMAIL, subject=subject, text=text, html=html)
+        print(f"   📧 alerta subfolder enviada: {cliente}/{subfolder} → {TEST_EMAIL} (msg_id={msg_id})")
+    except Exception as e:
+        print(f"   ⚠️ falló mail alerta subfolder {cliente}/{subfolder}: {e}")
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--dry-run", action="store_true", help="muestra qué mandaría sin enviar")
