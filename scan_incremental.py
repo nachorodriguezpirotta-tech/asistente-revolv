@@ -41,6 +41,7 @@ from tracker import (
     is_client_blocked, set_pending_count,
     is_edited_known, claim_edited_file, decrement_pending_count,
     enqueue_completion_mail, is_correction_for_client,
+    get_editor_for_subfolder,
 )
 from sheets_client import read_packs, get_editor_for_client
 from aliases import resolve_alias, reverse_alias
@@ -63,6 +64,56 @@ def _build_folder_index() -> tuple[dict, dict]:
         if r["raw_folder_id"]:
             raw_to_client[r["raw_folder_id"]] = r["cliente"]
     return folder_to_client, raw_to_client
+
+
+def _get_immediate_subfolder_name(f: dict, raw_to_client: dict,
+                                   ancestry_cache: Optional[dict] = None) -> Optional[str]:
+    """Devuelve el nombre de la subfolder dentro de /Material/ donde está el archivo.
+    Si está en /Material/ root (sin subfolder), retorna ''.
+    Si no se puede determinar, retorna None.
+
+    Ejemplos para Roger Marti:
+      - /Material/Vuori.mov → ''  (root de Material)
+      - /Material/Youtube/Claude1.mov → 'Youtube'
+      - /Material/Polara 3/IMG_xxx.mov → 'Polara 3'
+
+    Estrategia: sube por ancestors hasta encontrar el raw_folder_id; el folder
+    inmediatamente debajo de éste es la subfolder que devolvemos."""
+    from drive_client import get_service
+    if ancestry_cache is None:
+        ancestry_cache = {}
+
+    parents = f.get("parents") or []
+    if not parents:
+        return None
+
+    # Si el parent directo ES el raw_folder → archivo en root de /Material/
+    for p in parents:
+        if p in raw_to_client:
+            return ''
+
+    # Subir por la cadena de ancestors. El primer folder cuyo padre sea
+    # un raw_folder_id es la subfolder que queremos nombrar.
+    service = get_service()
+    cur_id = parents[0]
+    visited = set()
+    for _ in range(6):
+        if cur_id in visited:
+            break
+        visited.add(cur_id)
+        try:
+            meta = service.files().get(fileId=cur_id, fields="id,name,parents",
+                                        supportsAllDrives=True).execute()
+        except Exception:
+            return None
+        pps = meta.get("parents") or []
+        # Si alguno de mis parents es el raw_folder → este folder es la subfolder
+        if any(p in raw_to_client for p in pps):
+            return meta.get("name") or ''
+        if not pps:
+            return None
+        cur_id = pps[0]
+    return None
 
 
 def _resolve_client_for_file(f: dict, folder_to_client: dict, raw_to_client: dict,
@@ -212,13 +263,21 @@ def run(notify: bool = False):
             if is_old:
                 # Archivo viejo registrado como baseline, no avisar
                 continue
-            # Si admin ya asignó manualmente este cliente a un editor, no duplicar
-            if has_manual_pending_for_client(cliente_real):
-                continue
             # Detectar duplicado por apodo/nombre similar (ej. 'Cisco' vs 'Cisco Amengual')
             if find_similar_pending_client(cliente_real):
                 continue
-            editor = get_editor_for_client(cliente_real, packs)
+            # Resolver editor: PRIMERO chequear override por subfolder (caso
+            # Roger Marti: /Material/ root → Valen, /Material/Youtube → Fran).
+            # Si no hay override, caer al Sheet (get_editor_for_client).
+            subfolder_name = _get_immediate_subfolder_name(f, raw_to_client, ancestry_cache)
+            editor = get_editor_for_subfolder(cliente_real, subfolder_name) \
+                  or get_editor_for_client(cliente_real, packs)
+            # NO duplicar si ya hay task manual pending para ESTE editor específico.
+            # Caso Roger Marti: tiene manual pending Roger/Fran (Youtube), pero un
+            # reel nuevo debe poder crear task Roger/Valen. Antes el check era
+            # cliente-only y bloqueaba todo.
+            if has_manual_pending_for_client(cliente_real, editor):
+                continue
             if has_pending_for_client_editor(cliente_real, editor):
                 continue
             if is_client_blocked(cliente_real, editor):
@@ -248,9 +307,9 @@ def run(notify: bool = False):
                 continue
             if is_old:
                 continue  # archivo viejo, registrado como baseline, sin mail
-            if has_manual_pending_for_client(cliente_real):
-                continue
             editor = get_editor_for_client(cliente_real, packs)
+            if has_manual_pending_for_client(cliente_real, editor):
+                continue
             if has_pending_for_client_editor(cliente_real, editor):
                 continue
             if is_client_blocked(cliente_real, editor):

@@ -206,6 +206,24 @@ def init_db():
         )
     """)
 
+    # Tabla de overrides editor-por-subfolder. Para clientes con múltiples editores
+    # según el tipo de contenido. Ej Roger Marti:
+    #   (Roger Marti, '', Valen)        → archivos en /Material/ root → Valen (reels)
+    #   (Roger Marti, 'Youtube', Fran)  → archivos en /Material/Youtube/ → Fran
+    # subfolder='' o NULL = default para /Material/ root del cliente.
+    # subfolder matchea por _normalize (case/acentos/espacios insensitive) y
+    # acepta substring (ej "youtube" matchea "Youtube ENERO 24").
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cfg_subfolder_editors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente TEXT NOT NULL,
+            subfolder TEXT NOT NULL DEFAULT '',
+            editor TEXT NOT NULL,
+            created_at TEXT,
+            UNIQUE(cliente, subfolder)
+        )
+    """)
+
     # Seed inicial desde aliases.py (solo si las tablas están vacías)
     try:
         from aliases import (
@@ -603,15 +621,67 @@ def set_pending_count(cliente: str, editor: Optional[str], count: int, lock: boo
     return n
 
 
-def has_manual_pending_for_client(cliente: str) -> bool:
-    """¿El cliente tiene alguna task pending con count_locked=1 (decisión manual del admin)?
-    Si sí, el scan NO debe crear duplicados para otro editor según el Sheet.
-    Esto respeta cuando Ignacio asigna manualmente un cliente a un editor distinto al del Sheet."""
+def get_editor_for_subfolder(cliente: str, subfolder_name: Optional[str]) -> Optional[str]:
+    """Resuelve editor según subfolder dentro de /Material/.
+
+    Lookup order:
+      1. Si `subfolder_name` es dado, busca match (substring + case insensitive)
+         contra cfg_subfolder_editors filtrado por cliente. Primer match gana.
+      2. Si no hay match O subfolder_name es None/'', busca default
+         (subfolder='' o NULL) para ese cliente.
+      3. Si no hay nada, retorna None (caller cae al Sheet)."""
+    import unicodedata
+    def _norm(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return " ".join(s.lower().split())
+
     conn = get_conn()
-    row = conn.execute(
-        "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
+    rows = conn.execute(
+        "SELECT subfolder, editor FROM cfg_subfolder_editors WHERE TRIM(cliente)=TRIM(?)",
         (cliente,)
-    ).fetchone()
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return None
+
+    sub_norm = _norm(subfolder_name) if subfolder_name else ""
+    # 1) Match por subfolder no-vacío (substring)
+    if sub_norm:
+        for r in rows:
+            cfg_sub = _norm(r["subfolder"] or "")
+            if cfg_sub and cfg_sub in sub_norm:
+                return r["editor"]
+    # 2) Default (subfolder vacío)
+    for r in rows:
+        if not (r["subfolder"] or "").strip():
+            return r["editor"]
+    return None
+
+
+def has_manual_pending_for_client(cliente: str, editor: Optional[str] = None) -> bool:
+    """¿El cliente tiene alguna task pending con count_locked=1 (decisión manual del admin)?
+    Si sí, el scan NO debe crear duplicados para el MISMO editor según el Sheet.
+
+    Si `editor` es None: chequea CUALQUIER editor (comportamiento legacy).
+    Si `editor` es dado: solo chequea pending manual para ESE editor específico.
+
+    Caso real (Roger Marti): tiene 2 editores — Fran para YouTube, Valen para reels.
+    Si existe task manual pending Roger/Fran (Youtube), un reel nuevo en /Material/
+    debe poder crear task Roger/Valen. Antes esto se bloqueaba porque el chequeo
+    era cliente-only sin filtrar por editor."""
+    conn = get_conn()
+    if editor:
+        row = conn.execute(
+            "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND TRIM(COALESCE(editor,''))=TRIM(?) "
+            "AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
+            (cliente, editor or "")
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
+            (cliente,)
+        ).fetchone()
     conn.close()
     return row is not None
 

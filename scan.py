@@ -104,17 +104,16 @@ def _process_standard_client(c, packs):
             # pero NO crea task ni manda mail
             continue
         had_new_file = True
-        # Si el admin ya asignó manualmente este cliente a un editor (count_locked=1),
-        # NO crear duplicado para el editor del Sheet. La task manual decrementa
-        # automáticamente cuando se entreguen los editados.
-        if has_manual_pending_for_client(cliente_real):
-            continue
         # Detectar duplicado por apodo/nombre similar: si ya hay pending de "Cisco"
         # y el scan detecta "Cisco Amengual", son la misma persona → no duplicar.
         similar = find_similar_pending_client(cliente_real)
         if similar:
             continue
         editor = get_editor_for_client(cliente_real, packs)
+        # NO duplicar si ya hay manual pending para ESTE editor específico
+        # (clientes multi-editor como Roger Marti: Fran/Youtube + Valen/Reels).
+        if has_manual_pending_for_client(cliente_real, editor):
+            continue
         if has_pending_for_client_editor(cliente_real, editor):
             continue
         if is_client_blocked(cliente_real, editor):
@@ -266,13 +265,13 @@ def run(notify: bool = False):
                     continue
                 if is_baseline_file:
                     continue
-                # Si admin ya asignó manualmente este cliente, no duplicar
-                if has_manual_pending_for_client(cliente_name):
-                    continue
                 # Detectar duplicado por apodo/nombre similar
                 if find_similar_pending_client(cliente_name):
                     continue
                 editor = get_editor_for_client(cliente_name, packs)
+                # NO duplicar si ya hay manual pending para ESTE editor
+                if has_manual_pending_for_client(cliente_name, editor):
+                    continue
                 if has_pending_for_client_editor(cliente_name, editor):
                     continue
                 if is_client_blocked(cliente_name, editor):
