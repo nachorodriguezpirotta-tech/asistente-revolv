@@ -257,15 +257,20 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
                 f"<p style='color:#666;font-size:13px;'>El pending count NO cambia. "
                 f"La corrección reemplaza el editado previo del mismo video.</p>"
             )
-        elif closed:
-            subject = f"✅ {editor} completó {cliente}"
-            estado_text = f"{editor} entregó el último video de {cliente}. Cliente cerrado en el dashboard."
-            estado_html = f"<p>{editor} entregó el <strong>último video</strong> de <strong>{cliente}</strong>. Cliente cerrado en el dashboard.</p>"
         else:
-            plural = "s" if new_count != 1 else ""
-            subject = f"📹 {editor} entregó 1 video de {cliente} ({new_count} restante{plural})"
-            estado_text = f"{editor} entregó 1 video de {cliente}.\nQuedan {new_count} video{plural} pendiente{plural}."
-            estado_html = f"<p>{editor} entregó 1 video de <strong>{cliente}</strong>. Quedan <strong>{new_count} video{plural}</strong> pendiente{plural}.</p>"
+            # Mail unificado: SIEMPRE el formato "entregó 1 video de X". Incluye
+            # el nombre del archivo en el subject para que Ignacio sepa qué subió
+            # sin tener que abrir el mail. Antes había un subject separado
+            # "✅ completó cliente" cuando era el último video, pero el user pidió
+            # eliminarlo porque ya tiene el mail del archivo y le basta con eso.
+            if closed:
+                rest_text = "0 restantes (cliente cerrado)"
+            else:
+                plural = "s" if new_count != 1 else ""
+                rest_text = f"{new_count} restante{plural}"
+            subject = f"📹 {editor} entregó {file_name} de {cliente} ({rest_text})"
+            estado_text = f"{editor} entregó 1 video de {cliente}.\n{rest_text}."
+            estado_html = f"<p>{editor} entregó 1 video de <strong>{cliente}</strong>. <strong>{rest_text}</strong>.</p>"
 
         link_text = f"\n📁 {video_label}: {video_url}\n" if video_url else ""
         link_html = f'<p style="margin: 20px 0;"><a href="{video_url}" style="background:#ff4747;color:white;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:600;">📁 {video_label}</a></p>' if video_url else ""
