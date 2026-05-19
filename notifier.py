@@ -399,7 +399,7 @@ crudos en <code>/Material/{subfolder}/</code> van a asignarse automáticamente.
 </body></html>
 """
     try:
-        msg_id = send_mail(to=TEST_EMAIL, subject=subject, text=text, html=html)
+        msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html)
         print(f"   📧 alerta subfolder enviada: {cliente}/{subfolder} → {TEST_EMAIL} (msg_id={msg_id})")
     except Exception as e:
         print(f"   ⚠️ falló mail alerta subfolder {cliente}/{subfolder}: {e}")
