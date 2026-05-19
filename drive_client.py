@@ -37,6 +37,37 @@ def _is_video(name: str, mime: str = "") -> bool:
     return mime.startswith("video/")
 
 
+def _is_raw_subfolder_name(name: str) -> bool:
+    """¿Es nombre de carpeta de material crudo?
+
+    Match por exact + prefijo. Cubre variantes reales encontradas en Drive:
+      "Material" ✅ (exact)
+      "Material VIDEOS REELS" ✅ (caso Ely Fitness)
+      "Material (12/14)" ✅ (varios clientes con contadores)
+      "Material - Abril 2025" ✅ (Alejanro Araya tiene 5 así)
+      "Materiales" ✅ (plural, Javier Peñalver)
+      "Material de apoyo" ✅
+      "Raw footage" ✅
+      "Crudos viejos" ✅
+      "Material gráfico" ⚠️ (no es video pero ningún cliente lo tiene; si aparece, lista negra explícita)
+
+    Antes el match era EXACT contra {"material","raw","crudos","material crudo"}
+    y dejaba afuera al 65% de los clientes (87/134).
+    """
+    n = _normalize(name)
+    if n in RAW_SUBFOLDER_NAMES:
+        return True
+    # Prefix match. "material" cubre "materiales", "material videos reels",
+    # "material - abril 2025", "material (12/14)", "material de apoyo", etc.
+    if n.startswith("material") or n.startswith("crudo"):
+        return True
+    # "raw" más restrictivo (palabra exacta o seguida de algo) para evitar
+    # falsos positivos con palabras que empiecen con raw-.
+    if n == "raw" or n.startswith("raw "):
+        return True
+    return False
+
+
 import threading
 _thread_local = threading.local()
 
@@ -242,9 +273,14 @@ def _list_root_items_with_shortcuts() -> list[dict]:
 
 
 def find_raw_subfolder(client_folder_id: str) -> Optional[dict]:
-    """Busca la subcarpeta 'Material' (o Raw, Crudos) dentro de la carpeta del cliente."""
+    """Busca la subcarpeta 'Material' (o Raw, Crudos) dentro de la carpeta del cliente.
+
+    Usa prefix match (`_is_raw_subfolder_name`) para detectar variantes como
+    'Material VIDEOS REELS', 'Material (12/14)', 'Materiales', etc. Antes
+    hacía exact match y dejaba el 65% de los clientes sin raw_folder_id.
+    """
     for f in _list_subfolders(client_folder_id):
-        if _normalize(f["name"]) in RAW_SUBFOLDER_NAMES:
+        if _is_raw_subfolder_name(f["name"]):
             return f
     return None
 
@@ -436,14 +472,14 @@ def list_crudos_anywhere(client_folder_id: str, client_folder_name: Optional[str
     for sub in _list_subfolders(client_folder_id):
         if raw and sub["id"] == raw["id"]:
             continue
-        if _normalize(sub["name"]) in RAW_SUBFOLDER_NAMES:
+        if _is_raw_subfolder_name(sub["name"]):
             # debería estar capturado en #1 pero por las dudas
             for f in _list_files(sub["id"], only_videos=True):
                 crudos.append(f)
             continue
         # Buscar subcarpetas anidadas tipo "Mayo/Crudos"
         for nested in _list_subfolders(sub["id"]):
-            if _normalize(nested["name"]) in RAW_SUBFOLDER_NAMES:
+            if _is_raw_subfolder_name(nested["name"]):
                 for f in _list_files(nested["id"], only_videos=True):
                     crudos.append(f)
 
@@ -503,7 +539,7 @@ def list_edited_files(client_folder_id: str, raw_folder_id: Optional[str],
     for sub in _list_subfolders(client_folder_id):
         if raw_folder_id and sub["id"] == raw_folder_id:
             continue
-        if _normalize(sub["name"]) in RAW_SUBFOLDER_NAMES:
+        if _is_raw_subfolder_name(sub["name"]):
             continue
         edited.extend(_list_recursive_videos(sub["id"], parent_name=sub["name"]))
     return edited
@@ -522,7 +558,7 @@ def _list_recursive_videos(folder_id: str, parent_name: Optional[str] = None) ->
         if is_likely_editado(f, parent_name=parent_name):
             out.append(f)
     for sub in _list_subfolders(folder_id):
-        if _normalize(sub["name"]) in RAW_SUBFOLDER_NAMES:
+        if _is_raw_subfolder_name(sub["name"]):
             continue
         out.extend(_list_recursive_videos(sub["id"], parent_name=sub["name"]))
     return out
