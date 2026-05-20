@@ -243,7 +243,11 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
         any_sent = False
         for dest in destinatarios:
             try:
-                msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html)
+                # dedupe_window=30min evita que dos workers paralelos del scan
+                # manden el mismo "Material nuevo de X" si ambos detectaron
+                # los mismos archivos antes de que mail_log se sincronizara
+                msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html,
+                                   dedupe_window_minutes=30)
                 print(f"     ✅ enviado a {dest} · msg_id={msg_id}")
                 any_sent = True
             except Exception as e:
@@ -394,8 +398,12 @@ Archivo: {file_name}{link_text}
         any_sent = False
         for dest in destinatarios:
             try:
+                # dedupe_window=30min: si dos workers de GHA procesaron en paralelo
+                # el mismo editado y mandaron el mismo mail, Gmail nos avisa y
+                # evitamos el duplicado (bug reportado por Ignacio 20/may).
                 msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html,
-                                   kind="completion", cliente=cliente, editor=editor)
+                                   kind="completion", cliente=cliente, editor=editor,
+                                   dedupe_window_minutes=30)
                 print(f"  ✅ mail cierre enviado a {dest}: {editor} → {cliente} (msg_id={msg_id})")
                 any_sent = True
                 sent += 1
@@ -612,7 +620,8 @@ Nacho te subió tu video nuevo:
 </body></html>
 """
     try:
-        msg_id = send_mail(to=to_email, subject=subject, body_text=text, body_html=html)
+        msg_id = send_mail(to=to_email, subject=subject, body_text=text, body_html=html,
+                            dedupe_window_minutes=30)
         print(f"   📧 mail al cliente {cliente} ({to_email}): {file_name} (msg_id={msg_id})")
         return True
     except Exception as e:
@@ -673,7 +682,8 @@ a llegar al cliente un mail nuevo con la versión corregida.
 
     for dest in destinatarios:
         try:
-            msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html)
+            msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html,
+                                dedupe_window_minutes=30)
             print(f"   📧 revisión enviada a {dest} (msg_id={msg_id})")
         except Exception as e:
             print(f"   ⚠️ falló mail revisión a {dest}: {e}")
@@ -713,7 +723,8 @@ Editor: {editor or '-'}.
 </body></html>
 """
     try:
-        send_mail(to=TEST_EMAIL, subject=subject, body_text=body_text, body_html=body_html)
+        send_mail(to=TEST_EMAIL, subject=subject, body_text=body_text, body_html=body_html,
+                   dedupe_window_minutes=30)
     except Exception as e:
         print(f"   ⚠️ falló mail approved: {e}")
 
@@ -763,7 +774,8 @@ Un abrazo,<br><strong style="color:#222;">Nacho</strong><br>
 </div></div></body></html>
 """
     try:
-        send_mail(to=to_email, subject=subject, body_text=body_text, body_html=body_html)
+        send_mail(to=to_email, subject=subject, body_text=body_text, body_html=body_html,
+                   dedupe_window_minutes=30)
         print(f"   📧 revisión resuelta enviada a cliente {cliente} ({to_email})")
     except Exception as e:
         print(f"   ⚠️ falló mail revisión resuelta a {cliente}: {e}")
@@ -822,7 +834,8 @@ crudos en <code>/Material/{subfolder}/</code> van a asignarse automáticamente.
 </body></html>
 """
     try:
-        msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html)
+        msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html,
+                            dedupe_window_minutes=30)
         print(f"   📧 alerta subfolder enviada: {cliente}/{subfolder} → {TEST_EMAIL} (msg_id={msg_id})")
     except Exception as e:
         print(f"   ⚠️ falló mail alerta subfolder {cliente}/{subfolder}: {e}")
