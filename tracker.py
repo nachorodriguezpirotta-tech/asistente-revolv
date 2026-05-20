@@ -538,7 +538,26 @@ def is_file_known(file_id: str) -> bool:
 
 
 def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: str) -> int:
+    """Crea task NUEVA SOLO si NO existe una task pending para (cliente, editor).
+    Si ya existe → retorna el id de la existente (transparente para el caller).
+
+    Antes era un INSERT directo. El cluster de scans con bot pushes paralelos
+    pudo crear duplicados (caso Egdylu/Fran que tenía #267 + #273 ambas pending
+    para el mismo par). Ahora la creación es idempotente — múltiples scans
+    procesando el mismo cliente nunca van a crear task duplicada.
+
+    Nota: el count_locked y pending_count NO se modifican si ya existía. Esa
+    sigue siendo decisión del admin. Solo evitamos duplicar la row."""
     conn = get_conn()
+    # Atómico: chequear y crear en una sola transacción
+    existing = conn.execute(
+        "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+        "AND COALESCE(editor,'')=COALESCE(?,'') AND status='pending' LIMIT 1",
+        (cliente, editor)
+    ).fetchone()
+    if existing:
+        conn.close()
+        return existing[0]
     cur = conn.execute("""
         INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at)
         VALUES (?, ?, ?, ?, ?)
@@ -547,6 +566,68 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
     conn.commit()
     conn.close()
     return task_id
+
+
+def find_duplicate_pending_tasks() -> list[dict]:
+    """Detecta tasks pending duplicadas: mismo (cliente, editor) con >1 row
+    en status='pending'. Sirve para cleanup masivo."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT TRIM(cliente) as cliente, COALESCE(editor,'') as editor, COUNT(*) as n,
+               GROUP_CONCAT(id) as ids, SUM(COALESCE(pending_count, 1)) as total_count
+        FROM tasks WHERE status='pending'
+        GROUP BY TRIM(cliente), COALESCE(editor,'')
+        HAVING n > 1
+        ORDER BY n DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def consolidate_duplicate_tasks() -> int:
+    """Para cada (cliente, editor) con >1 pending: mantiene la más vieja
+    (ID más chico) con count_locked=1 y pending_count = max de los counts
+    individuales (no suma — el count es por entregables, no por archivos).
+    Borra las demás. Retorna cuántas tasks borró."""
+    dupes = find_duplicate_pending_tasks()
+    if not dupes:
+        return 0
+    conn = get_conn()
+    n_deleted = 0
+    for d in dupes:
+        ids = sorted(int(x) for x in (d["ids"] or "").split(",") if x)
+        if len(ids) < 2:
+            continue
+        keep_id = ids[0]  # la más vieja
+        delete_ids = ids[1:]
+        # Tomar el MAX pending_count de las duplicadas (no suma; cada row
+        # representaba 'el mismo trabajo' no trabajo extra)
+        max_pc = conn.execute(
+            f"SELECT MAX(COALESCE(pending_count,1)) FROM tasks WHERE id IN ({','.join('?'*len(ids))})",
+            ids
+        ).fetchone()[0] or 1
+        # Tomar urgent=1 si alguna lo tenía
+        any_urgent = conn.execute(
+            f"SELECT MAX(COALESCE(urgent,0)) FROM tasks WHERE id IN ({','.join('?'*len(ids))})",
+            ids
+        ).fetchone()[0] or 0
+        # Tomar la note no vacía si la hay
+        note_row = conn.execute(
+            f"SELECT note FROM tasks WHERE id IN ({','.join('?'*len(ids))}) AND note IS NOT NULL AND TRIM(note) != '' LIMIT 1",
+            ids
+        ).fetchone()
+        note_val = note_row[0] if note_row else None
+        conn.execute(
+            "UPDATE tasks SET pending_count=?, count_locked=1, urgent=?, note=COALESCE(note, ?) WHERE id=?",
+            (max_pc, any_urgent, note_val, keep_id)
+        )
+        n_deleted += conn.execute(
+            f"DELETE FROM tasks WHERE id IN ({','.join('?'*len(delete_ids))})",
+            delete_ids
+        ).rowcount
+    conn.commit()
+    conn.close()
+    return n_deleted
 
 
 # ─── EDITADOS (cierre de tareas) ──────────────────────────────────────────────
