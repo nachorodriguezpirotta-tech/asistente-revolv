@@ -32,31 +32,85 @@ def _format_size(bytes_):
 
 
 def _build_mail(cliente: str, editor: Optional[str], items: list[dict], folder_id: Optional[str]) -> tuple[str, str, str]:
-    """Devuelve (subject, body_text, body_html)."""
+    """Devuelve (subject, body_text, body_html).
+
+    Si los items tienen subfolder_name no vacío, agrupa por subfolder y
+    presenta como 'N videos' (= N subfolders distintas con material).
+    Cada subfolder de /Material/ típicamente representa UN video distinto
+    para algunos clientes (ej. Alberto Carretero: V58, V60, V61, V63...).
+    """
     n = len(items)
-    plural = "s" if n != 1 else ""
-    subject = f"🎬 Material nuevo de {cliente} ({n} archivo{plural})"
+    plural_a = "s" if n != 1 else ""
+
+    # Agrupar items por subfolder
+    by_sub = {}
+    for it in items:
+        sub = (it.get("subfolder_name") or "").strip()
+        by_sub.setdefault(sub, []).append(it)
+
+    # Subfolders con material (sin contar root '')
+    subs_with_material = [s for s in by_sub.keys() if s]
+    n_videos = len(subs_with_material)
+
+    if n_videos >= 2:
+        # Caso "N videos en M carpetas": resaltarlo en el subject
+        subject = f"🎬 {cliente} subió {n_videos} videos ({n} archivo{plural_a})"
+        intro_text = f"Subió material nuevo de {cliente}: {n_videos} videos distintos (1 por subcarpeta), {n} archivo{plural_a} en total."
+        intro_html = (f"<p>Subió material nuevo: <strong>{n_videos} videos distintos</strong> "
+                      f"({n} archivo{plural_a} en total). Cada subcarpeta es un video:</p>")
+    else:
+        # Caso simple: todo junto
+        subject = f"🎬 Material nuevo de {cliente} ({n} archivo{plural_a})"
+        intro_text = f"Subió material nuevo de {cliente} ({n} archivo{plural_a})."
+        intro_html = f"<p>Llegaron <strong>{n} archivo{plural_a} nuevo{plural_a}</strong> al /Material/ del cliente:</p>"
 
     saludo_editor = f"Editor responsable: {editor}" if editor else "⚠️ No encontré editor asignado en el Sheet"
-    files_lines = []
-    files_html = []
-    for it in items:
-        size_str = _format_size(it.get("size"))
-        files_lines.append(f"  • {it['name']}" + (f"   ({size_str})" if size_str else ""))
-        files_html.append(f"<li><code>{it['name']}</code>" + (f" <span style='color:#888'>· {size_str}</span>" if size_str else "") + "</li>")
+
+    # Texto: agrupar por sub
+    text_blocks = []
+    html_blocks = []
+    # Mostrar subs con material primero, ordenadas alfabéticamente
+    for sub in sorted(subs_with_material):
+        sub_items = by_sub[sub]
+        text_blocks.append(f"\n📁 {sub}  ({len(sub_items)} archivo{'s' if len(sub_items)!=1 else ''})")
+        html_blocks.append(f'<h4 style="margin:18px 0 4px;color:#1a4d8a;">📁 {sub}  '
+                            f'<span style="color:#888;font-weight:400;font-size:13px;">'
+                            f'({len(sub_items)} archivo{"s" if len(sub_items)!=1 else ""})</span></h4><ul style="line-height:1.5;margin:4px 0 12px;">')
+        for it in sub_items[:15]:
+            size_str = _format_size(it.get("size"))
+            text_blocks.append(f"  • {it['name']}" + (f"   ({size_str})" if size_str else ""))
+            html_blocks.append(f"<li><code>{it['name']}</code>" + (f" <span style='color:#888'>· {size_str}</span>" if size_str else "") + "</li>")
+        if len(sub_items) > 15:
+            text_blocks.append(f"  ... y {len(sub_items)-15} archivos más")
+            html_blocks.append(f"<li style='color:#888;'>... y {len(sub_items)-15} archivos más</li>")
+        html_blocks.append("</ul>")
+
+    # Si hay archivos en root (sin subfolder), listarlos al final como "sueltos"
+    root_items = by_sub.get("", [])
+    if root_items:
+        text_blocks.append(f"\n📂 (sueltos en /Material/ raíz)  ({len(root_items)} archivo{'s' if len(root_items)!=1 else ''})")
+        html_blocks.append(f'<h4 style="margin:18px 0 4px;color:#666;">📂 (sueltos en /Material/ raíz)  '
+                            f'<span style="color:#888;font-weight:400;font-size:13px;">'
+                            f'({len(root_items)} archivo{"s" if len(root_items)!=1 else ""})</span></h4><ul style="line-height:1.5;margin:4px 0 12px;">')
+        for it in root_items[:15]:
+            size_str = _format_size(it.get("size"))
+            text_blocks.append(f"  • {it['name']}" + (f"   ({size_str})" if size_str else ""))
+            html_blocks.append(f"<li><code>{it['name']}</code>" + (f" <span style='color:#888'>· {size_str}</span>" if size_str else "") + "</li>")
+        if len(root_items) > 15:
+            text_blocks.append(f"  ... y {len(root_items)-15} archivos más")
+            html_blocks.append(f"<li style='color:#888;'>... y {len(root_items)-15} archivos más</li>")
+        html_blocks.append("</ul>")
 
     folder_line = ""
     folder_html = ""
     if folder_id:
         url = _drive_folder_url(folder_id)
-        folder_line = f"\nCarpeta: {url}"
-        folder_html = f'<p>Carpeta: <a href="{url}">{url}</a></p>'
+        folder_line = f"\nCarpeta del cliente: {url}"
+        folder_html = f'<p style="margin-top:20px;">📁 <a href="{url}">{url}</a></p>'
 
-    body_text = f"""Subió material nuevo de {cliente}.
+    body_text = f"""{intro_text}
 {saludo_editor}
-
-{n} archivo{plural} nuevo{plural}:
-{chr(10).join(files_lines)}
+{"".join(text_blocks)}
 {folder_line}
 
 — Asistente Revolv
@@ -65,12 +119,10 @@ def _build_mail(cliente: str, editor: Optional[str], items: list[dict], folder_i
     body_html = f"""<!DOCTYPE html>
 <html>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#222; max-width:600px;">
-<h2 style="color:#000; margin-bottom:4px;">🎬 Material nuevo de {cliente}</h2>
+<h2 style="color:#000; margin-bottom:4px;">🎬 {cliente}</h2>
 <p style="color:#555; margin-top:0;"><strong>{saludo_editor}</strong></p>
-<p>Llegaron <strong>{n} archivo{plural} nuevo{plural}</strong> al /Material/ del cliente:</p>
-<ul style="line-height:1.6;">
-{''.join(files_html)}
-</ul>
+{intro_html}
+{''.join(html_blocks)}
 {folder_html}
 <hr style="border:none; border-top:1px solid #eee; margin:24px 0;">
 <p style="color:#888; font-size:12px;">— Asistente Revolv</p>
@@ -120,13 +172,13 @@ def get_pending_unsent_grouped() -> dict:
         from datetime import datetime, timedelta
         cutoff = (datetime.now() - timedelta(hours=48)).isoformat(timespec="seconds")
         files = conn.execute("""
-            SELECT file_id, name, size, first_seen_at
+            SELECT file_id, name, size, first_seen_at, subfolder_name
             FROM known_files
             WHERE TRIM(cliente)=TRIM(?)
               AND COALESCE(is_baseline, 0) = 0
               AND first_seen_at >= ?
             ORDER BY first_seen_at DESC
-            LIMIT 30
+            LIMIT 50
         """, (r["cliente"], cutoff)).fetchall()
         # Si no hay archivos recientes (caso raro), fallback al archivo de la task
         if not files:
@@ -134,6 +186,7 @@ def get_pending_unsent_grouped() -> dict:
                 grouped[key].append({
                     "task_id": r["id"], "name": r["file_name"],
                     "size": r["size"], "detected_at": r["detected_at"],
+                    "subfolder_name": "",
                 })
                 seen_files_per_group[key].add(r["file_id"])
         else:
@@ -145,6 +198,7 @@ def get_pending_unsent_grouped() -> dict:
                     "name": fr["name"],
                     "size": fr["size"],
                     "detected_at": fr["first_seen_at"],
+                    "subfolder_name": fr["subfolder_name"] or "",
                 })
                 seen_files_per_group[key].add(fr["file_id"])
     conn.close()

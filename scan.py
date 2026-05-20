@@ -103,6 +103,7 @@ def _process_standard_client(c, packs):
             file_id=f["id"], cliente=cliente_real, folder_id=c.raw_folder_id,
             name=f["name"], size=size, created_time=f.get("createdTime"),
             is_baseline=is_old_file,
+            subfolder_name=f.get("_subfolder_name"),
         )
         if not claimed:
             continue

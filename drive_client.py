@@ -309,23 +309,34 @@ def list_material_files(raw_folder_id: str) -> list[dict]:
     """
     Lista videos dentro de /Material/ de un cliente.
 
+    Cada archivo retornado tiene un campo extra `_subfolder_name`:
+      - '' si está directo en /Material/ (root)
+      - 'NombreDeLaSubfolder' si está dentro de una subfolder directa
+        (ej. 'V63 - Autos Abraham' para archivos de Alberto Carretero)
+      - Mantiene el nombre del primer nivel aunque esté anidado más profundo
+        (ej. /Material/V63/sub/x.mov → _subfolder_name = 'V63 - Autos Abraham')
+
     Incluye:
-      - Videos directos en /Material/
-      - Videos dentro de subcarpetas de /Material/
+      - Videos directos en /Material/ (_subfolder_name = '')
+      - Videos dentro de subcarpetas de /Material/ (_subfolder_name = nombre subfolder)
       - Videos dentro de SHORTCUTS a carpetas que estén en /Material/
-        (el cliente puede agregar acceso directo a una carpeta con crudos)
     """
     service = get_service()
     files = []
 
-    # 1. Videos directos
-    files.extend(_list_files(raw_folder_id, only_videos=True))
+    # 1. Videos directos en root → _subfolder_name = ''
+    for f in _list_files(raw_folder_id, only_videos=True):
+        f["_subfolder_name"] = ""
+        files.append(f)
 
-    # 2. Subcarpetas (recursivo)
+    # 2. Subcarpetas (recursivo) → marcar con nombre de la subfolder de nivel 1
     for sub in _list_subfolders(raw_folder_id):
-        files.extend(_list_recursive_videos_all(sub["id"]))
+        sub_name = sub["name"]
+        for f in _list_recursive_videos_all(sub["id"]):
+            f["_subfolder_name"] = sub_name
+            files.append(f)
 
-    # 3. Shortcuts a carpetas → seguir al target
+    # 3. Shortcuts a carpetas → marcar con nombre del shortcut como subfolder virtual
     res = service.files().list(
         q=f"'{raw_folder_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.shortcut'",
         fields="files(id, name, shortcutDetails)",
@@ -336,12 +347,14 @@ def list_material_files(raw_folder_id: str) -> list[dict]:
         target_id = details.get("targetId")
         target_mime = details.get("targetMimeType")
         if target_id and target_mime == "application/vnd.google-apps.folder":
-            files.extend(_list_recursive_videos_all(target_id))
+            for f in _list_recursive_videos_all(target_id):
+                f["_subfolder_name"] = sc["name"]
+                files.append(f)
         elif target_id and (target_mime or "").startswith("video/"):
-            # shortcut directo a un video (poco común pero posible)
             try:
                 f = service.files().get(fileId=target_id,
                                         fields="id, name, mimeType, size, createdTime, modifiedTime, owners(emailAddress), lastModifyingUser(emailAddress)").execute()
+                f["_subfolder_name"] = ""
                 files.append(f)
             except Exception:
                 pass
