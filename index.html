@@ -783,6 +783,54 @@ async function updateNotifButton() {
   }
 }
 
+// Garantiza que haya un SW v10 registrado y ACTIVADO (estado 'activated').
+// El error "no active Service Worker" pasaba cuando el SW estaba en estado
+// 'installing' o cuando el viejo kill-switch se había desregistrado y no
+// había uno nuevo. Ahora forzamos el registro y esperamos a 'activated'.
+async function _ensureActiveServiceWorker() {
+  if (!('serviceWorker' in navigator)) {
+    throw new Error('Tu navegador no soporta Service Workers');
+  }
+  // Intentar usar el registration existente; si no hay → registrar
+  let reg = await navigator.serviceWorker.getRegistration('/');
+  if (!reg) {
+    reg = await navigator.serviceWorker.register('/sw.js');
+  }
+  // Forzar update por si hay una versión nueva en server (v10 vs v9)
+  try { await reg.update(); } catch (_) {}
+  // Si ya hay SW activo, listo
+  if (reg.active && reg.active.state === 'activated') return reg;
+  // Si está instalando o esperando, esperar a que pase a 'activated'
+  const sw = reg.installing || reg.waiting || reg.active;
+  if (!sw) {
+    // Re-registrar como último recurso
+    reg = await navigator.serviceWorker.register('/sw.js');
+  }
+  // Esperar hasta 10s a que el SW termine de activarse
+  return await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Service Worker no se activó en 10s — recargá la página')), 10000);
+    const check = () => {
+      if (reg.active && reg.active.state === 'activated') {
+        clearTimeout(timeout);
+        resolve(reg);
+      }
+    };
+    check();
+    const target = reg.installing || reg.waiting || reg.active;
+    if (target) {
+      target.addEventListener('statechange', check);
+    }
+    // Backup: poll cada 500ms
+    const poll = setInterval(() => {
+      if (reg.active && reg.active.state === 'activated') {
+        clearTimeout(timeout);
+        clearInterval(poll);
+        resolve(reg);
+      }
+    }, 500);
+  });
+}
+
 async function toggleNotifications() {
   if (!('Notification' in window)) {
     return alert('Tu navegador no soporta notificaciones.');
@@ -790,7 +838,7 @@ async function toggleNotifications() {
   const btn = document.getElementById('notif-btn');
   btn.disabled = true;
   try {
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await _ensureActiveServiceWorker();
     let sub = await reg.pushManager.getSubscription();
 
     if (sub) {
