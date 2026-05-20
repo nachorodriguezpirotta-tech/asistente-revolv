@@ -22,9 +22,21 @@ GITHUB_REPO = os.environ.get("GITHUB_REPO", "asistente-revolv")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 GITHUB_PAT = os.environ.get("GITHUB_PAT", "")  # token con permiso repo (SÍ va por env var)
 
-# Secret hardcodeado para que el match sea garantizado entre frontend y backend.
-# El repo es privado, así que no es accesible públicamente.
-DASHBOARD_SECRET = "revolv-asistente-2026-x9k2m4nq7p-fixed"
+# Secret para firmar tokens HMAC del dashboard. SOLO desde env var — el repo
+# es público, no se puede hardcodear. Si la env var no está seteada en Vercel,
+# se usa un valor random EFÍMERO por proceso → los tokens generados no
+# persisten entre reinicios → dashboard inutilizable, forzando al admin a
+# setear DASHBOARD_SECRET en Vercel.
+_env_secret = os.environ.get("DASHBOARD_SECRET", "").strip()
+if _env_secret:
+    DASHBOARD_SECRET = _env_secret
+else:
+    import secrets as _secrets
+    DASHBOARD_SECRET = "ephemeral-" + _secrets.token_urlsafe(24)
+    import sys
+    print("⚠️  DASHBOARD_SECRET no seteada en env. Usando random efímero — "
+          "los tokens no van a funcionar bien hasta setear la env var.",
+          file=sys.stderr)
 
 DB_FILE = "tracker.db"
 
