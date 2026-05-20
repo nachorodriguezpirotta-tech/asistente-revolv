@@ -251,6 +251,24 @@ def init_db():
         )
     """)
 
+    # Voice notes: cada task puede tener N notas de voz dejadas por el admin
+    # como feedback rápido al editor. El audio se guarda como BLOB en SQLite
+    # (típicamente 5-30s, <500KB → no vale la pena montar Drive/Blob storage
+    # para esto). Se sirve vía /api/voice-note?id=X que retorna audio/webm.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_voice_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            audio_blob BLOB NOT NULL,
+            mime_type TEXT NOT NULL DEFAULT 'audio/webm',
+            duration_sec REAL,
+            created_at TEXT NOT NULL,
+            created_by TEXT,
+            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_voice_task ON task_voice_notes(task_id);")
+
     # Seed inicial desde aliases.py (solo si las tablas están vacías)
     try:
         from aliases import (

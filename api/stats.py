@@ -256,6 +256,149 @@ def get_daily_aggregates(conn, days: int = 14) -> dict:
     }
 
 
+def _build_sla_data(conn):
+    """SLA = horas entre detected_at y completed_at en tasks 'done'.
+    Devuelve matrix por (editor, cliente) con avg/median/p90/count y un
+    resumen por editor y por cliente.
+
+    Solo cuenta tasks con file_name != '(pendiente cargado manualmente)' porque
+    las manuales no tienen detected_at significativo."""
+    rows = conn.execute("""
+        SELECT cliente, editor, detected_at, completed_at, file_name
+        FROM tasks
+        WHERE status='done'
+          AND completed_at IS NOT NULL
+          AND detected_at IS NOT NULL
+          AND editor IS NOT NULL
+          AND TRIM(editor) != ''
+          AND file_name NOT LIKE '%manualmente%'
+    """).fetchall()
+
+    def _hours_between(det, comp):
+        try:
+            d = datetime.fromisoformat((det or "").replace("Z", "+00:00"))
+            c = datetime.fromisoformat((comp or "").replace("Z", "+00:00"))
+            if d.tzinfo and not c.tzinfo:
+                c = c.replace(tzinfo=d.tzinfo)
+            if c.tzinfo and not d.tzinfo:
+                d = d.replace(tzinfo=c.tzinfo)
+            delta = (c - d).total_seconds() / 3600.0
+            return delta if delta > 0 else None
+        except Exception:
+            return None
+
+    # Acumular horas por (editor, cliente)
+    by_pair = {}    # {(editor, cliente): [hours,...]}
+    by_editor = {}  # {editor: [hours,...]}
+    by_client = {}  # {cliente: [hours,...]}
+    for r in rows:
+        h = _hours_between(r["detected_at"], r["completed_at"])
+        if h is None or h > 24 * 60:  # filtrar outliers > 60 días
+            continue
+        key = (r["editor"], r["cliente"])
+        by_pair.setdefault(key, []).append(h)
+        by_editor.setdefault(r["editor"], []).append(h)
+        by_client.setdefault(r["cliente"], []).append(h)
+
+    def _stats(arr):
+        if not arr:
+            return None
+        s = sorted(arr)
+        n = len(s)
+        return {
+            "count": n,
+            "avg_h": round(sum(s) / n, 1),
+            "median_h": round(s[n // 2], 1),
+            "p90_h": round(s[min(n - 1, int(n * 0.9))], 1),
+            "min_h": round(s[0], 1),
+            "max_h": round(s[-1], 1),
+        }
+
+    matrix = []
+    for (editor, cliente), arr in by_pair.items():
+        st = _stats(arr)
+        if st and st["count"] >= 1:
+            matrix.append({"editor": editor, "cliente": cliente, **st})
+    # Orden: editor asc, count desc
+    matrix.sort(key=lambda x: (x["editor"], -x["count"]))
+
+    editor_summary = [{"editor": e, **(_stats(a) or {})} for e, a in by_editor.items()]
+    editor_summary.sort(key=lambda x: x.get("avg_h", 0))
+
+    client_summary = [{"cliente": c, **(_stats(a) or {})} for c, a in by_client.items()]
+    # Solo clientes con >=3 entregas (datos significativos)
+    client_summary = [c for c in client_summary if c.get("count", 0) >= 3]
+    client_summary.sort(key=lambda x: -x.get("avg_h", 0))  # los más lentos primero
+
+    return {
+        "matrix": matrix,
+        "by_editor": editor_summary,
+        "by_client_slowest": client_summary[:20],
+    }
+
+
+def _build_productivity_hours(conn):
+    """Distribución de entregas por hora del día (0-23h), por editor.
+    Identifica si un editor labura de día/noche/fin de semana.
+
+    Usa completed_at de tasks done. Asume timezone local (UTC-3) — los
+    completed_at se guardan con now_iso() que usa local time naive."""
+    rows = conn.execute("""
+        SELECT editor, completed_at
+        FROM tasks
+        WHERE status='done'
+          AND completed_at IS NOT NULL
+          AND editor IS NOT NULL
+          AND TRIM(editor) != ''
+    """).fetchall()
+
+    from collections import Counter
+    by_editor_hour = {}  # {editor: [0]*24}
+    by_editor_dow = {}   # {editor: [0]*7}  Mon=0..Sun=6
+    for r in rows:
+        try:
+            t = datetime.fromisoformat((r["completed_at"] or "").replace("Z", "+00:00"))
+        except Exception:
+            continue
+        ed = r["editor"]
+        by_editor_hour.setdefault(ed, [0] * 24)[t.hour] += 1
+        by_editor_dow.setdefault(ed, [0] * 7)[t.weekday()] += 1
+
+    result = []
+    for ed, hours in by_editor_hour.items():
+        total = sum(hours)
+        if total == 0:
+            continue
+        # Detectar "peak hours" — top 3 horas más activas
+        sorted_hours = sorted(enumerate(hours), key=lambda x: -x[1])
+        peaks = [h for h, c in sorted_hours[:3] if c > 0]
+        # Pattern: night (22-5), morning (6-11), afternoon (12-17), evening (18-21)
+        buckets = {
+            "night": sum(hours[h] for h in [22, 23, 0, 1, 2, 3, 4, 5]),
+            "morning": sum(hours[h] for h in [6, 7, 8, 9, 10, 11]),
+            "afternoon": sum(hours[h] for h in [12, 13, 14, 15, 16, 17]),
+            "evening": sum(hours[h] for h in [18, 19, 20, 21]),
+        }
+        dominant = max(buckets, key=lambda k: buckets[k])
+        # Weekend ratio
+        dow = by_editor_dow.get(ed, [0] * 7)
+        weekend = dow[5] + dow[6]
+        weekend_pct = round(weekend * 100 / total, 1) if total else 0
+        result.append({
+            "editor": ed,
+            "total": total,
+            "hours": hours,
+            "dow": dow,
+            "peak_hours": peaks,
+            "buckets": buckets,
+            "dominant_period": dominant,
+            "weekend_pct": weekend_pct,
+        })
+
+    result.sort(key=lambda x: -x["total"])
+    return result
+
+
 def _build_stats(conn):
     now = datetime.now()
     # === EDITORES === — usar lista activa desde cfg_editors (DB), no hardcoded
@@ -295,6 +438,10 @@ def _build_stats(conn):
     # Agregados diarios para gráficos
     daily = get_daily_aggregates(conn, days=14)
 
+    # SLA + horarios — info nueva
+    sla = _build_sla_data(conn)
+    productivity = _build_productivity_hours(conn)
+
     return {
         "ok": True,
         "now": now.isoformat(timespec="seconds"),
@@ -315,6 +462,8 @@ def _build_stats(conn):
         "top_active_clients": top_active,
         "ghost_clients": ghost_clients,
         "hot_clients_count": len(hot_clients),
+        "sla": sla,
+        "productivity": productivity,
     }
 
 
