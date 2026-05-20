@@ -226,9 +226,10 @@ function renderClientEmails() {
       const enabled = !!c.notifications_enabled;
       const display = c.display_name || (c.cliente.split(' ')[0]);
       const status = enabled ? '🟢 ON' : '<span style="color:#5a6478">⚪ OFF</span>';
+      const masked = maskEmail(c.email);
       html += `<tr>
         <td class="name">${escape(c.cliente)}</td>
-        <td class="mono">${escape(c.email)}</td>
+        <td class="mono">${escape(masked)}</td>
         <td>${escape(display)}</td>
         <td>${status}</td>
         <td class="actions">
@@ -276,8 +277,12 @@ function openClientEmailModal(c) {
   document.getElementById('modal-body').innerHTML = `
     ${clienteField}
     <div class="field"><label>Email del cliente <span style="color:#f87171">*</span></label>
-      <input id="m-c-email" type="email" value="${escapeAttr(c?.email || '')}" placeholder="cliente@gmail.com">
-      <div class="field-hint">Ahí va el mail "🎬 tu video está listo"</div>
+      <div style="display:flex; gap:6px; align-items:stretch;">
+        <input id="m-c-email" type="password" value="${escapeAttr(c?.email || '')}" placeholder="cliente@gmail.com" style="flex:1;">
+        <button type="button" id="m-c-email-eye" onclick="toggleEmailVisibility()" title="Mostrar"
+                style="padding:0 12px; border:1px solid #2a2f3a; background:#1a1e27; color:#e8eaed; border-radius:6px; cursor:pointer; font-size:16px;">👁</button>
+      </div>
+      <div class="field-hint">Oculto por seguridad. Click 👁 para ver/editar. Ahí va el mail "🎬 tu video está listo"</div>
     </div>
     <div class="field"><label>Saludo (opcional)</label>
       <input id="m-c-display" type="text" value="${escapeAttr(c?.display_name || '')}" placeholder="Ej: Roger">
@@ -739,6 +744,38 @@ async function deleteRow(section, id) {
 }
 
 function escape(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+// Enmascarar mail para mostrar en tabla. Conserva primer char del local-part
+// + el dominio, todo lo del medio en bullets. Ej:
+//   alberto@gmail.com → a••••••@gmail.com
+//   info@x.com → i•••@x.com
+// Si el mail está vacío o malformado, retorna placeholder.
+function maskEmail(email) {
+  if (!email) return '—';
+  const at = email.indexOf('@');
+  if (at < 1) return '••••••';
+  const local = email.slice(0, at);
+  const domain = email.slice(at);  // incluye el @
+  const hidden = '•'.repeat(Math.max(3, Math.min(local.length - 1, 10)));
+  return local[0] + hidden + domain;
+}
+
+// Toggle del eye (👁) en el campo de email del modal — alterna entre
+// type="password" (oculto) y type="email" (visible).
+function toggleEmailVisibility() {
+  const input = document.getElementById('m-c-email');
+  const btn = document.getElementById('m-c-email-eye');
+  if (!input || !btn) return;
+  if (input.type === 'password') {
+    input.type = 'email';
+    btn.textContent = '🙈';
+    btn.title = 'Ocultar';
+  } else {
+    input.type = 'password';
+    btn.textContent = '👁';
+    btn.title = 'Mostrar';
+  }
+}
 function escapeAttr(s) { return escape(s); }
 
 // Pull-to-refresh
