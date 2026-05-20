@@ -216,6 +216,22 @@ def init_db():
         )
     """)
 
+    # Tabla de clientes con mail + flag de notificaciones. Cuando se entrega un
+    # video del cliente Y notifications_enabled=1, le mandamos mail estilo
+    # "🎬 tu video está listo". `display_name` opcional: nombre amigable para
+    # el saludo del mail (ej. "Roger" en vez de "Roger Marti"). Si está vacío
+    # se usa el primer token del `cliente`.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cfg_clients (
+            cliente TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            display_name TEXT,
+            notifications_enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
     # Tabla de overrides editor-por-subfolder. Para clientes con múltiples editores
     # según el tipo de contenido. Ej Roger Marti:
     #   (Roger Marti, '', Valen)        → archivos en /Material/ root → Valen (reels)
@@ -1133,6 +1149,78 @@ def cfg_delete_editor(name: str):
     conn.execute("DELETE FROM cfg_editors WHERE name = ?", (name,))
     conn.commit()
     conn.close()
+
+
+# ─── CLIENTES (mails + notif on/off) ────────────────────────────────────────
+
+def cfg_list_clients() -> list[dict]:
+    """Lista todos los clientes configurados con mail."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT cliente, email, display_name, notifications_enabled, created_at, updated_at
+        FROM cfg_clients
+        ORDER BY cliente
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def cfg_get_client(cliente: str) -> Optional[dict]:
+    """Devuelve la config del cliente o None si no está configurado."""
+    if not cliente:
+        return None
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT cliente, email, display_name, notifications_enabled, created_at, updated_at
+        FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)
+    """, (cliente,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def cfg_upsert_client(cliente: str, email: str, display_name: Optional[str] = None,
+                       notifications_enabled: bool = True) -> None:
+    """Crea/actualiza un cliente con mail. notifications_enabled controla si
+    recibe mails de 'tu video está listo'."""
+    if not cliente or not email:
+        raise ValueError("cliente y email son requeridos")
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO cfg_clients (cliente, email, display_name, notifications_enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(cliente) DO UPDATE SET
+            email=excluded.email,
+            display_name=excluded.display_name,
+            notifications_enabled=excluded.notifications_enabled,
+            updated_at=excluded.updated_at
+    """, (cliente, email.strip().lower(), (display_name or "").strip() or None,
+          1 if notifications_enabled else 0, now_iso(), now_iso()))
+    conn.commit()
+    conn.close()
+
+
+def cfg_delete_client(cliente: str) -> int:
+    if not cliente:
+        return 0
+    conn = get_conn()
+    n = conn.execute("DELETE FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cliente,)).rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def cfg_client_should_be_notified(cliente: str) -> Optional[dict]:
+    """¿Hay que mandarle mail al cliente cuando se entregue un video?
+    Retorna dict con {email, display_name} si SÍ, None si no (no configurado
+    o notifications_enabled=0)."""
+    c = cfg_get_client(cliente)
+    if not c:
+        return None
+    if not c.get("notifications_enabled"):
+        return None
+    if not c.get("email"):
+        return None
+    return {"email": c["email"], "display_name": c.get("display_name") or cliente.split()[0]}
 
 
 def cfg_list_nicknames() -> list[dict]:

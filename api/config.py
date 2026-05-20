@@ -43,6 +43,13 @@ def _get_all_config(conn):
     delivery = [dict(r) for r in conn.execute(
         "SELECT id, cliente, folder_id, description FROM cfg_delivery_folders ORDER BY cliente"
     ).fetchall()]
+    client_emails = []
+    try:
+        client_emails = [dict(r) for r in conn.execute(
+            "SELECT cliente, email, display_name, notifications_enabled FROM cfg_clients ORDER BY cliente"
+        ).fetchall()]
+    except Exception:
+        pass
     pending_folders = []
     try:
         pending_folders = [dict(r) for r in conn.execute(
@@ -65,6 +72,7 @@ def _get_all_config(conn):
         "delivery_folders": delivery,
         "pending_folders": pending_folders,
         "mail_log": mail_log,
+        "client_emails": client_emails,
     }
 
 
@@ -123,7 +131,7 @@ class handler(BaseHTTPRequestHandler):
             action = (body.get("action") or "").strip().lower()
             data = body.get("data") or {}
 
-            if section not in ("editor", "nickname", "alias", "delivery", "pending_folder"):
+            if section not in ("editor", "nickname", "alias", "delivery", "pending_folder", "client_email"):
                 return json_response(self, {"error": f"section inválida: {section}"}, status=400)
             if action not in ("create", "update", "delete"):
                 return json_response(self, {"error": f"action inválida: {action}"}, status=400)
@@ -141,6 +149,8 @@ class handler(BaseHTTPRequestHandler):
                     self._op_delivery(conn, action, data, result)
                 elif section == "pending_folder":
                     self._op_pending_folder(conn, action, data, result)
+                elif section == "client_email":
+                    self._op_client_email(conn, action, data, result)
 
             with_db(op, message=f"config: {action} {section}")
             return json_response(self, {"ok": True, "section": section, "action": action, **result})
@@ -279,6 +289,55 @@ class handler(BaseHTTPRequestHandler):
                 UPDATE cfg_delivery_folders SET cliente=?, folder_id=?, description=? WHERE id=?
             """, (cliente, folder_id, description, row_id))
             result["updated_id"] = row_id
+
+    def _op_client_email(self, conn, action, data, result):
+        """Maneja CRUD de cfg_clients (mails de clientes para notificar entregas)."""
+        from datetime import datetime
+        now = datetime.now().isoformat(timespec="seconds")
+        cliente = (data.get("cliente") or "").strip()
+        if not cliente:
+            raise ValueError("falta cliente")
+
+        # Auto-crear tabla por las dudas (idempotente; si la migration no corrió)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cfg_clients (
+                cliente TEXT PRIMARY KEY,
+                email TEXT NOT NULL,
+                display_name TEXT,
+                notifications_enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        if action == "delete":
+            conn.execute("DELETE FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cliente,))
+            result["deleted"] = cliente
+            return
+
+        email = (data.get("email") or "").strip().lower()
+        if not email:
+            raise ValueError("falta email")
+        if "@" not in email or "." not in email.split("@", 1)[-1]:
+            raise ValueError("email inválido")
+        display = (data.get("display_name") or "").strip() or None
+        enabled = 1 if data.get("notifications_enabled", True) else 0
+
+        if action == "create":
+            existing = conn.execute("SELECT 1 FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cliente,)).fetchone()
+            if existing:
+                raise ValueError(f"cliente '{cliente}' ya tiene mail configurado (usar update)")
+            conn.execute("""
+                INSERT INTO cfg_clients (cliente, email, display_name, notifications_enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (cliente, email, display, enabled, now, now))
+            result["created"] = cliente
+        else:  # update
+            conn.execute("""
+                UPDATE cfg_clients SET email=?, display_name=?, notifications_enabled=?, updated_at=?
+                WHERE TRIM(cliente)=TRIM(?)
+            """, (email, display, enabled, now, cliente))
+            result["updated"] = cliente
 
     def _op_pending_folder(self, conn, action, data, result):
         """action: 'update' con data.decision='approved'|'rejected', data.folder_id, opcional editor."""

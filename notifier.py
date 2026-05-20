@@ -325,6 +325,21 @@ Archivo: {file_name}{link_text}
             except Exception as e:
                 print(f"     ⚠️ push cierre: {e}")
 
+        # MAIL AL CLIENTE (si está activado en cfg_clients). Solo si NO es
+        # corrección (corrección = el cliente ya vio el video antes, no es nuevo).
+        # Si no está configurado el cliente, send_client_delivery_mail retorna
+        # False silenciosamente.
+        if any_sent and not is_correction:
+            try:
+                send_client_delivery_mail(
+                    cliente=cliente, file_name=file_name,
+                    edited_folder_id=edited_folder_id,
+                    client_folder_id=client_folder_id,
+                    file_id=file_id,
+                )
+            except Exception as e:
+                print(f"     ⚠️ mail cliente: {e}")
+
         # Si el mail falló (any_sent=False), revertir el claim para que otro intento futuro
         # pueda reintentarlo. claim_completion_mail ya marcó mail_sent_at, así que en caso
         # de falla, lo desmarcamos.
@@ -344,6 +359,95 @@ Archivo: {file_name}{link_text}
             # Si any_sent=True, ya está marcado correctamente (claim lo marcó)
 
     return sent
+
+
+# ─── MAIL AL CLIENTE: "tu video está listo" ──────────────────────────────────
+
+def send_client_delivery_mail(cliente: str, file_name: str,
+                                edited_folder_id: Optional[str],
+                                client_folder_id: Optional[str],
+                                file_id: Optional[str]) -> bool:
+    """Manda mail al cliente avisando que se entregó un video. SOLO si está
+    en cfg_clients con notifications_enabled=1.
+
+    Importante: NO mencionar nombre del editor (decisión del admin). Firma
+    como "Nacho · Revolv". Link a la carpeta donde está el editado.
+
+    Retorna True si se mandó, False si el cliente no estaba activado o falló.
+    """
+    from tracker import cfg_client_should_be_notified
+    target = cfg_client_should_be_notified(cliente)
+    if not target:
+        return False
+
+    to_email = target["email"]
+    display = target["display_name"] or cliente.split()[0]
+
+    # Link al folder donde está el editado, con fallbacks
+    if edited_folder_id:
+        folder_url = f"https://drive.google.com/drive/folders/{edited_folder_id}"
+    elif client_folder_id:
+        folder_url = f"https://drive.google.com/drive/folders/{client_folder_id}"
+    elif file_id:
+        folder_url = f"https://drive.google.com/file/d/{file_id}/view"
+    else:
+        folder_url = None
+
+    subject = "🎬 Tu video está listo"
+
+    text = f"""Hola {display}!
+
+Nacho te subió tu video nuevo:
+
+  📹 {file_name}
+"""
+    if folder_url:
+        text += f"\nEstá en tu carpeta de Drive:\n{folder_url}\n"
+    text += "\nCualquier cambio que quieras hacer, avisame.\n\nUn abrazo,\nNacho\nRevolv\n"
+
+    button_html = (
+        f'<div style="text-align:center;margin:28px 0 8px;">'
+        f'<a href="{folder_url}" style="display:inline-block;background:#ff4747;color:white;'
+        f'padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">'
+        f'📁 Ver en Drive</a></div>'
+    ) if folder_url else ""
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#222;">
+  <div style="max-width:560px;margin:0 auto;padding:32px 24px;">
+    <div style="text-align:center;margin-bottom:28px;">
+      <div style="font-size:14px;letter-spacing:2px;color:#888;text-transform:uppercase;font-weight:600;">REVOLV</div>
+    </div>
+    <div style="background:white;border-radius:14px;padding:32px 28px;box-shadow:0 2px 12px rgba(0,0,0,0.04);">
+      <h1 style="margin:0 0 16px;font-size:24px;color:#111;font-weight:700;">🎬 Tu video está listo</h1>
+      <p style="font-size:16px;line-height:1.55;color:#333;margin:0 0 24px;">
+        Hola <strong>{display}</strong>! Te subí un video nuevo a tu carpeta:
+      </p>
+      <div style="background:#f8f8f8;border-left:4px solid #ff4747;padding:14px 18px;border-radius:6px;margin-bottom:28px;">
+        <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">VIDEO</div>
+        <div style="font-size:16px;color:#111;font-weight:600;word-break:break-word;">{file_name}</div>
+      </div>
+      {button_html}
+      <p style="font-size:14px;color:#666;line-height:1.55;margin:28px 0 0;text-align:center;">
+        Cualquier cambio que quieras hacer, avisame.
+      </p>
+    </div>
+    <div style="text-align:center;margin-top:28px;color:#888;font-size:13px;line-height:1.6;">
+      Un abrazo,<br>
+      <strong style="color:#222;">Nacho</strong><br>
+      <span style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#aaa;">REVOLV</span>
+    </div>
+  </div>
+</body></html>
+"""
+    try:
+        msg_id = send_mail(to=to_email, subject=subject, body_text=text, body_html=html)
+        print(f"   📧 mail al cliente {cliente} ({to_email}): {file_name} (msg_id={msg_id})")
+        return True
+    except Exception as e:
+        print(f"   ⚠️ falló mail al cliente {cliente} ({to_email}): {e}")
+        return False
 
 
 # ─── ALERTAS DE SUBFOLDER NO-MAPEADA ─────────────────────────────────────────
