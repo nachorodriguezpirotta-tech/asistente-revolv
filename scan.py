@@ -33,6 +33,7 @@ from tracker import (
     has_pending_for_client_editor, has_manual_pending_for_client,
     find_similar_pending_client, upsert_pending_drive_folder,
     increment_pending_count, set_pending_count, is_client_blocked,
+    mark_pending_task_for_renotification,
 )
 from sheets_client import read_packs, get_editor_for_client
 from aliases import resolve_alias
@@ -121,6 +122,14 @@ def _process_standard_client(c, packs):
         if has_manual_pending_for_client(cliente_real, editor):
             continue
         if has_pending_for_client_editor(cliente_real, editor):
+            # Re-notificar (debounce 6h) si llegaron crudos nuevos pero
+            # ya había pending. Antes esto se skipeaba silenciosamente.
+            renotif_id = mark_pending_task_for_renotification(
+                cliente_real, editor, f["id"], f["name"]
+            )
+            if renotif_id:
+                local_new_tasks.append({"cliente": cliente_real, "editor": editor,
+                                         "file": f["name"], "renotif": True})
             continue
         if is_client_blocked(cliente_real, editor):
             continue

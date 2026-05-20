@@ -568,6 +568,66 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
     return task_id
 
 
+def mark_pending_task_for_renotification(cliente: str, editor: Optional[str],
+                                          latest_file_id: str, latest_file_name: str,
+                                          min_silence_hours: float = 6.0) -> Optional[int]:
+    """Si ya hay task pending para (cliente, editor) y el último mail fue
+    enviado hace >= min_silence_hours (o nunca), resetea mail_sent_at para
+    que el notifier la procese de nuevo. Actualiza file_id/file_name al
+    último archivo para que el subject del mail tenga algo actual.
+
+    Retorna el id de la task afectada, o None si no aplica (no había
+    pending, o el último mail es muy reciente y no queremos spamear).
+
+    Esto resuelve el caso: cliente tiene task pending vieja, sube 15 crudos
+    nuevos, antes no se generaba mail → ahora sí se genera UN mail por el
+    batch (debounce de 6h)."""
+    if not cliente:
+        return None
+    from datetime import datetime, timedelta
+    conn = get_conn()
+    if editor:
+        row = conn.execute(
+            "SELECT id, mail_sent_at FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+            "AND COALESCE(editor,'')=COALESCE(?,'') AND status='pending' "
+            "ORDER BY id DESC LIMIT 1",
+            (cliente, editor)
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id, mail_sent_at FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+            "AND status='pending' ORDER BY id DESC LIMIT 1",
+            (cliente,)
+        ).fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    # Debounce: si el último mail fue hace <min_silence_hours, no resetear
+    last_sent = row["mail_sent_at"]
+    if last_sent:
+        try:
+            t = datetime.fromisoformat(last_sent.replace("Z", "+00:00"))
+            if t.tzinfo:
+                t = t.replace(tzinfo=None)
+            if (datetime.now() - t) < timedelta(hours=min_silence_hours):
+                conn.close()
+                return None  # demasiado reciente, no spamear
+        except Exception:
+            pass
+
+    # Resetear mail_sent_at para que el notifier vuelva a procesar + actualizar
+    # file_id/file_name al último archivo
+    conn.execute(
+        "UPDATE tasks SET mail_sent_at=NULL, file_id=?, file_name=? WHERE id=?",
+        (latest_file_id, latest_file_name, row["id"])
+    )
+    conn.commit()
+    task_id = row["id"]
+    conn.close()
+    return task_id
+
+
 def find_duplicate_pending_tasks() -> list[dict]:
     """Detecta tasks pending duplicadas: mismo (cliente, editor) con >1 row
     en status='pending'. Sirve para cleanup masivo."""

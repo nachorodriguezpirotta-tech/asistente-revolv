@@ -43,7 +43,7 @@ from tracker import (
     enqueue_completion_mail, is_correction_for_client,
     get_editor_for_subfolder, _classify_subfolder_type,
     infer_subfolder_editor_from_history, register_subfolder_alert,
-    upsert_subfolder_editor,
+    upsert_subfolder_editor, mark_pending_task_for_renotification,
 )
 from sheets_client import read_packs, get_editor_for_client
 from aliases import resolve_alias, reverse_alias
@@ -309,6 +309,15 @@ def run(notify: bool = False):
             if has_manual_pending_for_client(cliente_real, editor):
                 continue
             if has_pending_for_client_editor(cliente_real, editor):
+                # Ya hay pending: si el último mail fue hace ≥6h (o nunca),
+                # resetear mail_sent_at para que el notifier mande UN aviso
+                # nuevo "más material" con este archivo. Debounce evita spam.
+                renotif_id = mark_pending_task_for_renotification(
+                    cliente_real, editor, f["id"], f["name"]
+                )
+                if renotif_id:
+                    new_tasks.append({"cliente": cliente_real, "editor": editor,
+                                       "file": f["name"], "renotif": True})
                 continue
             if is_client_blocked(cliente_real, editor):
                 continue
@@ -341,6 +350,13 @@ def run(notify: bool = False):
             if has_manual_pending_for_client(cliente_real, editor):
                 continue
             if has_pending_for_client_editor(cliente_real, editor):
+                # Re-notificar si hace ≥6h del último mail (debounce anti-spam)
+                renotif_id = mark_pending_task_for_renotification(
+                    cliente_real, editor, f["id"], f["name"]
+                )
+                if renotif_id:
+                    new_tasks.append({"cliente": cliente_real, "editor": editor,
+                                       "file": f["name"], "renotif": True})
                 continue
             if is_client_blocked(cliente_real, editor):
                 continue
