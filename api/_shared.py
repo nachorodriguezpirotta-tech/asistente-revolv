@@ -63,6 +63,24 @@ def check_token(editor: str, token: str) -> bool:
     return hmac.compare_digest(expected, token)
 
 
+def make_client_token(cliente: str) -> str:
+    """Token determinístico para el cliente (distinto namespace que editores).
+    Prefijo 'client:' para que no colisione con 'rami', 'admin', etc.
+    URL: /revision?c=Cliente&t=xxxx"""
+    return hmac.new(
+        DASHBOARD_SECRET.encode(),
+        f"client:{cliente.lower().strip()}".encode(),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+
+
+def check_client_token(cliente: str, token: str) -> bool:
+    if not cliente or not token:
+        return False
+    expected = make_client_token(cliente)
+    return hmac.compare_digest(expected, token)
+
+
 # ────────── DB SYNC con GitHub ──────────
 
 def _gh_request(method: str, path: str, body: dict = None) -> dict:

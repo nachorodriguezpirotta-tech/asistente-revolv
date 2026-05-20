@@ -267,6 +267,32 @@ def init_db():
         )
     """)
 
+    # Revisiones de clientes: cuando entregamos un video, el cliente puede
+    # aprobar (👍) o pedir cambios (📝). Cada revisión queda registrada con
+    # el texto que dejó el cliente. Cuando el editor sube la corrección
+    # (sistema ya lo detecta por nombre), se marca la revisión como resolved.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS client_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente TEXT NOT NULL,
+            video_file_id TEXT,
+            video_file_name TEXT,
+            editor TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+                -- 'pending' (todavía no respondió cliente)
+                -- 'approved' (cliente lo aprobó)
+                -- 'revision_requested' (cliente pidió cambios)
+                -- 'resolved' (editor subió la corrección, todo OK)
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            responded_at TEXT,
+            resolved_at TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cliente ON client_reviews(cliente);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_review_video ON client_reviews(video_file_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_review_status ON client_reviews(status);")
+
     # Voice notes: cada task puede tener N notas de voz dejadas por el admin
     # como feedback rápido al editor. El audio se guarda como BLOB en SQLite
     # (típicamente 5-30s, <500KB → no vale la pena montar Drive/Blob storage
@@ -1348,6 +1374,150 @@ def cfg_delete_client(cliente: str) -> int:
     conn.commit()
     conn.close()
     return n
+
+
+def create_client_review(cliente: str, video_file_id: Optional[str],
+                          video_file_name: str, editor: Optional[str]) -> int:
+    """Registra que se mandó un video al cliente — queda en 'pending' hasta
+    que el cliente apruebe o pida revisión. Retorna el id del review."""
+    conn = get_conn()
+    cur = conn.execute("""
+        INSERT INTO client_reviews
+            (cliente, video_file_id, video_file_name, editor, status, created_at)
+        VALUES (?, ?, ?, ?, 'pending', ?)
+    """, (cliente, video_file_id, video_file_name, editor, now_iso()))
+    rid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return rid
+
+
+def get_client_review(review_id: int) -> Optional[dict]:
+    conn = get_conn()
+    r = conn.execute(
+        "SELECT id, cliente, video_file_id, video_file_name, editor, status, notes, created_at, responded_at, resolved_at "
+        "FROM client_reviews WHERE id=?", (review_id,)
+    ).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
+def get_latest_pending_review_for_client(cliente: str) -> Optional[dict]:
+    """Última review en estado 'pending' (sin respuesta del cliente todavía)."""
+    if not cliente:
+        return None
+    conn = get_conn()
+    r = conn.execute("""
+        SELECT id, cliente, video_file_id, video_file_name, editor, status, notes, created_at
+        FROM client_reviews
+        WHERE TRIM(cliente)=TRIM(?) AND status='pending'
+        ORDER BY id DESC LIMIT 1
+    """, (cliente,)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
+def get_latest_review_for_video(video_file_id: str) -> Optional[dict]:
+    """Última review para un video específico (en cualquier estado)."""
+    if not video_file_id:
+        return None
+    conn = get_conn()
+    r = conn.execute("""
+        SELECT id, cliente, video_file_id, video_file_name, editor, status, notes, created_at, responded_at, resolved_at
+        FROM client_reviews
+        WHERE video_file_id=?
+        ORDER BY id DESC LIMIT 1
+    """, (video_file_id,)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
+def respond_to_review(review_id: int, approved: bool, notes: Optional[str] = None) -> bool:
+    """El cliente responde: approved=True (aprueba) o False (pide revisión).
+    Si pide revisión, `notes` tiene el texto que dejó. Retorna True si OK."""
+    conn = get_conn()
+    new_status = 'approved' if approved else 'revision_requested'
+    n = conn.execute("""
+        UPDATE client_reviews
+        SET status=?, notes=?, responded_at=?
+        WHERE id=? AND status='pending'
+    """, (new_status, notes, now_iso(), review_id)).rowcount
+    conn.commit()
+    conn.close()
+    return n > 0
+
+
+def mark_review_resolved_for_client_video(cliente: str, video_file_name: str) -> Optional[int]:
+    """Cuando el editor sube la corrección (sistema detecta por nombre de video),
+    marca la review en 'revision_requested' como 'resolved' y retorna su id."""
+    if not cliente or not video_file_name:
+        return None
+    # Normalizar nombre del video — el sistema de correcciones ya usa _video_key
+    try:
+        from tracker import _video_key
+        vkey = _video_key(video_file_name) if callable(_video_key) else video_file_name
+    except Exception:
+        vkey = video_file_name
+    conn = get_conn()
+    # Buscar review en revision_requested para el cliente cuyo video_file_name
+    # tenga el mismo "key" (substring/match del número de video)
+    rows = conn.execute("""
+        SELECT id, video_file_name FROM client_reviews
+        WHERE TRIM(cliente)=TRIM(?) AND status='revision_requested'
+        ORDER BY id DESC
+    """, (cliente,)).fetchall()
+    review_id = None
+    for r in rows:
+        try:
+            k = _video_key(r["video_file_name"]) if callable(_video_key) else r["video_file_name"]
+        except Exception:
+            k = r["video_file_name"]
+        if k == vkey:
+            review_id = r["id"]
+            break
+    if review_id is None and rows:
+        # Fallback: tomar la review más reciente si no hay match exacto
+        review_id = rows[0]["id"]
+    if review_id is None:
+        conn.close()
+        return None
+    conn.execute(
+        "UPDATE client_reviews SET status='resolved', resolved_at=? WHERE id=?",
+        (now_iso(), review_id)
+    )
+    conn.commit()
+    conn.close()
+    return review_id
+
+
+def count_open_reviews_for_editor(editor: str) -> int:
+    """Cuántas revisiones de clientes están en estado revision_requested
+    asignadas a este editor. Sirve para sumar al pending_count del editor."""
+    if not editor:
+        return 0
+    conn = get_conn()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM client_reviews WHERE editor=? AND status='revision_requested'",
+        (editor,)
+    ).fetchone()[0] or 0
+    conn.close()
+    return n
+
+
+def list_open_reviews_for_editor(editor: str) -> list[dict]:
+    """Lista de revisiones pendientes (revision_requested) de un editor.
+    Para mostrar en el dashboard del editor."""
+    if not editor:
+        return []
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT id, cliente, video_file_id, video_file_name, notes, created_at, responded_at
+        FROM client_reviews
+        WHERE editor=? AND status='revision_requested'
+        ORDER BY responded_at DESC
+    """, (editor,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def cfg_client_should_be_notified(cliente: str) -> Optional[dict]:

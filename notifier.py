@@ -417,10 +417,21 @@ Archivo: {file_name}{link_text}
             except Exception as e:
                 print(f"     ⚠️ push cierre: {e}")
 
+        # Si fue corrección de un video con revisión pendiente, marcarla como
+        # resuelta y avisarle al cliente que está la versión corregida.
+        if any_sent and is_correction:
+            try:
+                from tracker import mark_review_resolved_for_client_video, get_client_review
+                resolved_id = mark_review_resolved_for_client_video(cliente, file_name)
+                if resolved_id:
+                    review = get_client_review(resolved_id)
+                    if review:
+                        notify_revision_resolved(resolved_id, review)
+            except Exception as e:
+                print(f"     ⚠️ resolver revisión: {e}")
+
         # MAIL AL CLIENTE (si está activado en cfg_clients). Solo si NO es
-        # corrección (corrección = el cliente ya vio el video antes, no es nuevo).
-        # Si no está configurado el cliente, send_client_delivery_mail retorna
-        # False silenciosamente.
+        # corrección. La corrección ya genera notify_revision_resolved arriba.
         if any_sent and not is_correction:
             try:
                 send_client_delivery_mail(
@@ -428,6 +439,7 @@ Archivo: {file_name}{link_text}
                     edited_folder_id=edited_folder_id,
                     client_folder_id=client_folder_id,
                     file_id=file_id,
+                    editor=editor,
                 )
             except Exception as e:
                 print(f"     ⚠️ mail cliente: {e}")
@@ -455,10 +467,16 @@ Archivo: {file_name}{link_text}
 
 # ─── MAIL AL CLIENTE: "tu video está listo" ──────────────────────────────────
 
+def _build_vercel_url(path: str) -> str:
+    """URL base para links en mails. Hoy hardcoded; podría salir de env."""
+    return f"https://asistente-revolv.vercel.app{path}"
+
+
 def send_client_delivery_mail(cliente: str, file_name: str,
                                 edited_folder_id: Optional[str],
                                 client_folder_id: Optional[str],
-                                file_id: Optional[str]) -> bool:
+                                file_id: Optional[str],
+                                editor: Optional[str] = None) -> bool:
     """Manda mail al cliente avisando que se entregó un video. SOLO si está
     en cfg_clients con notifications_enabled=1.
 
@@ -497,12 +515,74 @@ Nacho te subió tu video nuevo:
         text += f"\nEstá en tu carpeta de Drive:\n{folder_url}\n"
     text += "\nCualquier cambio que quieras hacer, avisame.\n\nUn abrazo,\nNacho\nRevolv\n"
 
-    button_html = (
+    # Crear review pending + tokens para los botones (sistema de revisiones)
+    review_url_approve = None
+    review_url_revise = None
+    try:
+        from tracker import create_client_review
+        from api._shared import make_client_token
+        review_id = create_client_review(cliente, file_id, file_name, editor)
+        token = make_client_token(cliente)
+        review_url_approve = _build_vercel_url(
+            f"/api/review?action=approve&id={review_id}&t={token}"
+        )
+        review_url_revise = _build_vercel_url(
+            f"/revision.html?id={review_id}&t={token}"
+        )
+    except Exception as e:
+        print(f"   ⚠️ no se pudo crear review: {e}")
+
+    folder_button_html = (
         f'<div style="text-align:center;margin:28px 0 8px;">'
         f'<a href="{folder_url}" style="display:inline-block;background:#ff4747;color:white;'
         f'padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">'
         f'📁 Ver en Drive</a></div>'
     ) if folder_url else ""
+
+    # Sección "¿te gustó?" con dos botones grandes
+    review_section_html = ""
+    review_section_text = ""
+    if review_url_approve and review_url_revise:
+        review_section_html = f"""
+      <div style="margin-top:32px;padding-top:24px;border-top:1px solid #eee;">
+        <p style="font-size:15px;color:#333;text-align:center;margin:0 0 18px;font-weight:600;">
+          ¿Te gustó cómo quedó?
+        </p>
+        <table style="margin:0 auto;border-collapse:collapse;">
+          <tr>
+            <td style="padding:0 6px;">
+              <a href="{review_url_approve}" style="display:inline-block;background:#22c55e;color:white;padding:14px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">
+                ✅ Todo perfecto
+              </a>
+            </td>
+            <td style="padding:0 6px;">
+              <a href="{review_url_revise}" style="display:inline-block;background:#f3f4f6;color:#111;padding:14px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;border:1px solid #ddd;">
+                📝 Quiero ajustar algo
+              </a>
+            </td>
+          </tr>
+        </table>
+        <p style="font-size:12px;color:#999;text-align:center;margin:14px 0 0;">
+          Si tocás "ajustar algo" te abre un formulario chiquito para que me cuentes qué cambiar.
+        </p>
+      </div>
+"""
+        review_section_text = (
+            f"\n¿Te gustó cómo quedó?\n"
+            f"   ✅ Todo perfecto:       {review_url_approve}\n"
+            f"   📝 Quiero ajustar algo: {review_url_revise}\n"
+        )
+
+    text = f"""Hola {display}!
+
+Nacho te subió tu video nuevo:
+
+  📹 {file_name}
+"""
+    if folder_url:
+        text += f"\nEstá en tu carpeta de Drive:\n{folder_url}\n"
+    text += review_section_text
+    text += "\nUn abrazo,\nNacho\nRevolv\n"
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
@@ -520,10 +600,8 @@ Nacho te subió tu video nuevo:
         <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">VIDEO</div>
         <div style="font-size:16px;color:#111;font-weight:600;word-break:break-word;">{file_name}</div>
       </div>
-      {button_html}
-      <p style="font-size:14px;color:#666;line-height:1.55;margin:28px 0 0;text-align:center;">
-        Cualquier cambio que quieras hacer, avisame.
-      </p>
+      {folder_button_html}
+      {review_section_html}
     </div>
     <div style="text-align:center;margin-top:28px;color:#888;font-size:13px;line-height:1.6;">
       Un abrazo,<br>
@@ -540,6 +618,155 @@ Nacho te subió tu video nuevo:
     except Exception as e:
         print(f"   ⚠️ falló mail al cliente {cliente} ({to_email}): {e}")
         return False
+
+
+# ─── NOTIFICACIONES DE REVISIONES ────────────────────────────────────────────
+
+def notify_revision_requested(review_id: int, review: dict, notes: str) -> None:
+    """Cliente pidió revisión → mail + push al editor + admin."""
+    cliente = review.get("cliente", "?")
+    editor = review.get("editor")
+    video = review.get("video_file_name", "(video)")
+
+    subject = f"📝 Revisión pedida: {cliente} — {video}"
+    body_text = f"""El cliente {cliente} pidió cambios en su último video:
+
+  📹 {video}
+  Editor: {editor or '(sin asignar)'}
+
+Lo que pide cambiar:
+─────────────────────
+{notes}
+─────────────────────
+
+Cuando subas la corrección (mismo Video N, mismo nombre), el sistema
+detecta la corrección y se cierra la revisión automáticamente. Le va
+a llegar al cliente un mail nuevo con la versión corregida.
+
+— Asistente Revolv
+"""
+    body_html = f"""<!DOCTYPE html>
+<html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;line-height:1.55;">
+<h2 style="margin:0 0 8px;">📝 Revisión pedida</h2>
+<p><strong>Cliente:</strong> {cliente}<br>
+<strong>Video:</strong> <code>{video}</code><br>
+<strong>Editor:</strong> {editor or '(sin asignar)'}</p>
+<div style="background:#fff7e6;border-left:3px solid #ffaa00;padding:14px 18px;border-radius:6px;margin:18px 0;">
+<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:6px;">Lo que pide cambiar</div>
+<div style="white-space:pre-wrap;font-size:14px;color:#222;">{notes}</div>
+</div>
+<p style="font-size:13px;color:#666;">Cuando subas la corrección (mismo nombre de video) el sistema cierra la revisión y le manda mail al cliente automáticamente.</p>
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
+<p style="color:#888;font-size:12px;">— Asistente Revolv</p>
+</body></html>
+"""
+    # Destinatarios: admin (siempre) + editor (si tiene mail)
+    destinatarios = [TEST_EMAIL]
+    try:
+        from aliases import get_editor_email_for_notification
+        if editor:
+            ed_email = get_editor_email_for_notification(editor)
+            if ed_email and ed_email.lower() != TEST_EMAIL.lower():
+                destinatarios.append(ed_email)
+    except Exception as e:
+        print(f"   ⚠️ resolver mail editor: {e}")
+
+    for dest in destinatarios:
+        try:
+            msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html)
+            print(f"   📧 revisión enviada a {dest} (msg_id={msg_id})")
+        except Exception as e:
+            print(f"   ⚠️ falló mail revisión a {dest}: {e}")
+
+    # Push al editor + admin
+    try:
+        from push_sender import send_push
+        push_title = f"📝 Revisión: {cliente}"
+        push_body = (notes[:80] + "…") if len(notes) > 80 else notes
+        send_push(editor=None, title=push_title, body=push_body, url="/?admin=1", tag=f"revision-{cliente}")
+        if editor:
+            send_push(editor=editor, title=push_title, body=push_body,
+                       url=f"/?editor={editor}", tag=f"revision-{cliente}")
+    except Exception as e:
+        print(f"   ⚠️ push revisión: {e}")
+
+
+def notify_review_approved(review_id: int, review: dict) -> None:
+    """Cliente aprobó el video → solo mail al admin (info, no urgente)."""
+    cliente = review.get("cliente", "?")
+    editor = review.get("editor")
+    video = review.get("video_file_name", "(video)")
+
+    subject = f"✅ {cliente} aprobó: {video}"
+    body_text = f"""El cliente {cliente} aprobó el video '{video}'.
+Editor: {editor or '-'}.
+
+— Asistente Revolv
+"""
+    body_html = f"""<!DOCTYPE html>
+<html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;">
+<h2 style="margin:0 0 8px;color:#1a8a3a;">✅ {cliente} aprobó el video</h2>
+<p><strong>Video:</strong> <code>{video}</code><br>
+<strong>Editor:</strong> {editor or '-'}</p>
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
+<p style="color:#888;font-size:12px;">— Asistente Revolv</p>
+</body></html>
+"""
+    try:
+        send_mail(to=TEST_EMAIL, subject=subject, body_text=body_text, body_html=body_html)
+    except Exception as e:
+        print(f"   ⚠️ falló mail approved: {e}")
+
+
+def notify_revision_resolved(review_id: int, review: dict) -> None:
+    """El editor subió la corrección → mail al cliente con la nueva versión."""
+    cliente = review.get("cliente", "?")
+    video = review.get("video_file_name", "(video)")
+    from tracker import cfg_client_should_be_notified
+    target = cfg_client_should_be_notified(cliente)
+    if not target:
+        return  # cliente sin mail registrado, no avisamos
+    to_email = target["email"]
+    display = target["display_name"] or cliente.split()[0]
+
+    subject = f"🎬 Tu revisión está lista — {video}"
+    body_text = f"""Hola {display}!
+
+Acabo de subir la versión corregida de tu video:
+
+  📹 {video}
+
+Pegale una mirada y avisame si quedó bien.
+
+Un abrazo,
+Nacho
+Revolv
+"""
+    body_html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,Segoe UI,sans-serif;color:#222;">
+<div style="max-width:560px;margin:0 auto;padding:32px 24px;">
+<div style="text-align:center;margin-bottom:28px;">
+<div style="font-size:14px;letter-spacing:2px;color:#888;text-transform:uppercase;font-weight:600;">REVOLV</div>
+</div>
+<div style="background:white;border-radius:14px;padding:32px 28px;box-shadow:0 2px 12px rgba(0,0,0,0.04);">
+<h1 style="margin:0 0 16px;font-size:24px;color:#111;">🎬 Tu revisión está lista</h1>
+<p style="font-size:16px;line-height:1.55;">Hola <strong>{display}</strong>! Subí la versión corregida:</p>
+<div style="background:#f8f8f8;border-left:4px solid #22c55e;padding:14px 18px;border-radius:6px;margin:18px 0;">
+<div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">VIDEO CORREGIDO</div>
+<div style="font-size:16px;color:#111;font-weight:600;">{video}</div>
+</div>
+<p style="font-size:14px;color:#666;text-align:center;">Pegale una mirada y avisame si quedó bien.</p>
+</div>
+<div style="text-align:center;margin-top:28px;color:#888;font-size:13px;line-height:1.6;">
+Un abrazo,<br><strong style="color:#222;">Nacho</strong><br>
+<span style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#aaa;">REVOLV</span>
+</div></div></body></html>
+"""
+    try:
+        send_mail(to=to_email, subject=subject, body_text=body_text, body_html=body_html)
+        print(f"   📧 revisión resuelta enviada a cliente {cliente} ({to_email})")
+    except Exception as e:
+        print(f"   ⚠️ falló mail revisión resuelta a {cliente}: {e}")
 
 
 # ─── ALERTAS DE SUBFOLDER NO-MAPEADA ─────────────────────────────────────────
