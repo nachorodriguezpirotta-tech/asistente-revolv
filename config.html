@@ -331,9 +331,10 @@ function renderMailLog() {
     for (const m of logs) {
       const when = (m.sent_at || '').replace('T', ' ').slice(0, 16);
       const ok = m.success ? '✅' : '<span style="color:#f87171">❌</span>';
+      const maskedTo = maskEmail(m.to_email || '');
       html += `<tr>
         <td class="mono">${escape(when)}</td>
-        <td class="mono">${escape(m.to_email || '')}</td>
+        <td class="mono">${escape(maskedTo)}</td>
         <td>${escape(m.subject || '')}</td>
         <td>${ok}</td>
       </tr>`;
@@ -446,7 +447,7 @@ function renderEditors() {
       else estado = '🟢 activo';
       html += `<tr>
         <td class="name">${escape(ed.name)}</td>
-        <td class="mono">${ed.email ? escape(ed.email) : '<span style="color:#5a6478">—</span>'}</td>
+        <td class="mono">${ed.email ? escape(maskEmail(ed.email)) : '<span style="color:#5a6478">—</span>'}</td>
         <td>${ed.receives_notifications && !ed.on_vacation ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
         <td>${ed.receives_daily_summary && !ed.on_vacation ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
         <td>${estado}</td>
