@@ -675,7 +675,7 @@ if ('serviceWorker' in navigator) {
           }
         }
       }
-      // Registrar el nuevo (que ahora es el kill switch, se autodestruye)
+      // Registrar el SW (v10: maneja push notifications, NO se autodestruye)
       await navigator.serviceWorker.register('/sw.js');
     } catch (e) { /* no romper */ }
     try { updateNotifButton(); } catch(_) {}
