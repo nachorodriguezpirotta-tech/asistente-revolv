@@ -82,7 +82,17 @@ def _build_mail(cliente: str, editor: Optional[str], items: list[dict], folder_i
 
 def get_pending_unsent_grouped() -> dict:
     """
-    Devuelve {(cliente, editor): [task_rows]} de tareas pendientes sin mail enviado.
+    Devuelve {(cliente, editor, client_folder_id): [archivos_nuevos]} de
+    tareas pendientes sin mail enviado.
+
+    Para cada task pending sin mail, en vez de listar SOLO el file_name de
+    la task, hace un JOIN con known_files para listar TODOS los crudos
+    recientes del cliente (no baseline). Así si entraron 15 archivos en un
+    batch para una task, el mail los lista a todos.
+
+    Estrategia: para una task pending sin mail, buscar crudos del cliente
+    con first_seen_at >= (detected_at - margen) Y is_baseline=0. Margen
+    chico para no incluir archivos viejos.
 
     EXCLUYE las tareas cargadas manualmente (file_name = '(pendiente cargado manualmente)'):
     esas no se notifican individualmente, solo aparecen en el resumen diario.
@@ -100,16 +110,44 @@ def get_pending_unsent_grouped() -> dict:
           AND t.file_id NOT LIKE 'manual:%'
         ORDER BY t.detected_at ASC
     """).fetchall()
-    conn.close()
 
     grouped = defaultdict(list)
+    seen_files_per_group = defaultdict(set)  # evita duplicar mismo file en items
     for r in rows:
-        grouped[(r["cliente"], r["editor"], r["client_folder_id"])].append({
-            "task_id": r["id"],
-            "name": r["file_name"],
-            "size": r["size"],
-            "detected_at": r["detected_at"],
-        })
+        key = (r["cliente"], r["editor"], r["client_folder_id"])
+        # Para cada task, sumar TODOS los known_files del cliente no-baseline
+        # con first_seen_at >= last 48h. Cap a 30 archivos para no inflar mails.
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(hours=48)).isoformat(timespec="seconds")
+        files = conn.execute("""
+            SELECT file_id, name, size, first_seen_at
+            FROM known_files
+            WHERE TRIM(cliente)=TRIM(?)
+              AND COALESCE(is_baseline, 0) = 0
+              AND first_seen_at >= ?
+            ORDER BY first_seen_at DESC
+            LIMIT 30
+        """, (r["cliente"], cutoff)).fetchall()
+        # Si no hay archivos recientes (caso raro), fallback al archivo de la task
+        if not files:
+            if r["file_id"] not in seen_files_per_group[key]:
+                grouped[key].append({
+                    "task_id": r["id"], "name": r["file_name"],
+                    "size": r["size"], "detected_at": r["detected_at"],
+                })
+                seen_files_per_group[key].add(r["file_id"])
+        else:
+            for fr in files:
+                if fr["file_id"] in seen_files_per_group[key]:
+                    continue
+                grouped[key].append({
+                    "task_id": r["id"],  # asociamos al primer task del par
+                    "name": fr["name"],
+                    "size": fr["size"],
+                    "detected_at": fr["first_seen_at"],
+                })
+                seen_files_per_group[key].add(fr["file_id"])
+    conn.close()
     return grouped
 
 

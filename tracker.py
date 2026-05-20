@@ -570,7 +570,7 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
 
 def mark_pending_task_for_renotification(cliente: str, editor: Optional[str],
                                           latest_file_id: str, latest_file_name: str,
-                                          min_silence_hours: float = 6.0) -> Optional[int]:
+                                          min_silence_hours: float = 0.083) -> Optional[int]:
     """Si ya hay task pending para (cliente, editor) y el último mail fue
     enviado hace >= min_silence_hours (o nunca), resetea mail_sent_at para
     que el notifier la procese de nuevo. Actualiza file_id/file_name al
