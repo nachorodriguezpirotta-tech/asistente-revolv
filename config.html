@@ -246,11 +246,35 @@ function openClientEmailModal(c) {
   const isNew = !c;
   MODAL_STATE = { type: 'client_email', isNew, data: c || {} };
   document.getElementById('modal-title').textContent = isNew ? 'Nuevo cliente (mail)' : `Editar mail · ${c.cliente}`;
+
+  // Para new: dropdown con TODOS los clientes conocidos (de tasks, clients,
+  // known_files). Excluye los que ya tienen mail configurado para evitar dupes.
+  // Para edit: input readonly con el nombre existente.
+  let clienteField;
+  if (isNew) {
+    const all = DATA.available_clients || [];
+    const alreadyConfigured = new Set((DATA.client_emails || []).map(x => (x.cliente || '').trim()));
+    const opciones = all
+      .filter(name => !alreadyConfigured.has((name || '').trim()))
+      .map(name => `<option value="${escapeAttr(name)}">${escape(name)}</option>`)
+      .join('');
+    clienteField = `
+      <div class="field"><label>Cliente <span style="color:#f87171">*</span></label>
+        <input id="m-c-name" type="text" list="m-c-name-list" placeholder="Escribí para filtrar… o tocá la flecha"
+               autocomplete="off" style="width:100%;">
+        <datalist id="m-c-name-list">${opciones}</datalist>
+        <div class="field-hint">${all.length} clientes disponibles · ${alreadyConfigured.size} ya configurados (no aparecen)</div>
+      </div>`;
+  } else {
+    clienteField = `
+      <div class="field"><label>Cliente</label>
+        <input id="m-c-name" type="text" value="${escapeAttr(c.cliente)}" readonly style="opacity:0.6">
+        <div class="field-hint">Para renombrar, borrá y creá uno nuevo</div>
+      </div>`;
+  }
+
   document.getElementById('modal-body').innerHTML = `
-    <div class="field"><label>Cliente <span style="color:#f87171">*</span></label>
-      <input id="m-c-name" type="text" value="${escapeAttr(c?.cliente || '')}" ${isNew ? '' : 'readonly style="opacity:0.6"'} placeholder="Ej: Roger Marti">
-      <div class="field-hint">${isNew ? 'Debe coincidir EXACTO con el nombre que aparece en el dashboard' : 'Para renombrar, borrá y creá uno nuevo'}</div>
-    </div>
+    ${clienteField}
     <div class="field"><label>Email del cliente <span style="color:#f87171">*</span></label>
       <input id="m-c-email" type="email" value="${escapeAttr(c?.email || '')}" placeholder="cliente@gmail.com">
       <div class="field-hint">Ahí va el mail "🎬 tu video está listo"</div>
@@ -264,6 +288,8 @@ function openClientEmailModal(c) {
       <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-c-enabled').click()">📬 Recibir mails cuando se entregue un video</label>
     </div>`;
   document.getElementById('modal-bg').classList.add('open');
+  // Focus en el dropdown para que se pueda escribir/tocar directo
+  setTimeout(() => { const i = document.getElementById('m-c-name'); if (i && isNew) i.focus(); }, 100);
 }
 
 async function deleteClientEmail(cliente) {

@@ -50,6 +50,23 @@ def _get_all_config(conn):
         ).fetchall()]
     except Exception:
         pass
+    # Lista de TODOS los clientes que conocemos (para dropdown en UI).
+    # Evita typos al agregar mails — Ignacio elige de la lista en vez de tipear.
+    available_clients = []
+    try:
+        rows = conn.execute("""
+            SELECT DISTINCT TRIM(cliente) AS cliente FROM (
+                SELECT cliente FROM clients
+                UNION SELECT cliente FROM tasks
+                UNION SELECT cliente FROM known_files
+                UNION SELECT cliente FROM known_edited_files
+            )
+            WHERE cliente IS NOT NULL AND TRIM(cliente) != ''
+            ORDER BY TRIM(cliente)
+        """).fetchall()
+        available_clients = [r["cliente"] for r in rows]
+    except Exception:
+        pass
     pending_folders = []
     try:
         pending_folders = [dict(r) for r in conn.execute(
@@ -73,6 +90,7 @@ def _get_all_config(conn):
         "pending_folders": pending_folders,
         "mail_log": mail_log,
         "client_emails": client_emails,
+        "available_clients": available_clients,
     }
 
 
