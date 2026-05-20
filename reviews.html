@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>📝 Revisiones — Asistente Revolv</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0f1115">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background:#0f1115; color:#e8eaed;
+         padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .app-header { position:sticky; top:0; z-index:50; background:#0f1115; padding:12px 16px;
+    padding-top:calc(12px + env(safe-area-inset-top));
+    border-bottom:1px solid #2a2f3a; display:flex; align-items:center; gap:12px; }
+  .back-btn { display:inline-flex; align-items:center; justify-content:center; min-width:40px; min-height:40px;
+    background:rgba(255,255,255,0.06); border-radius:10px; color:#e8eaed; text-decoration:none;
+    font-size:18px; font-weight:600; }
+  .header-title { flex:1; min-width:0; }
+  .header-title h1 { margin:0; font-size:17px; font-weight:600; }
+  .header-title .subtitle { font-size:11px; color:#8a93a3; }
+  .page { padding:16px; max-width:1000px; margin:0 auto; }
+
+  .stats-row { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-bottom:18px; }
+  .stat { background:#1a1e27; border:1px solid #2a2f3a; border-radius:10px; padding:12px; text-align:center; cursor:pointer; transition:background 0.12s; }
+  .stat:hover { background:#222732; }
+  .stat.active { background:#2a3445; border-color:#60a5fa; }
+  .stat .n { font-size:22px; font-weight:700; }
+  .stat .lbl { font-size:11px; color:#8a93a3; text-transform:uppercase; letter-spacing:0.5px; margin-top:2px; }
+  .stat.pending .n { color:#fbbf24; }
+  .stat.revision .n { color:#f87171; }
+  .stat.approved .n { color:#4ade80; }
+  .stat.resolved .n { color:#60a5fa; }
+
+  .filter-tabs { display:flex; gap:4px; margin-bottom:14px; overflow-x:auto; }
+  .filter-tabs button { background:#1a1e27; border:1px solid #2a2f3a; color:#8a93a3;
+    padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px; font-family:inherit; white-space:nowrap; }
+  .filter-tabs button.active { background:#2a3445; color:#fff; border-color:#60a5fa; }
+
+  .review-list { display:flex; flex-direction:column; gap:8px; }
+  .review {
+    background:#1a1e27; border:1px solid #2a2f3a; border-radius:10px; padding:14px 16px;
+  }
+  .review.urgent { border-left:3px solid #f87171; }
+  .review .row1 { display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap; }
+  .review .cliente { font-weight:600; font-size:14px; }
+  .review .video { font-size:12px; color:#8a93a3; font-family:monospace; }
+  .review .meta { display:flex; gap:14px; font-size:11px; color:#8a93a3; margin-top:4px; flex-wrap:wrap; }
+  .review .notes {
+    background:rgba(251,191,36,0.08); border-left:2px solid #fbbf24;
+    padding:8px 12px; border-radius:4px; margin-top:8px;
+    font-size:13px; line-height:1.5; white-space:pre-wrap; word-break:break-word;
+    color:#e8eaed;
+  }
+  .badge { padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600; text-transform:uppercase; }
+  .badge.pending { background:rgba(251,191,36,0.18); color:#fbbf24; }
+  .badge.revision { background:rgba(248,113,113,0.18); color:#f87171; }
+  .badge.approved { background:rgba(74,222,128,0.18); color:#4ade80; }
+  .badge.resolved { background:rgba(96,165,250,0.18); color:#60a5fa; }
+
+  .empty { color:#5a6478; text-align:center; padding:40px 16px; }
+  .loading { color:#5a6478; text-align:center; padding:40px 16px; }
+  .error { color:#f87171; text-align:center; padding:24px; }
+  @media (max-width: 600px) {
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .review { padding:12px 14px; }
+  }
+</style>
+</head>
+<body>
+<header class="app-header">
+  <a href="javascript:goBack()" class="back-btn">←</a>
+  <div class="header-title">
+    <h1>📝 Revisiones</h1>
+    <div class="subtitle">Cliente feedback de videos entregados</div>
+  </div>
+</header>
+<div class="page">
+  <div id="stats" class="stats-row"></div>
+  <div class="filter-tabs" id="filters"></div>
+  <div id="list"><div class="loading">Cargando...</div></div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+let TOKEN = params.get('t') || '';
+let EDITOR = params.get('editor') || '';
+let IS_ADMIN = params.get('admin') === '1';
+
+if (TOKEN) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('revolv_auth') || '{}');
+    localStorage.setItem('revolv_auth', JSON.stringify({ ...saved, token: TOKEN, admin: IS_ADMIN, editor: EDITOR }));
+  } catch(e){}
+} else {
+  try {
+    const saved = JSON.parse(localStorage.getItem('revolv_auth') || 'null');
+    if (saved && saved.token) {
+      TOKEN = saved.token; IS_ADMIN = !!saved.admin; EDITOR = saved.editor || '';
+    }
+  } catch(e){}
+}
+
+let DATA = null;
+let CURRENT_FILTER = 'all';
+
+function goBack() {
+  const base = IS_ADMIN ? `/?admin=1&t=${encodeURIComponent(TOKEN)}` : `/?editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`;
+  location.href = base;
+}
+
+async function load() {
+  try {
+    const qs = IS_ADMIN ? `admin=1&t=${encodeURIComponent(TOKEN)}` : `editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`;
+    const res = await fetch(`/api/reviews?${qs}`);
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
+    DATA = d;
+    render();
+  } catch (e) {
+    document.getElementById('list').innerHTML = `<div class="error">Error: ${escape(e.message)}</div>`;
+  }
+}
+
+function render() {
+  // Stats (solo admin tiene desglose completo)
+  const s = DATA.stats || { pending:0, revision_requested:DATA.open_count||0, approved:0, resolved:0, total:(DATA.items||[]).length };
+  document.getElementById('stats').innerHTML = `
+    <div class="stat pending ${CURRENT_FILTER==='pending'?'active':''}" onclick="setFilter('pending')">
+      <div class="n">${s.pending||0}</div><div class="lbl">Sin responder</div>
+    </div>
+    <div class="stat revision ${CURRENT_FILTER==='revision_requested'?'active':''}" onclick="setFilter('revision_requested')">
+      <div class="n">${s.revision_requested||0}</div><div class="lbl">Pidió cambios</div>
+    </div>
+    <div class="stat approved ${CURRENT_FILTER==='approved'?'active':''}" onclick="setFilter('approved')">
+      <div class="n">${s.approved||0}</div><div class="lbl">Aprobadas</div>
+    </div>
+    <div class="stat resolved ${CURRENT_FILTER==='resolved'?'active':''}" onclick="setFilter('resolved')">
+      <div class="n">${s.resolved||0}</div><div class="lbl">Resueltas</div>
+    </div>
+  `;
+  document.getElementById('filters').innerHTML = `
+    <button class="${CURRENT_FILTER==='all'?'active':''}" onclick="setFilter('all')">Todas</button>
+    <button class="${CURRENT_FILTER==='active'?'active':''}" onclick="setFilter('active')">⚡ Activas (sin resolver)</button>
+  `;
+
+  let items = DATA.items || [];
+  if (CURRENT_FILTER === 'active') {
+    items = items.filter(i => i.status === 'pending' || i.status === 'revision_requested');
+  } else if (CURRENT_FILTER !== 'all') {
+    items = items.filter(i => i.status === CURRENT_FILTER);
+  }
+
+  if (items.length === 0) {
+    document.getElementById('list').innerHTML = `<div class="empty">No hay revisiones que mostrar.</div>`;
+    return;
+  }
+
+  document.getElementById('list').innerHTML = `
+    <div class="review-list">${items.map(renderItem).join('')}</div>
+  `;
+}
+
+function renderItem(r) {
+  const statusBadge = {
+    'pending': '<span class="badge pending">Sin responder</span>',
+    'revision_requested': '<span class="badge revision">Pidió cambios</span>',
+    'approved': '<span class="badge approved">Aprobada</span>',
+    'resolved': '<span class="badge resolved">Resuelta</span>',
+  }[r.status] || '';
+  const created = fmtDate(r.created_at);
+  const responded = r.responded_at ? `Respondió: ${fmtDate(r.responded_at)}` : '';
+  const resolved = r.resolved_at ? `Resuelta: ${fmtDate(r.resolved_at)}` : '';
+  const isUrgent = r.status === 'revision_requested';
+
+  return `
+    <div class="review ${isUrgent?'urgent':''}">
+      <div class="row1">
+        ${statusBadge}
+        <span class="cliente">${escape(r.cliente)}</span>
+        <span class="video">📹 ${escape(r.video_file_name || '?')}</span>
+        ${r.editor ? `<span style="font-size:11px;color:#8a93a3;">· editor ${escape(r.editor)}</span>` : ''}
+      </div>
+      <div class="meta">
+        <span>📅 Enviada: ${created}</span>
+        ${responded ? `<span>💬 ${responded}</span>` : ''}
+        ${resolved ? `<span>✅ ${resolved}</span>` : ''}
+      </div>
+      ${r.notes ? `<div class="notes">${escape(r.notes)}</div>` : ''}
+    </div>
+  `;
+}
+
+function setFilter(f) {
+  CURRENT_FILTER = f;
+  render();
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('es-AR', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+  } catch(e) { return iso; }
+}
+
+function escape(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+if (!TOKEN) {
+  document.getElementById('list').innerHTML = '<div class="error">Falta token. Abrí desde el dashboard.</div>';
+} else if (!IS_ADMIN && !EDITOR) {
+  document.getElementById('list').innerHTML = '<div class="error">Falta editor o admin en URL.</div>';
+} else {
+  // Empezar mostrando solo activas si es admin
+  if (IS_ADMIN) CURRENT_FILTER = 'active';
+  load();
+}
+</script>
+</body>
+</html>

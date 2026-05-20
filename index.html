@@ -531,6 +531,7 @@
         <button id="notif-btn" onclick="toggleNotifications()" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border:none; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; min-height:40px;">🔔 Activar notificaciones</button>
         <a id="stats-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">📊 Stats</a>
         <a id="calendar-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px;">📅 Calendario</a>
+        <a id="reviews-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px; position:relative;">📝 Revisiones<span id="reviews-badge" style="display:none; background:#f87171; color:white; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">0</span></a>
         <a id="config-link" href="#" style="display:none; padding:10px 14px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; min-height:40px; line-height:20px; position:relative;">⚙️ Config<span id="config-badge" style="display:none; background:#f87171; color:white; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">0</span></a>
       </div>
 
@@ -630,6 +631,23 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
         if (calLink) {
             calLink.href = `/calendar.html?t=${encodeURIComponent(TOKEN)}`;
             calLink.style.display = 'inline-block';
+        }
+        const revLink = document.getElementById('reviews-link');
+        if (revLink) {
+            revLink.href = `/reviews.html?admin=1&t=${encodeURIComponent(TOKEN)}`;
+            revLink.style.display = 'inline-block';
+            // Cargar badge con # de revisiones activas
+            fetch(`/api/reviews?admin=1&t=${encodeURIComponent(TOKEN)}`)
+                .then(r => r.json())
+                .then(d => {
+                    const active = (d.stats?.pending || 0) + (d.stats?.revision_requested || 0);
+                    if (active > 0) {
+                        const b = document.getElementById('reviews-badge');
+                        b.textContent = active;
+                        b.style.display = 'inline-block';
+                    }
+                })
+                .catch(() => {});
         }
         const cfgLink = document.getElementById('config-link');
         if (cfgLink) {
