@@ -49,11 +49,17 @@ def _clients_already_baselined(conn):
     return {r[0].strip() for r in rows}
 
 
-def _is_file_too_old(created_time_str, max_age_days=3):
-    """Si createdTime es más viejo que max_age_days, asumimos que es histórico:
-    el archivo existía hace tiempo y recién lo descubrimos hoy por algún motivo
-    (carpeta no scaneada antes, archivo movido/renombrado, etc.).
-    Tratarlo como baseline para no mandar mail de 'crudo nuevo' por algo viejo."""
+def _is_file_too_old(created_time_str, max_age_days=1):
+    """Si createdTime es más viejo que max_age_days (default 1 día), asumimos
+    que es histórico: el archivo existía hace tiempo y recién lo descubrimos
+    hoy por algún motivo (carpeta no scaneada antes, archivo movido/renombrado,
+    backfill de raw_folder_id, etc.). Tratarlo como baseline para no mandar
+    mail de 'crudo/editado nuevo' por algo del pasado.
+
+    Antes era 3d, bajado a 1d por pedido de Ignacio: 'no quiero ver más mails
+    viejos'. Si un editor entrega algo y el sistema tarda más de 24h en
+    procesarlo (raro pero posible), va a entrar como baseline silencioso —
+    mejor que mandar un mail tarde sobre algo de hace varios días."""
     if not created_time_str:
         return False
     try:
