@@ -165,41 +165,51 @@ def _client_tokens(cliente_name: str) -> list[str]:
 
 
 def _is_owner_the_client(file: dict, cliente_name: Optional[str]) -> bool:
-    """¿El owner del archivo es el propio cliente? Heurística por fuzzy match
-    del nombre del cliente contra el local-part del mail.
+    """¿El owner del archivo es el propio cliente? Dos estrategias:
 
-    Estrategia (bidirectional):
-      - Tomar tokens del cliente (>=3 chars, sin stopwords)
-      - Tomar local-part del mail (normalizado, sin separadores)
-      - MATCH si:
-          a) token completo aparece en local-part
-          b) prefijo de 4+ chars del token aparece en local-part
+    1. **EXACT match contra cfg_clients.email** (más confiable): si el cliente
+       tiene mail registrado en cfg_clients, comparamos directo. Caso Asthend:
+       el owner real es 'saracv126126@gmail.com' que no tiene parecido al
+       nombre 'Asthend' — pero si está registrado en cfg_clients[Asthend].email,
+       lo identificamos directo.
 
-    Ej: cliente='Electro Angel' + 'electroangel@gmail.com'   → True (tokens "electro", "angel")
-        cliente='Liliana Rohenes' + 'lilirohe@gmail.com'     → True (lili⊂liliana, rohe prefix de rohenes)
-        cliente='Roger Marti' + 'rogermart@gmail.com'        → True
-        cliente='Roger Marti' + 'unrelated@gmail.com'        → False
+    2. **Fuzzy match por tokens** (fallback): tokens del nombre del cliente
+       (>=3 chars, sin stopwords) contra el local-part del mail. Sirve para
+       clientes que NO tienen mail registrado todavía.
     """
     if not cliente_name:
         return False
+    owner_emails = _get_owner_emails(file)
+    if not owner_emails:
+        return False
+
+    # 1) Match exacto contra cfg_clients (si está configurado)
+    try:
+        from tracker import cfg_get_client
+        cfg = cfg_get_client(cliente_name)
+        if cfg and cfg.get("email"):
+            cfg_email = cfg["email"].strip().lower()
+            if cfg_email and cfg_email in owner_emails:
+                return True
+    except Exception:
+        # tracker no disponible (test directo del classifier) → skip
+        pass
+
+    # 2) Fuzzy match por tokens (heurística de respaldo)
     tokens = _client_tokens(cliente_name)
     if not tokens:
         return False
-    for em in _get_owner_emails(file):
+    for em in owner_emails:
         local = em.split("@", 1)[0]
         local_norm = _normalize(local).replace(".", "").replace("_", "").replace("-", "")
         for t in tokens:
-            # Match completo: "angel" en "electroangel"
             if t in local_norm:
                 return True
-            # Match por prefijo del token (mínimo 4 chars): "rohe" (de "rohenes") en "lilirohe"
             if len(t) >= 4 and t[:4] in local_norm:
                 return True
-            # Match por prefijo del local-part en el token: "lili" en "liliana"
             for i in range(4, min(len(local_norm), len(t)) + 1):
                 if local_norm[:i] == t[:i]:
                     return True
-                # solo necesitamos un prefix válido — si los 4 primeros coinciden, ya entró arriba
                 break
     return False
 
