@@ -213,15 +213,13 @@ class handler(BaseHTTPRequestHandler):
                 file_name = (body.get("file_name") or "").strip()
                 editor = (body.get("editor") or "").strip() or None
 
-            # Notes opcional SI hay fotos (las imágenes pueden hablar por sí solas).
-            # Si no hay nada → error.
+            # Notes opcional SI hay fotos. Force deploy v2.
             if not notes and not attachments:
-                return json_response(self, {"error": "contanos qué cambiar o agregá al menos una foto"}, status=400)
+                return json_response(self, {"error": "Escribi algo o suma una foto"}, status=400)
             if len(notes) > 5000:
                 return json_response(self, {"error": "notas muy largas (max 5000 chars)"}, status=400)
-            # Si no hay texto pero sí fotos, poner placeholder informativo
             if not notes:
-                notes = "(El cliente adjuntó fotos sin texto descriptivo — ver imágenes)"
+                notes = "(Cliente adjunto fotos sin texto — ver imagenes)"
 
             # Crear review + attachments en UNA sola transacción + un solo push DB
             review_id_holder = {}
