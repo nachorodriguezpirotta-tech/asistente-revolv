@@ -164,19 +164,40 @@ class handler(BaseHTTPRequestHandler):
             attachments = []  # lista de (filename, mime, bytes)
 
             if "multipart/form-data" in content_type:
-                # Parsear multipart manualmente (Vercel runtime no trae cgi.FieldStorage limpio)
-                import email
-                import email.policy
-                # Reconstruir un mensaje MIME para usar el parser de email
-                msg = email.message_from_bytes(
-                    b"Content-Type: " + content_type.encode() + b"\r\n\r\n" + raw_body,
-                    policy=email.policy.default,
-                )
-                for part in msg.iter_parts():
-                    disposition = part.get("Content-Disposition", "")
+                # Parser multipart manual — más confiable que email.policy en
+                # el runtime de Vercel (que tuvo problemas reportados).
+                # Buscamos el boundary y spliteamos el body en partes.
+                boundary = None
+                for chunk in content_type.split(";"):
+                    chunk = chunk.strip()
+                    if chunk.lower().startswith("boundary="):
+                        boundary = chunk[len("boundary="):].strip('"')
+                        break
+                if not boundary:
+                    return json_response(self, {"error": "multipart sin boundary"}, status=400)
+
+                # body splits por --boundary
+                delim = ("--" + boundary).encode()
+                parts = raw_body.split(delim)
+                # primera parte es preamble (vacía), última es "--" + epilogo
+                for raw_part in parts[1:-1]:
+                    # Strip CRLF inicial y final
+                    if raw_part.startswith(b"\r\n"):
+                        raw_part = raw_part[2:]
+                    if raw_part.endswith(b"\r\n"):
+                        raw_part = raw_part[:-2]
+                    # Separar headers de payload con doble CRLF
+                    if b"\r\n\r\n" not in raw_part:
+                        continue
+                    headers_raw, payload = raw_part.split(b"\r\n\r\n", 1)
+                    headers = {}
+                    for line in headers_raw.split(b"\r\n"):
+                        if b":" in line:
+                            k, v = line.split(b":", 1)
+                            headers[k.strip().lower().decode("ascii", "replace")] = v.strip().decode("utf-8", "replace")
+                    disposition = headers.get("content-disposition", "")
                     if "form-data" not in disposition:
                         continue
-                    # Parsear nombre del field
                     params_disp = {}
                     for chunk in disposition.split(";"):
                         if "=" in chunk:
@@ -184,20 +205,18 @@ class handler(BaseHTTPRequestHandler):
                             params_disp[k.strip()] = v.strip(' "')
                     field_name = params_disp.get("name", "")
                     fname = params_disp.get("filename")
-                    payload = part.get_payload(decode=True) or b""
+                    mime = headers.get("content-type") or "application/octet-stream"
+
                     if fname:
-                        # Es archivo (imagen)
                         if len(attachments) >= 5:
-                            continue  # cap 5 imgs
+                            continue
                         if len(payload) > 5 * 1024 * 1024:
                             return json_response(self, {"error": f"imagen '{fname}' muy grande (max 5MB)"}, status=413)
-                        mime = part.get_content_type() or "image/jpeg"
                         if not mime.startswith("image/"):
-                            return json_response(self, {"error": f"'{fname}' no es una imagen"}, status=400)
+                            mime = "image/jpeg"  # fallback (capaz iPhone no manda mime correcto)
                         attachments.append((fname, mime, payload))
                     else:
-                        # Es texto
-                        text = payload.decode("utf-8", errors="replace") if isinstance(payload, bytes) else str(payload)
+                        text = payload.decode("utf-8", errors="replace")
                         if field_name == "notes":
                             notes = text.strip()
                         elif field_name == "file_name":
