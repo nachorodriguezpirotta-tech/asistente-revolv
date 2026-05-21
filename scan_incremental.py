@@ -381,7 +381,12 @@ def run(notify: bool = False):
         # ¿Es CORRECCIÓN de un editado previo del mismo cliente?
         from classifier import identify_editor_by_owner
         if is_correction_for_client(cliente_real, f["name"], current_file_id=f["id"]):
-            real_editor = identify_editor_by_owner(f) or "—"
+            # Mismo fallback que closer.py: si el mail del owner no matchea editor
+            # conocido, usar el editor que el Sheet asigna al cliente. Antes acá
+            # caía a "—" siempre, lo que rompía atribución de correcciones de
+            # editores no registrados en cfg_editors (caso Adri 21/may con Luis).
+            client_editor_fallback = get_editor_for_client(cliente_real, packs)
+            real_editor = identify_editor_by_owner(f) or client_editor_fallback or "—"
             enqueue_completion_mail(
                 task_id=None,
                 cliente=cliente_real,
