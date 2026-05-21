@@ -380,6 +380,14 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_log_sent ON mail_log(sent_at)")
     # Índice para que el dedupe (lookup por to_email + subject + sent_at) sea rápido.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_log_dedupe ON mail_log(to_email, subject, sent_at)")
+    # Migration: agregar columna dedupe_key para anti-duplicados a nivel DB.
+    # NO usamos UNIQUE constraint en la tabla (rompería con rows viejas que
+    # tienen mismo to+subject de meses atrás). En su lugar, el lookup de
+    # dedupe filtra por sent_at >= cutoff.
+    ml_cols = [r[1] for r in conn.execute("PRAGMA table_info(mail_log)").fetchall()]
+    if "dedupe_key" not in ml_cols:
+        conn.execute("ALTER TABLE mail_log ADD COLUMN dedupe_key TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_log_key ON mail_log(dedupe_key, sent_at)")
 
     # Tabla pending_completion_mails: cola persistente de mails de cierre/decremento.
     # Cuando el closer detecta un editado nuevo, INSERT acá ANTES de mandar mail.
@@ -1132,18 +1140,45 @@ def mark_completion_mail_sent(row_id: int):
 def log_mail(to_email: str, subject: str, kind: str = "",
              cliente: Optional[str] = None, editor: Optional[str] = None,
              msg_id: Optional[str] = None, success: bool = True,
-             error: Optional[str] = None):
+             error: Optional[str] = None, dedupe_key: Optional[str] = None):
     """Registra un mail enviado (o intentado) en mail_log para auditoría."""
     try:
         conn = get_conn()
         conn.execute("""
-            INSERT INTO mail_log (sent_at, to_email, subject, kind, cliente, editor, msg_id, success, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (now_iso(), to_email, subject, kind, cliente, editor, msg_id, 1 if success else 0, error))
+            INSERT INTO mail_log (sent_at, to_email, subject, kind, cliente, editor, msg_id, success, error, dedupe_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (now_iso(), to_email, subject, kind, cliente, editor, msg_id, 1 if success else 0, error, dedupe_key))
         conn.commit()
         conn.close()
     except Exception:
         pass
+
+
+def check_recent_mail_by_key(dedupe_key: str, minutes: int = 30) -> Optional[str]:
+    """Busca en mail_log si hay un envío success=1 con el dedupe_key dado
+    en los últimos N minutos. Retorna el msg_id (o '(no-id)' si el envío
+    fue success pero sin msg_id guardado) si existe; None si no encontró nada.
+
+    El caller usa truthiness: si retorna cualquier cosa truthy → ya se mandó
+    → skip. NO devolver None si el row existe (eso permitiría duplicados)."""
+    if not dedupe_key:
+        return None
+    try:
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT msg_id FROM mail_log "
+            "WHERE dedupe_key=? AND success=1 AND sent_at >= ? "
+            "ORDER BY sent_at DESC LIMIT 1",
+            (dedupe_key, cutoff)
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None
+        return row[0] or "(no-id)"  # truthy aunque msg_id sea NULL
+    except Exception:
+        return None
 
 
 def list_mail_log(limit: int = 200) -> list[dict]:

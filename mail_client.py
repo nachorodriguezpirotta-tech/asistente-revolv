@@ -7,6 +7,7 @@ Uso:
 """
 
 import base64
+import os
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
@@ -41,10 +42,14 @@ def _sync_mail_log_from_remote() -> bool:
 
     Si no estamos en un repo git (ej. local de desarrollo), retorna False
     silenciosamente.
+
+    BUG FIX 20/may: el path estaba 1 nivel arriba (dirname(dirname(...)) en
+    vez de dirname(...)). mail_client.py vive en el ROOT del repo, no en
+    subdirectorio, así que el dirname() de su path YA es el repo root.
     """
     import subprocess
     try:
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        repo_root = os.path.dirname(os.path.abspath(__file__))
         # Verificar que es repo git
         check = subprocess.run(
             ["git", "-C", repo_root, "rev-parse", "--git-dir"],
@@ -69,37 +74,28 @@ def _sync_mail_log_from_remote() -> bool:
         return False
 
 
+def _dedupe_key(to: str, subject: str) -> str:
+    """Hash determinístico para identificar 'el mismo mail'. Usado en
+    UNIQUE constraint de mail_log + dedupe pre-envío."""
+    import hashlib
+    return hashlib.sha1(f"{to.lower().strip()}||{subject.strip()}".encode()).hexdigest()[:24]
+
+
 def already_sent_recently(to: str, subject: str, minutes: int = 30) -> Optional[str]:
-    """Dedupe via mail_log de tracker.db. Antes de chequear, hace git pull
-    --rebase para tener la última versión del mail_log (otros workers de
-    GHA pueden haber logueado envíos que nuestra DB local todavía no ve).
+    """Dedupe via mail_log de tracker.db usando dedupe_key (hash de to+subject).
+    Antes de chequear, hace git pull --rebase para traer mail_log de otros
+    workers de GHA.
 
-    Si encuentra un envío del mismo subject al mismo to en los últimos N min,
-    retorna el msg_id del existente. Si no, None.
-
-    Antes intentábamos via Gmail Search API pero el OAuth solo tiene scope
-    `gmail.send` y no permite list/search → 403. Esta versión usa la DB
-    sincronizada via git como source of truth.
+    Retorna msg_id del envío previo si existe, None si no.
     """
     try:
-        from datetime import datetime, timedelta
         # Sincronizar con el último estado del repo (puede tener envíos de
         # otros workers). Skipea silencioso si no estamos en GHA.
         _sync_mail_log_from_remote()
 
-        from tracker import get_conn
-        conn = get_conn()
-        cutoff = (datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds")
-        row = conn.execute(
-            "SELECT msg_id FROM mail_log "
-            "WHERE to_email=? AND subject=? AND sent_at >= ? AND success=1 "
-            "ORDER BY sent_at DESC LIMIT 1",
-            (to, subject, cutoff)
-        ).fetchone()
-        conn.close()
-        if row and row[0]:
-            return row[0]
-        return None
+        from tracker import check_recent_mail_by_key
+        key = _dedupe_key(to, subject)
+        return check_recent_mail_by_key(key, minutes=minutes)
     except Exception as e:
         print(f"   ⚠️ dedupe check falló (continúa enviando): {e}")
         return None
@@ -120,6 +116,9 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
     duplicados causados por race condition entre containers (caso del scan
     que vio el mismo archivo y encoló mail en dos workers paralelos).
     """
+    # Calcular dedupe_key SIEMPRE (aún si dedupe_window=0, para tener log preciso)
+    dkey = _dedupe_key(to, subject)
+
     if dedupe_window_minutes > 0:
         existing = already_sent_recently(to, subject, minutes=dedupe_window_minutes)
         if existing:
@@ -128,7 +127,7 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
                 from tracker import log_mail
                 log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
                          editor=editor, msg_id=existing, success=True,
-                         error="dedupe-skip")
+                         error="dedupe-skip", dedupe_key=dkey)
             except Exception:
                 pass
             return existing
@@ -150,11 +149,11 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
             body={"raw": raw},
         ).execute()
         msg_id = sent["id"]
-        # Log success
+        # Log success con dedupe_key (sirve para próxima vez evitar duplicado)
         try:
             from tracker import log_mail
             log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
-                     editor=editor, msg_id=msg_id, success=True)
+                     editor=editor, msg_id=msg_id, success=True, dedupe_key=dkey)
         except Exception:
             pass
         return msg_id
@@ -162,7 +161,8 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
         try:
             from tracker import log_mail
             log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
-                     editor=editor, msg_id=None, success=False, error=str(e)[:300])
+                     editor=editor, msg_id=None, success=False, error=str(e)[:300],
+                     dedupe_key=dkey)
         except Exception:
             pass
         raise
