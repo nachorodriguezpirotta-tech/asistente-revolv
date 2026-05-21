@@ -163,6 +163,11 @@ class handler(BaseHTTPRequestHandler):
             editor = None
             attachments = []  # lista de (filename, mime, bytes)
 
+            # DEBUG temporal: log de lo que llega
+            print(f"[DEBUG] content_type={content_type!r}")
+            print(f"[DEBUG] body length={len(raw_body)}")
+            print(f"[DEBUG] body first 200 bytes={raw_body[:200]!r}")
+
             if "multipart/form-data" in content_type:
                 # Parser multipart manual — más confiable que email.policy en
                 # el runtime de Vercel (que tuvo problemas reportados).
@@ -234,8 +239,10 @@ class handler(BaseHTTPRequestHandler):
                 editor = (body.get("editor") or "").strip() or None
 
             # Notes opcional SI hay fotos. Force deploy v2.
+            print(f"[DEBUG] notes={notes!r}, attachments={len(attachments)}, file_name={file_name!r}")
             if not notes and not attachments:
-                return json_response(self, {"error": "Escribi algo o suma una foto"}, status=400)
+                return json_response(self, {"error": "Escribi algo o suma una foto",
+                                              "_debug": {"ct_len": len(content_type), "body_len": len(raw_body), "ct": content_type[:80]}}, status=400)
             if len(notes) > 5000:
                 return json_response(self, {"error": "notas muy largas (max 5000 chars)"}, status=400)
             if not notes:
