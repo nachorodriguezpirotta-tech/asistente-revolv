@@ -1,5 +1,6 @@
 """
-Sistema de revisiones de cliente — v2 (sin reviews pending).
+Sistema de revisiones de cliente — v3 (con attachments, notes opcional con fotos).
+Force rebuild marker: 2026-05-21T15:08
 
 El cambio respecto a v1: NO se crea review por adelantado al mandar el mail
 al cliente. La review SOLO se crea cuando el cliente realmente pide cambios.
