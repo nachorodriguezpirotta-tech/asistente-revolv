@@ -36,6 +36,18 @@
     "api/calendar.py": {
       "memory": 256,
       "maxDuration": 10
+    },
+    "api/review.py": {
+      "memory": 256,
+      "maxDuration": 10
+    },
+    "api/reviews.py": {
+      "memory": 256,
+      "maxDuration": 10
+    },
+    "api/voice_note.py": {
+      "memory": 256,
+      "maxDuration": 10
     }
   }
 }
