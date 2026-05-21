@@ -56,13 +56,22 @@ def main():
     else:
         print(f"⚠️  send_client_delivery_mail retornó False — algo pasó (cliente sin notif?)")
 
-    # Cleanup: borrar el cliente de prueba y los reviews de PRUEBA
-    conn = get_conn()
-    conn.execute("DELETE FROM client_reviews WHERE cliente = ?", (CLIENTE,))
-    conn.commit()
-    conn.close()
-    cfg_delete_client(CLIENTE)
-    print(f"🧹 Cleanup OK: cliente y reviews de prueba borrados de la DB")
+    # Cleanup OPCIONAL: si quieres conservar el review para probar los botones,
+    # NO lo borres. Por default lo dejamos persistir para que los links
+    # ✅ Todo perfecto / 📝 Quiero ajustar algo funcionen al click.
+    # Setear env var TEST_CLEANUP=1 para limpiar después de enviar.
+    if os.environ.get("TEST_CLEANUP", "").strip() == "1":
+        conn = get_conn()
+        conn.execute("DELETE FROM client_reviews WHERE cliente = ?", (CLIENTE,))
+        conn.commit()
+        conn.close()
+        cfg_delete_client(CLIENTE)
+        print(f"🧹 Cleanup OK: cliente y reviews de prueba borrados (TEST_CLEANUP=1)")
+    else:
+        print(f"💡 Review persistente para que puedas probar los botones del mail.")
+        print(f"   Para limpiar después, podés borrar manual:")
+        print(f"     - cfg_clients WHERE cliente='{CLIENTE}'")
+        print(f"     - client_reviews WHERE cliente='{CLIENTE}'")
 
 
 if __name__ == "__main__":
