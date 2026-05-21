@@ -511,7 +511,11 @@ def send_client_delivery_mail(cliente: str, file_name: str,
     else:
         folder_url = None
 
-    subject = "🎬 Tu video está listo"
+    # Incluir nombre del archivo en el subject para que (a) el cliente vea
+    # de qué video se trata, y (b) el dedupe por (to+subject) no bloquee
+    # videos distintos del mismo cliente con la misma frase fija.
+    _short_name = (file_name or "").rsplit(".", 1)[0][:60]
+    subject = f"🎬 Tu video está listo — {_short_name}" if _short_name else "🎬 Tu video está listo"
 
     text = f"""Hola {display}!
 
