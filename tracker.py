@@ -1439,17 +1439,50 @@ def cfg_list_clients() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _normalize_client_name(s: str) -> str:
+    """Lowercase + sin acentos + collapsed whitespace. Para matching tolerante
+    entre 'David Hernandez' (scan sin acento) y 'David Hernández' (DB con
+    acento). Bug 21/may: a David no le llegaba mail por mismatch de tilde."""
+    if not s:
+        return ""
+    import unicodedata
+    n = unicodedata.normalize("NFD", s)
+    n = "".join(c for c in n if unicodedata.category(c) != "Mn")
+    return " ".join(n.lower().split())
+
+
 def cfg_get_client(cliente: str) -> Optional[dict]:
-    """Devuelve la config del cliente o None si no está configurado."""
+    """Devuelve la config del cliente o None si no está configurado.
+
+    Match: 1) exacto TRIM=TRIM (rápido). 2) fallback case-insensitive +
+    accent-insensitive (resuelve casos como David Hernandez ↔ David Hernández).
+    """
     if not cliente:
         return None
     conn = get_conn()
+    # 1) Match exacto (rápido, common case)
     row = conn.execute("""
         SELECT cliente, email, display_name, notifications_enabled, created_at, updated_at
         FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)
     """, (cliente,)).fetchone()
+    if row:
+        conn.close()
+        return dict(row)
+    # 2) Fallback: lower + sin acentos. Cargamos todos (la tabla es chica) y
+    #    comparamos normalizado. Solo se ejecuta cuando el exact match falló.
+    target = _normalize_client_name(cliente)
+    if not target:
+        conn.close()
+        return None
+    all_rows = conn.execute("""
+        SELECT cliente, email, display_name, notifications_enabled, created_at, updated_at
+        FROM cfg_clients
+    """).fetchall()
     conn.close()
-    return dict(row) if row else None
+    for r in all_rows:
+        if _normalize_client_name(r["cliente"]) == target:
+            return dict(r)
+    return None
 
 
 def cfg_upsert_client(cliente: str, email: str, display_name: Optional[str] = None,
