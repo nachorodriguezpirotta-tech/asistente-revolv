@@ -28,7 +28,7 @@ from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from _shared import check_client_token, json_response, with_db, read_db
+    from _shared import check_client_token, check_token, json_response, with_db, read_db
     _IMPORT_ERROR = None
 except Exception as _e:
     _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
@@ -216,6 +216,48 @@ class handler(BaseHTTPRequestHandler):
                 print(f"notify error: {e}")
 
             return json_response(self, {"ok": True, "status": new_status})
+        except Exception as e:
+            return json_response(self, {"error": str(e)[:200], "trace": traceback.format_exc()[:1500]}, status=500)
+
+    def do_DELETE(self):
+        """Borrar una review. SOLO admin. Body opcional con {ids:[N,...]} para
+        batch delete, o query ?id=N para una sola."""
+        try:
+            if _IMPORT_ERROR:
+                return json_response(self, {"error": _IMPORT_ERROR}, status=500)
+            params = parse_qs(urlparse(self.path).query)
+            token = (params.get("t", [""])[0] or "").strip()
+            admin = params.get("admin", [""])[0] == "1"
+            if not (admin and check_token("ADMIN", token)):
+                return json_response(self, {"error": "admin required"}, status=401)
+
+            # ids: por query ?id=N o body {"ids":[...]}
+            ids = []
+            single = params.get("id", [""])[0]
+            if single:
+                try:
+                    ids = [int(single)]
+                except Exception:
+                    return json_response(self, {"error": "id inválido"}, status=400)
+            else:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length > 0:
+                    try:
+                        body = json.loads(self.rfile.read(length).decode("utf-8"))
+                        ids = [int(x) for x in (body.get("ids") or [])]
+                    except Exception:
+                        return json_response(self, {"error": "body inválido"}, status=400)
+            if not ids:
+                return json_response(self, {"error": "faltan ids"}, status=400)
+
+            def _op(conn):
+                placeholders = ",".join("?" * len(ids))
+                n = conn.execute(
+                    f"DELETE FROM client_reviews WHERE id IN ({placeholders})", ids
+                ).rowcount
+                return n
+            n = with_db(_op, message=f"reviews: delete {ids}")
+            return json_response(self, {"ok": True, "deleted": n})
         except Exception as e:
             return json_response(self, {"error": str(e)[:200], "trace": traceback.format_exc()[:1500]}, status=500)
 

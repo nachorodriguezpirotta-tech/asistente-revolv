@@ -60,6 +60,14 @@
   .badge.approved { background:rgba(74,222,128,0.18); color:#4ade80; }
   .badge.resolved { background:rgba(96,165,250,0.18); color:#60a5fa; }
 
+  .del-btn {
+    background:transparent; border:none; color:#5a6478;
+    font-size:16px; padding:6px 10px; border-radius:6px; cursor:pointer;
+    opacity:0.5; transition:opacity 0.15s, background 0.15s;
+    margin-left:auto;
+  }
+  .review:hover .del-btn { opacity:1; }
+  .del-btn:hover { background:rgba(248,113,113,0.15); color:#f87171; }
   .empty { color:#5a6478; text-align:center; padding:40px 16px; }
   .loading { color:#5a6478; text-align:center; padding:40px 16px; }
   .error { color:#f87171; text-align:center; padding:24px; }
@@ -175,13 +183,18 @@ function renderItem(r) {
   const resolved = r.resolved_at ? `Resuelta: ${fmtDate(r.resolved_at)}` : '';
   const isUrgent = r.status === 'revision_requested';
 
+  const delBtn = IS_ADMIN
+    ? `<button class="del-btn" onclick="deleteReview(${r.id}, '${escape(r.cliente).replace(/'/g, "&#39;")}')" title="Borrar esta revisión">🗑</button>`
+    : '';
+
   return `
-    <div class="review ${isUrgent?'urgent':''}">
+    <div class="review ${isUrgent?'urgent':''}" data-id="${r.id}">
       <div class="row1">
         ${statusBadge}
         <span class="cliente">${escape(r.cliente)}</span>
         <span class="video">📹 ${escape(r.video_file_name || '?')}</span>
         ${r.editor ? `<span style="font-size:11px;color:#8a93a3;">· editor ${escape(r.editor)}</span>` : ''}
+        ${delBtn}
       </div>
       <div class="meta">
         <span>📅 Enviada: ${created}</span>
@@ -191,6 +204,21 @@ function renderItem(r) {
       ${r.notes ? `<div class="notes">${escape(r.notes)}</div>` : ''}
     </div>
   `;
+}
+
+async function deleteReview(id, cliente) {
+  if (!confirm(`¿Borrar esta revisión de "${cliente}"?\n\nNo se puede deshacer.`)) return;
+  try {
+    const res = await fetch(`/api/review?id=${id}&admin=1&t=${encodeURIComponent(TOKEN)}`, {
+      method: 'DELETE',
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
+    // Reload data para refresh stats
+    await load();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
 }
 
 function setFilter(f) {
