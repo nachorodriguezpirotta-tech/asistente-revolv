@@ -24,9 +24,14 @@ from notifier import send_client_delivery_mail
 from config import TEST_EMAIL
 
 
+from datetime import datetime
+_ts = datetime.now().strftime("%H%M%S")
 CLIENTE = "PRUEBA REVOLV"
-FILE_NAME = "Video 7 - Demo del sistema.mp4"
-FILE_ID = "1FAKE-test-file-id-for-mail-preview"
+# file_name con timestamp para que el subject sea único cada vez y el dedupe
+# no skipee los tests repetidos. Si dejábamos el nombre fijo, el segundo test
+# en <30min se bloqueaba como duplicado.
+FILE_NAME = f"Video Prueba {_ts}.mp4"
+FILE_ID = f"1FAKE-test-{_ts}"
 EDITOR = "Benja"
 
 
