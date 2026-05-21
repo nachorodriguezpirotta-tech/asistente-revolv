@@ -1283,24 +1283,78 @@ def _video_key(name: str) -> Optional[str]:
     return None
 
 
-def is_correction_for_client(cliente: str, file_name: str, current_file_id: Optional[str] = None) -> bool:
+def _correction_stem(name: str) -> str:
+    """Devuelve el 'stem' de un nombre para detectar corrección. Quita
+    extensión y sufijos comunes de re-entrega: v2, v3, final, corregido,
+    corrección, fix, edit, nuevo, etc.
+
+    Si dos archivos tienen el MISMO stem → corrección. Si solo tienen
+    misma key pero stems distintos → archivos diferentes (mismo número
+    de video pero contenido distinto, típico en clientes con muchas
+    tandas como Ely Fitness).
+
+    Ej:
+      'Video 10.mp4'          → 'video 10'
+      'Video 10 v2.mp4'       → 'video 10'
+      'Video 10 corregido.mp4'→ 'video 10'
+      'Video 10 JALON.mp4'    → 'video 10 jalon'  (≠ 'video 10' → NO es corrección)
+    """
+    if not name:
+        return ""
+    import re
+    s = name.lower().strip()
+    s = re.sub(r'\.[a-z0-9]+$', '', s)  # quitar extensión
+    # quitar sufijos comunes de corrección/re-entrega
+    suffix_patterns = [
+        r'\s*[-_]?\s*v\d+\s*$',
+        r'\s*[-_]?\s*(final|corregido|corregida|correcci[oó]n|corr|fix|nuevo|nueva|edit|editado|editada)\s*$',
+        r'\s*\(\d+\)\s*$',  # "video 10 (2)"
+    ]
+    for p in suffix_patterns:
+        s = re.sub(p, '', s).strip()
+    return " ".join(s.split())  # colapsar espacios
+
+
+def is_correction_for_client(cliente: str, file_name: str, current_file_id: Optional[str] = None,
+                              max_age_days: int = 7) -> bool:
     """¿Este archivo es corrección de un editado previo del MISMO cliente?
-    Compara el patrón numerado (Video N / Reel N) contra known_edited_files.
-    `current_file_id`: para excluir el propio archivo si ya está en la tabla."""
+
+    Estrategia (estricta):
+      1. Calcular key del nombre (Video N / Reel N). Si no hay key → False.
+      2. Calcular stem (key + texto descriptivo, sin sufijos de re-entrega).
+      3. Buscar en known_edited_files del cliente entries con:
+         - first_seen_at >= ahora - max_age_days (default 7 días)
+         - Misma key Y mismo stem
+      4. Si match → True (corrección).
+      5. Si solo coincide la key (ej 'video 10' vs 'video 10 jalon') →
+         False (son entregas distintas con mismo número).
+
+    Antes era muy laxa: solo comparaba la key, daba falsos positivos cuando
+    el cliente tenía múltiples 'video 10' de distintas tandas (caso Ely
+    Fitness)."""
     key = _video_key(file_name)
     if not key:
         return False
+    stem = _correction_stem(file_name)
+    if not stem:
+        return False
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat(timespec="seconds")
     conn = get_conn()
     rows = conn.execute(
-        "SELECT file_id, name FROM known_edited_files WHERE TRIM(cliente) = TRIM(?)",
-        (cliente,)
+        "SELECT file_id, name FROM known_edited_files "
+        "WHERE TRIM(cliente) = TRIM(?) AND first_seen_at >= ?",
+        (cliente, cutoff)
     ).fetchall()
     conn.close()
     for r in rows:
         if current_file_id and r["file_id"] == current_file_id:
             continue
         prev_key = _video_key(r["name"])
-        if prev_key and prev_key == key:
+        if prev_key != key:
+            continue
+        prev_stem = _correction_stem(r["name"])
+        if prev_stem == stem:
             return True
     return False
 
