@@ -83,6 +83,33 @@ def _html_response(handler, html: str, status: int = 200):
     handler.wfile.write(body)
 
 
+def _escape_html(s: str) -> str:
+    """Escapa HTML para que el nombre del cliente no rompa el template."""
+    if s is None:
+        return ""
+    return (str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;"))
+
+
+def _render_approve(cliente: str) -> str:
+    """Renderiza la pantalla de aprobación. Usa .replace() en vez de .format()
+    porque el template tiene llaves CSS literales que romperían .format()
+    con KeyError (bug 21/may: cliente clickeaba 'Todo perfecto' y veía un
+    JSON con stack trace en lugar de la pantalla 'Listo!')."""
+    return _APPROVE_HTML.replace("{cliente}", _escape_html(cliente))
+
+
+def _render_error(msg: str, detail: str) -> str:
+    """Igual que _render_approve, evita .format() por las llaves CSS."""
+    return (_ERROR_HTML
+            .replace("{msg}", _escape_html(msg))
+            .replace("{detail}", _escape_html(detail)))
+
+
 class handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
@@ -95,7 +122,7 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             if _IMPORT_ERROR:
-                return _html_response(self, _ERROR_HTML.format(msg="Sistema no disponible", detail=_IMPORT_ERROR[:200]), 500)
+                return _html_response(self, _render_error("Sistema no disponible", _IMPORT_ERROR[:200]), 500)
             params = parse_qs(urlparse(self.path).query)
             action = params.get("action", ["info"])[0]
             cliente = (params.get("cliente", [""])[0] or "").strip()
@@ -107,13 +134,13 @@ class handler(BaseHTTPRequestHandler):
             if not cliente:
                 if action == "info":
                     return json_response(self, {"error": "cliente requerido"}, status=400)
-                return _html_response(self, _ERROR_HTML.format(msg="Link inválido", detail="Falta cliente"), 400)
+                return _html_response(self, _render_error("Link inválido", "Falta cliente"), 400)
 
             # Auth: token tiene que matchear con el cliente
             if not check_client_token(cliente, token):
                 if action == "info":
                     return json_response(self, {"error": "unauthorized"}, status=401)
-                return _html_response(self, _ERROR_HTML.format(msg="Link inválido", detail="El link expiró o no es válido."), 401)
+                return _html_response(self, _render_error("Link inválido", "El link expiró o no es válido."), 401)
 
             # MODO info: devolver datos para que revision.html arme el form
             if action == "info":
@@ -135,7 +162,7 @@ class handler(BaseHTTPRequestHandler):
                     notify_review_approved_lite(cliente, file_name, editor)
                 except Exception as e:
                     print(f"notify_review_approved_lite error: {e}")
-                return _html_response(self, _APPROVE_HTML.format(cliente=cliente))
+                return _html_response(self, _render_approve(cliente))
 
             return json_response(self, {"error": f"action inválida: {action}"}, status=400)
         except Exception as e:
