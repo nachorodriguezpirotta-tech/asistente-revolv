@@ -32,6 +32,12 @@ def _normalize(s: str) -> str:
 
 
 def _is_video(name: str, mime: str = "") -> bool:
+    # Rechazar AppleDouble / macOS resource forks (archivos ocultos tipo ._C2119.MP4
+    # que aparecen cuando se copian videos desde Mac a Drive). Aunque tienen
+    # extensión .MP4 no son videos reales, son metadata. Bug visto el 12/may
+    # cuando Jose Social Pulse Media generó 354 "editados" en un día — 346 eran ._
+    if name.startswith("._"):
+        return False
     if Path(name).suffix.lower() in VIDEO_EXTS:
         return True
     return mime.startswith("video/")

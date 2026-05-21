@@ -23,7 +23,19 @@ except Exception as _e:
 
 
 def _build_month(conn, month_str: str):
-    """month_str = 'YYYY-MM'. Devuelve días con crudos/editados/entregas."""
+    """month_str = 'YYYY-MM'. Devuelve días con crudos/editados/entregas.
+
+    Notas importantes:
+    - first_seen_at está guardado en UTC. El usuario está en Argentina (UTC-3,
+      sin DST). Aplicamos `-3 hours` en SQLite para que los uploads de la
+      noche BA caigan en el día correcto. Bug reportado por Ignacio 21/may:
+      "hoy dice 11 editados pero subí menos" — los extras eran de ayer
+      después de las 21hs BA (que en UTC ya es el día siguiente).
+
+    - Filtramos archivos AppleDouble (name LIKE '._%'). Bug del 12/may:
+      Jose Social Pulse Media salía con 354 editados en un día, pero 346
+      eran archivos basura `._C21XX.MP4` (metadata de macOS).
+    """
     # Validar formato
     try:
         datetime.strptime(month_str, "%Y-%m")
@@ -32,21 +44,27 @@ def _build_month(conn, month_str: str):
 
     days = {}
 
-    # Crudos por día
-    rows = conn.execute("""
-        SELECT substr(first_seen_at, 1, 10) as day, COUNT(*) as n
+    DAY_EXPR = "substr(datetime(first_seen_at, '-3 hours'), 1, 10)"
+
+    # Crudos por día (timezone-aware + sin ._ files)
+    rows = conn.execute(f"""
+        SELECT {DAY_EXPR} as day, COUNT(*) as n
         FROM known_files
-        WHERE substr(first_seen_at, 1, 7) = ? AND is_baseline = 0
+        WHERE {DAY_EXPR} LIKE ? || '%'
+          AND is_baseline = 0
+          AND name NOT LIKE '._%'
         GROUP BY day
     """, (month_str,)).fetchall()
     for r in rows:
         days.setdefault(r["day"], {"crudos": 0, "editados": 0})["crudos"] = r["n"]
 
     # Editados por día
-    rows = conn.execute("""
-        SELECT substr(first_seen_at, 1, 10) as day, COUNT(*) as n
+    rows = conn.execute(f"""
+        SELECT {DAY_EXPR} as day, COUNT(*) as n
         FROM known_edited_files
-        WHERE substr(first_seen_at, 1, 7) = ? AND is_baseline = 0
+        WHERE {DAY_EXPR} LIKE ? || '%'
+          AND is_baseline = 0
+          AND name NOT LIKE '._%'
         GROUP BY day
     """, (month_str,)).fetchall()
     for r in rows:
