@@ -363,8 +363,20 @@ def run(notify: bool = False):
             create_task(cliente_real, editor, f["id"], f["name"])
             new_tasks.append({"cliente": cliente_real, "editor": editor, "file": f["name"]})
             continue
-        if sig is not True:
-            continue  # ambiguo → ignorar (scan completo se encarga)
+        if sig is None:
+            # AMBIGUO en carpeta de cliente fuera de /Material/. Antes
+            # skipeábamos y el scan completo se encargaba — pero el scan
+            # completo solo procesa clientes con pending count > 0, así que
+            # correcciones / re-entregas con nombres ambiguos ("3.mp4", "v2",
+            # etc.) nunca se detectaban. Bug 21/may: Adri subió "3.mp4" para
+            # Luis Alberto y no llegó mail.
+            #
+            # Default permisivo coherente con list_edited_files de closer.py:
+            # archivo afuera de /Material/, owner no matchea cliente → asumir
+            # que es entrega de un editor (aunque su mail no esté en cfg_editors).
+            pass  # tratar como editado (sig=True implícito)
+        elif sig is not True:
+            continue  # sig is False (crudo) ya manejado arriba en la rama is_crudo
 
         # Es editado → cerrar task pendiente (si hay)
         if is_edited_known(f["id"]):
