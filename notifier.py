@@ -353,6 +353,15 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
                 f"<p style='color:#666;font-size:13px;'>El pending count NO cambia. "
                 f"La corrección reemplaza el editado previo del mismo video.</p>"
             )
+            # Dedupe estable: misma corrección (mismo cliente + mismo stem de archivo)
+            # debe deduplicarse aunque el editor se haya detectado distinto en
+            # otro worker (bug "Agus" vs "—" reportado por Ignacio 21/may).
+            try:
+                from tracker import _correction_stem
+                _stem = _correction_stem(file_name)
+            except Exception:
+                _stem = (file_name or "").lower().strip()
+            _correction_dedupe_key = f"correction-admin|{cliente.strip().lower()}|{_stem}"
         else:
             # Mail unificado: SIEMPRE el formato "entregó 1 video de X". Incluye
             # el nombre del archivo en el subject para que Ignacio sepa qué subió
@@ -399,11 +408,15 @@ Archivo: {file_name}{link_text}
         for dest in destinatarios:
             try:
                 # dedupe_window=30min: si dos workers de GHA procesaron en paralelo
-                # el mismo editado y mandaron el mismo mail, Gmail nos avisa y
+                # el mismo editado y mandaron el mismo mail, mail_log lo atrapa y
                 # evitamos el duplicado (bug reportado por Ignacio 20/may).
+                # Para correcciones, usamos dedupe_key_override estable (no depende
+                # del editor ni del file_id) para atrapar el caso "Agus" vs "—".
+                _override = _correction_dedupe_key if is_correction else None
                 msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html,
                                    kind="completion", cliente=cliente, editor=editor,
-                                   dedupe_window_minutes=30)
+                                   dedupe_window_minutes=30,
+                                   dedupe_key_override=_override)
                 print(f"  ✅ mail cierre enviado a {dest}: {editor} → {cliente} (msg_id={msg_id})")
                 any_sent = True
                 sent += 1
@@ -425,21 +438,37 @@ Archivo: {file_name}{link_text}
             except Exception as e:
                 print(f"     ⚠️ push cierre: {e}")
 
-        # Si fue corrección de un video con revisión pendiente, marcarla como
-        # resuelta y avisarle al cliente que está la versión corregida.
+        # Corrección: SIEMPRE avisar al cliente (sea que haya review pendiente o no).
+        # Y best-effort marcar review pendiente como resuelta si matchea.
         if any_sent and is_correction:
+            review_resolved_id = None
             try:
                 from tracker import mark_review_resolved_for_client_video, get_client_review
-                resolved_id = mark_review_resolved_for_client_video(cliente, file_name)
-                if resolved_id:
-                    review = get_client_review(resolved_id)
+                review_resolved_id = mark_review_resolved_for_client_video(cliente, file_name)
+                if review_resolved_id:
+                    review = get_client_review(review_resolved_id)
                     if review:
-                        notify_revision_resolved(resolved_id, review)
+                        notify_revision_resolved(review_resolved_id, review)
             except Exception as e:
                 print(f"     ⚠️ resolver revisión: {e}")
+            # Si NO había review match (Ely subió cambios pero el review no estaba
+            # registrado en el sistema, o el cliente nunca usó el form), igual
+            # mandar mail al cliente avisándole que está la versión corregida.
+            # Bug reportado por Ignacio 21/may: a Ely no le llegó nada.
+            if not review_resolved_id:
+                try:
+                    notify_correction_ready_to_client(
+                        cliente=cliente, file_name=file_name,
+                        edited_folder_id=edited_folder_id,
+                        client_folder_id=client_folder_id,
+                        file_id=file_id,
+                    )
+                except Exception as e:
+                    print(f"     ⚠️ mail cliente corrección: {e}")
 
         # MAIL AL CLIENTE (si está activado en cfg_clients). Solo si NO es
-        # corrección. La corrección ya genera notify_revision_resolved arriba.
+        # corrección. La corrección ya genera notify_revision_resolved /
+        # notify_correction_ready_to_client arriba.
         if any_sent and not is_correction:
             try:
                 send_client_delivery_mail(
@@ -816,11 +845,82 @@ Editor: {editor or '-'}.
         print(f"   ⚠️ falló mail approved: {e}")
 
 
+def notify_correction_ready_to_client(cliente: str, file_name: str,
+                                       edited_folder_id: Optional[str] = None,
+                                       client_folder_id: Optional[str] = None,
+                                       file_id: Optional[str] = None) -> None:
+    """Avisa al cliente que está la versión corregida de un video, SIN depender
+    de un review_id registrado. Se llama cuando el editor sube una corrección
+    pero no había review match (ej. el cliente pidió el cambio por WhatsApp y
+    no por el form del sistema). Bug reportado 21/may (Ely Fitness).
+
+    Reusa el mismo mail que notify_revision_resolved (look & feel idéntico),
+    pero arma el body desde los parámetros directos.
+    """
+    if not cliente or not file_name:
+        return
+    from tracker import cfg_client_should_be_notified, _correction_stem
+    target = cfg_client_should_be_notified(cliente)
+    if not target:
+        return  # cliente sin mail registrado, no avisamos
+    to_email = target["email"]
+    display = target["display_name"] or cliente.split()[0]
+    video = file_name
+
+    subject = f"🎬 Tu revisión está lista — {video}"
+    body_text = f"""Hola {display}!
+
+Acabo de subir la versión corregida de tu video:
+
+  📹 {video}
+
+Pegale una mirada y avisame si quedó bien.
+
+Un abrazo,
+Nacho
+Revolv
+"""
+    body_html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,Segoe UI,sans-serif;color:#222;">
+<div style="max-width:560px;margin:0 auto;padding:32px 24px;">
+<div style="text-align:center;margin-bottom:28px;">
+<div style="font-size:14px;letter-spacing:2px;color:#888;text-transform:uppercase;font-weight:600;">REVOLV</div>
+</div>
+<div style="background:white;border-radius:14px;padding:32px 28px;box-shadow:0 2px 12px rgba(0,0,0,0.04);">
+<h1 style="margin:0 0 16px;font-size:24px;color:#111;">🎬 Tu revisión está lista</h1>
+<p style="font-size:16px;line-height:1.55;">Hola <strong>{display}</strong>! Subí la versión corregida:</p>
+<div style="background:#f8f8f8;border-left:4px solid #22c55e;padding:14px 18px;border-radius:6px;margin:18px 0;">
+<div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">VIDEO CORREGIDO</div>
+<div style="font-size:16px;color:#111;font-weight:600;">{video}</div>
+</div>
+<p style="font-size:14px;color:#666;text-align:center;">Pegale una mirada y avisame si quedó bien.</p>
+</div>
+<div style="text-align:center;margin-top:28px;color:#888;font-size:13px;line-height:1.6;">
+Un abrazo,<br><strong style="color:#222;">Nacho</strong><br>
+<span style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#aaa;">REVOLV</span>
+</div></div></body></html>
+"""
+    # Dedupe estable por (cliente, stem del archivo) para que múltiples workers
+    # detectando la misma corrección no manden múltiples mails al cliente.
+    try:
+        stem = _correction_stem(file_name)
+    except Exception:
+        stem = (file_name or "").lower().strip()
+    override = f"correction-client|{cliente.strip().lower()}|{stem}"
+    try:
+        send_mail(to=to_email, subject=subject, body_text=body_text, body_html=body_html,
+                  kind="client-correction-ready", cliente=cliente,
+                  dedupe_window_minutes=60, dedupe_key_override=override)
+        print(f"   📧 corrección lista → cliente {cliente} ({to_email})")
+    except Exception as e:
+        print(f"   ⚠️ falló mail corrección lista a {cliente}: {e}")
+
+
 def notify_revision_resolved(review_id: int, review: dict) -> None:
     """El editor subió la corrección → mail al cliente con la nueva versión."""
     cliente = review.get("cliente", "?")
     video = review.get("video_file_name", "(video)")
-    from tracker import cfg_client_should_be_notified
+    from tracker import cfg_client_should_be_notified, _correction_stem
     target = cfg_client_should_be_notified(cliente)
     if not target:
         return  # cliente sin mail registrado, no avisamos
@@ -860,9 +960,16 @@ Un abrazo,<br><strong style="color:#222;">Nacho</strong><br>
 <span style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#aaa;">REVOLV</span>
 </div></div></body></html>
 """
+    # Dedupe estable para que también atrape duplicados entre workers
+    try:
+        stem = _correction_stem(video)
+    except Exception:
+        stem = (video or "").lower().strip()
+    override = f"correction-client|{cliente.strip().lower()}|{stem}"
     try:
         send_mail(to=to_email, subject=subject, body_text=body_text, body_html=body_html,
-                   dedupe_window_minutes=30)
+                   kind="client-correction-ready", cliente=cliente,
+                   dedupe_window_minutes=60, dedupe_key_override=override)
         print(f"   📧 revisión resuelta enviada a cliente {cliente} ({to_email})")
     except Exception as e:
         print(f"   ⚠️ falló mail revisión resuelta a {cliente}: {e}")

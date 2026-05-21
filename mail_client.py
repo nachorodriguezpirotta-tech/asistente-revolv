@@ -104,23 +104,42 @@ def already_sent_recently(to: str, subject: str, minutes: int = 30) -> Optional[
 def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = None,
               from_name: str = "Asistente Revolv",
               kind: str = "", cliente: Optional[str] = None, editor: Optional[str] = None,
-              dedupe_window_minutes: int = 0) -> str:
+              dedupe_window_minutes: int = 0,
+              dedupe_key_override: Optional[str] = None) -> str:
     """
     Manda un mail desde la cuenta autorizada.
     Retorna el message_id.
     Registra cada envío (éxito/falla) en mail_log para auditoría.
 
-    Si `dedupe_window_minutes > 0`, ANTES de enviar consulta Gmail si ya se
-    mandó un mail con el mismo subject a este `to` en esa ventana. Si sí,
+    Si `dedupe_window_minutes > 0`, ANTES de enviar consulta mail_log si ya se
+    mandó un mail con el mismo dedupe_key en esa ventana. Si sí,
     retorna el msg_id del existente sin enviar otra vez. Útil para evitar
     duplicados causados por race condition entre containers (caso del scan
     que vio el mismo archivo y encoló mail en dos workers paralelos).
+
+    `dedupe_key_override`: si se pasa, se usa ese string como base del hash
+    en lugar de `to+subject`. Útil cuando el subject varía entre workers
+    (ej: editor "Agus" vs "—") pero la identidad lógica del mail es la misma.
     """
+    import hashlib
     # Calcular dedupe_key SIEMPRE (aún si dedupe_window=0, para tener log preciso)
-    dkey = _dedupe_key(to, subject)
+    if dedupe_key_override:
+        dkey = hashlib.sha1(dedupe_key_override.encode()).hexdigest()[:24]
+    else:
+        dkey = _dedupe_key(to, subject)
 
     if dedupe_window_minutes > 0:
-        existing = already_sent_recently(to, subject, minutes=dedupe_window_minutes)
+        # Sincronizar mail_log con el remote ANTES de chequear duplicado
+        try:
+            _sync_mail_log_from_remote()
+        except Exception:
+            pass
+        # Chequeo por dedupe_key (estable, no depende de subject string)
+        try:
+            from tracker import check_recent_mail_by_key
+            existing = check_recent_mail_by_key(dkey, minutes=dedupe_window_minutes)
+        except Exception:
+            existing = None
         if existing:
             print(f"   🔄 dedupe: ya se mandó '{subject[:60]}' a {to} hace <{dedupe_window_minutes}min (msg_id={existing}). SKIP")
             try:
