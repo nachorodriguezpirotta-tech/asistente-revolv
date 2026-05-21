@@ -1,12 +1,16 @@
 name: Scan Incremental (Asistente Revolv)
 
 # Scan rápido que usa Drive Changes API — procesa solo lo que cambió desde
-# el último run. Tarda segundos, corre cada 2 min para latencia mínima.
+# el último run. Tarda segundos, corre cada 5 min.
+# Antes era */2 pero GitHub Actions free-tier hace throttle de crons < 5 min:
+# se veían gaps de 3-4 horas entre runs. */5 es el mínimo "oficial" que GHA
+# respeta razonablemente. Si necesitamos latencia <5min, hay que mover a
+# Vercel Cron Pro o servicio externo (cron-job.org).
 # El scan completo (scan.yml) sigue corriendo cada hora como backup.
 
 on:
   schedule:
-    - cron: '*/2 * * * *'   # cada 2 minutos
+    - cron: '*/5 * * * *'   # cada 5 min (mínimo confiable en GHA free)
   workflow_dispatch: {}
   push:
     branches: [main]
