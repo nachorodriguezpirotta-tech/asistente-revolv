@@ -6,7 +6,11 @@ on:
     # cierra tareas, etc). El scan-incremental.yml corre cada 2 min para
     # latencia inmediata, este queda como backup full sweep.
     - cron: '0 * * * *'
-  workflow_dispatch: {}  # disparable a mano desde la UI de GitHub
+  # workflow_dispatch DESHABILITADO 2026-05-20: cron externo (cron-job.org)
+  # disparaba este workflow cada 15 min, causando race conditions con el bot
+  # push de tracker.db → mismo mail llegaba 3-4 veces con counts distintos.
+  # Para re-habilitar: APAGAR cron externo + descomentar siguiente línea.
+  # workflow_dispatch: {}
   push:
     branches: [main]
     # NO disparar si solo cambia la DB (los commits del bot no deben re-ejecutar)
