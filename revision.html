@@ -141,10 +141,11 @@ async function submitReview() {
   const notes = document.getElementById('notes').value.trim();
   const status = document.getElementById('status');
   const btn = document.getElementById('submit');
-  if (!notes) {
+  // Notes opcional si hay fotos. Si no hay nada → error.
+  if (!notes && PICKED_FILES.length === 0) {
     status.className = 'status err';
     status.style.display = 'block';
-    status.textContent = 'Escribí qué querés cambiar antes de enviar.';
+    status.textContent = 'Escribí qué querés cambiar o sumá al menos una foto.';
     return;
   }
   btn.disabled = true;
