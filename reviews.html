@@ -23,7 +23,7 @@
   .header-title .subtitle { font-size:11px; color:#8a93a3; }
   .page { padding:16px; max-width:1000px; margin:0 auto; }
 
-  .stats-row { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-bottom:18px; }
+  .stats-row { display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; margin-bottom:18px; }
   .stat { background:#1a1e27; border:1px solid #2a2f3a; border-radius:10px; padding:12px; text-align:center; cursor:pointer; transition:background 0.12s; }
   .stat:hover { background:#222732; }
   .stat.active { background:#2a3445; border-color:#60a5fa; }
@@ -133,31 +133,25 @@ async function load() {
 }
 
 function render() {
-  // Stats (solo admin tiene desglose completo)
-  const s = DATA.stats || { pending:0, revision_requested:DATA.open_count||0, approved:0, resolved:0, total:(DATA.items||[]).length };
+  // Stats: solo 2 cards porque ya no guardamos 'pending' ni 'approved' en DB.
+  // 'revision_requested' = activas. 'resolved' = histórico (cambio entregado).
+  const s = DATA.stats || { revision_requested:DATA.open_count||0, resolved:0, total:(DATA.items||[]).length };
   document.getElementById('stats').innerHTML = `
-    <div class="stat pending ${CURRENT_FILTER==='pending'?'active':''}" onclick="setFilter('pending')">
-      <div class="n">${s.pending||0}</div><div class="lbl">Sin responder</div>
-    </div>
     <div class="stat revision ${CURRENT_FILTER==='revision_requested'?'active':''}" onclick="setFilter('revision_requested')">
       <div class="n">${s.revision_requested||0}</div><div class="lbl">Pidió cambios</div>
-    </div>
-    <div class="stat approved ${CURRENT_FILTER==='approved'?'active':''}" onclick="setFilter('approved')">
-      <div class="n">${s.approved||0}</div><div class="lbl">Aprobadas</div>
     </div>
     <div class="stat resolved ${CURRENT_FILTER==='resolved'?'active':''}" onclick="setFilter('resolved')">
       <div class="n">${s.resolved||0}</div><div class="lbl">Resueltas</div>
     </div>
   `;
   document.getElementById('filters').innerHTML = `
+    <button class="${CURRENT_FILTER==='revision_requested'?'active':''}" onclick="setFilter('revision_requested')">⚡ Pendientes</button>
+    <button class="${CURRENT_FILTER==='resolved'?'active':''}" onclick="setFilter('resolved')">✅ Resueltas</button>
     <button class="${CURRENT_FILTER==='all'?'active':''}" onclick="setFilter('all')">Todas</button>
-    <button class="${CURRENT_FILTER==='active'?'active':''}" onclick="setFilter('active')">⚡ Activas (sin resolver)</button>
   `;
 
   let items = DATA.items || [];
-  if (CURRENT_FILTER === 'active') {
-    items = items.filter(i => i.status === 'pending' || i.status === 'revision_requested');
-  } else if (CURRENT_FILTER !== 'all') {
+  if (CURRENT_FILTER !== 'all') {
     items = items.filter(i => i.status === CURRENT_FILTER);
   }
 
@@ -243,8 +237,8 @@ if (!TOKEN) {
 } else if (!IS_ADMIN && !EDITOR) {
   document.getElementById('list').innerHTML = '<div class="error">Falta editor o admin en URL.</div>';
 } else {
-  // Empezar mostrando solo activas si es admin
-  if (IS_ADMIN) CURRENT_FILTER = 'active';
+  // Default: solo mostrar las pendientes (revision_requested)
+  CURRENT_FILTER = 'revision_requested';
   load();
 }
 </script>

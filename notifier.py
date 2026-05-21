@@ -523,22 +523,40 @@ Nacho te subió tu video nuevo:
         text += f"\nEstá en tu carpeta de Drive:\n{folder_url}\n"
     text += "\nCualquier cambio que quieras hacer, avisame.\n\nUn abrazo,\nNacho\nRevolv\n"
 
-    # Crear review pending + tokens para los botones (sistema de revisiones)
+    # Construir URLs de los botones SIN crear review pending por adelantado.
+    # La review SOLO se crea cuando el cliente realmente toca "Quiero ajustar
+    # algo" y envía el form (status='revision_requested' directo).
+    # Si el cliente toca "Todo perfecto" o ignora el mail → no se registra
+    # nada → no aparece en el dashboard de revisiones.
+    # Pedido directo de Ignacio 21/may: 'solo quiero que aparezcan revisiones
+    # cuando alguien toca revisar mi video y pone una revisión'.
     review_url_approve = None
     review_url_revise = None
     try:
-        from tracker import create_client_review
         from api._shared import make_client_token
-        review_id = create_client_review(cliente, file_id, file_name, editor)
         token = make_client_token(cliente)
-        review_url_approve = _build_vercel_url(
-            f"/api/review?action=approve&id={review_id}&t={token}"
-        )
-        review_url_revise = _build_vercel_url(
-            f"/revision.html?id={review_id}&t={token}"
-        )
+        # Los links llevan file_id + cliente; el endpoint crea la review
+        # on-demand cuando el cliente pide cambios.
+        import urllib.parse
+        params_approve = urllib.parse.urlencode({
+            "action": "approve",
+            "cliente": cliente,
+            "file_id": file_id or "",
+            "file_name": file_name or "",
+            "editor": editor or "",
+            "t": token,
+        })
+        params_revise = urllib.parse.urlencode({
+            "cliente": cliente,
+            "file_id": file_id or "",
+            "file_name": file_name or "",
+            "editor": editor or "",
+            "t": token,
+        })
+        review_url_approve = _build_vercel_url(f"/api/review?{params_approve}")
+        review_url_revise = _build_vercel_url(f"/revision.html?{params_revise}")
     except Exception as e:
-        print(f"   ⚠️ no se pudo crear review: {e}")
+        print(f"   ⚠️ no se pudieron generar URLs de revisión: {e}")
 
     folder_button_html = (
         f'<div style="text-align:center;margin:28px 0 8px;">'
@@ -699,6 +717,31 @@ a llegar al cliente un mail nuevo con la versión corregida.
                        url=f"/?editor={editor}", tag=f"revision-{cliente}")
     except Exception as e:
         print(f"   ⚠️ push revisión: {e}")
+
+
+def notify_review_approved_lite(cliente: str, file_name: str, editor: Optional[str]) -> None:
+    """Versión sin review_id: el cliente tocó '✅ Todo perfecto' en el mail.
+    NO guardamos nada en DB. Solo mandamos info al admin (dedupe 60 min)."""
+    subject = f"✅ {cliente} aprobó: {file_name or '(video)'}"
+    body_text = f"""El cliente {cliente} aprobó el video '{file_name or "(video)"}'.
+Editor: {editor or '-'}.
+
+— Asistente Revolv
+"""
+    body_html = f"""<!DOCTYPE html>
+<html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;color:#222;">
+<h2 style="margin:0 0 8px;color:#1a8a3a;">✅ {cliente} aprobó el video</h2>
+<p><strong>Video:</strong> <code>{file_name or '(video)'}</code><br>
+<strong>Editor:</strong> {editor or '-'}</p>
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
+<p style="color:#888;font-size:12px;">— Asistente Revolv</p>
+</body></html>
+"""
+    try:
+        send_mail(to=TEST_EMAIL, subject=subject, body_text=body_text, body_html=body_html,
+                   dedupe_window_minutes=60)
+    except Exception as e:
+        print(f"   ⚠️ falló mail approved-lite: {e}")
 
 
 def notify_review_approved(review_id: int, review: dict) -> None:

@@ -1,21 +1,25 @@
 """
-Sistema de revisiones de cliente.
+Sistema de revisiones de cliente — v2 (sin reviews pending).
+
+El cambio respecto a v1: NO se crea review por adelantado al mandar el mail
+al cliente. La review SOLO se crea cuando el cliente realmente pide cambios.
+Si el cliente aprueba o ignora, NO queda registro de "review pending".
 
 Endpoints:
-  GET  /api/review?action=approve&id=N&t=TOKEN
-       → un click "✅ Todo perfecto" desde el mail. Marca el review como
-         approved y muestra HTML simple "Gracias!".
+  GET /api/review?action=approve&cliente=X&file_id=Y&t=TOKEN
+       → muestra HTML "¡Gracias!" — NO guarda nada en DB. Solo info al admin
+         por mail.
 
-  GET  /api/review?action=info&id=N&t=TOKEN
-       → JSON con info del review (para que la página revision.html
-         muestre nombre del video, estado, etc).
+  GET /api/review?action=info&cliente=X&file_id=Y&file_name=Z&editor=W&t=TOKEN
+       → JSON con info para que revision.html arme el form.
 
-  POST /api/review?id=N&t=TOKEN
-       Body: {"approved": false, "notes": "cambiar X en 0:23"}
-       → cliente envía revisión con notas.
+  POST /api/review?cliente=X&file_id=Y&t=TOKEN
+       Body: {"notes": "cambiar X en 0:23", "file_name": "...", "editor": "..."}
+       → Cliente envía revisión: CREA row con status='revision_requested',
+         dispara mail + push a editor y admin.
 
-Auth: el token se genera con make_client_token(cliente). En cada request
-verificamos que el token corresponda al cliente del review.id.
+  DELETE /api/review?id=N&admin=1&t=ADMIN_TOKEN
+       → Borrar review (admin only).
 """
 
 import json
@@ -93,61 +97,44 @@ class handler(BaseHTTPRequestHandler):
                 return _html_response(self, _ERROR_HTML.format(msg="Sistema no disponible", detail=_IMPORT_ERROR[:200]), 500)
             params = parse_qs(urlparse(self.path).query)
             action = params.get("action", ["info"])[0]
-            review_id_str = params.get("id", [""])[0]
+            cliente = (params.get("cliente", [""])[0] or "").strip()
+            file_id = (params.get("file_id", [""])[0] or "").strip()
+            file_name = (params.get("file_name", [""])[0] or "").strip()
+            editor = (params.get("editor", [""])[0] or "").strip()
             token = (params.get("t", [""])[0] or "").strip()
 
-            try:
-                review_id = int(review_id_str)
-            except Exception:
+            if not cliente:
                 if action == "info":
-                    return json_response(self, {"error": "id inválido"}, status=400)
-                return _html_response(self, _ERROR_HTML.format(msg="Link inválido", detail="Falta o es inválido el id"), 400)
+                    return json_response(self, {"error": "cliente requerido"}, status=400)
+                return _html_response(self, _ERROR_HTML.format(msg="Link inválido", detail="Falta cliente"), 400)
 
-            # Cargar review (lectura)
-            def _q(conn):
-                r = conn.execute(
-                    "SELECT id, cliente, video_file_id, video_file_name, editor, status, notes, created_at "
-                    "FROM client_reviews WHERE id=?", (review_id,)
-                ).fetchone()
-                return dict(r) if r else None
-            review = read_db(_q)
-            if not review:
-                if action == "info":
-                    return json_response(self, {"error": "no encontrado"}, status=404)
-                return _html_response(self, _ERROR_HTML.format(msg="No encontrado", detail="No existe ese review."), 404)
-
-            # Auth: token debe matchear el cliente del review
-            if not check_client_token(review["cliente"], token):
+            # Auth: token tiene que matchear con el cliente
+            if not check_client_token(cliente, token):
                 if action == "info":
                     return json_response(self, {"error": "unauthorized"}, status=401)
                 return _html_response(self, _ERROR_HTML.format(msg="Link inválido", detail="El link expiró o no es válido."), 401)
 
-            # MODO info (para que revision.html cargue datos)
+            # MODO info: devolver datos para que revision.html arme el form
             if action == "info":
-                return json_response(self, {"ok": True, **review})
+                return json_response(self, {
+                    "ok": True,
+                    "cliente": cliente,
+                    "video_file_id": file_id,
+                    "video_file_name": file_name,
+                    "editor": editor,
+                    "status": "ready_to_respond",  # estado virtual, no en DB
+                })
 
-            # MODO approve (link directo desde mail)
+            # MODO approve: solo HTML "Gracias", NO guarda nada.
+            # Opcional: avisar al admin que el cliente lo aprobó (1 mail info,
+            # con dedupe para que si toca varias veces, llegue 1 sola vez).
             if action == "approve":
-                if review["status"] != "pending":
-                    # Ya respondida — mostrar mensaje según estado
-                    if review["status"] == "approved":
-                        return _html_response(self, _APPROVE_HTML.format(cliente=review["cliente"]))
-                    msg = "Este video ya tiene una revisión pedida"
-                    return _html_response(self, _ERROR_HTML.format(msg=msg, detail="Si querés agregar algo más, escribí al admin."), 400)
-
-                def _op(conn):
-                    conn.execute(
-                        "UPDATE client_reviews SET status='approved', responded_at=datetime('now') "
-                        "WHERE id=? AND status='pending'", (review_id,)
-                    )
-                with_db(_op, message=f"review {review_id}: cliente aprobó")
-                # Notificar admin (sin bloquear UX si falla)
                 try:
-                    from notifier import notify_review_approved
-                    notify_review_approved(review_id, review)
+                    from notifier import notify_review_approved_lite
+                    notify_review_approved_lite(cliente, file_name, editor)
                 except Exception as e:
-                    print(f"notify_review_approved error: {e}")
-                return _html_response(self, _APPROVE_HTML.format(cliente=review["cliente"]))
+                    print(f"notify_review_approved_lite error: {e}")
+                return _html_response(self, _APPROVE_HTML.format(cliente=cliente))
 
             return json_response(self, {"error": f"action inválida: {action}"}, status=400)
         except Exception as e:
@@ -158,12 +145,13 @@ class handler(BaseHTTPRequestHandler):
             if _IMPORT_ERROR:
                 return json_response(self, {"error": "import", "detail": _IMPORT_ERROR}, status=500)
             params = parse_qs(urlparse(self.path).query)
-            review_id_str = params.get("id", [""])[0]
+            cliente = (params.get("cliente", [""])[0] or "").strip()
+            file_id = (params.get("file_id", [""])[0] or "").strip()
             token = (params.get("t", [""])[0] or "").strip()
-            try:
-                review_id = int(review_id_str)
-            except Exception:
-                return json_response(self, {"error": "id inválido"}, status=400)
+            if not cliente:
+                return json_response(self, {"error": "cliente requerido"}, status=400)
+            if not check_client_token(cliente, token):
+                return json_response(self, {"error": "unauthorized"}, status=401)
 
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
@@ -172,50 +160,43 @@ class handler(BaseHTTPRequestHandler):
             except Exception:
                 return json_response(self, {"error": "body inválido"}, status=400)
 
-            approved = bool(body.get("approved", False))
-            notes = (body.get("notes") or "").strip() or None
-            if not approved and not notes:
-                return json_response(self, {"error": "si pedís cambios, contanos qué cambiar"}, status=400)
-            if notes and len(notes) > 5000:
+            notes = (body.get("notes") or "").strip()
+            file_name = (body.get("file_name") or "").strip()
+            editor = (body.get("editor") or "").strip() or None
+            if not notes:
+                return json_response(self, {"error": "contanos qué cambiar"}, status=400)
+            if len(notes) > 5000:
                 return json_response(self, {"error": "notas muy largas (max 5000 chars)"}, status=400)
 
-            # Cargar review para auth
-            def _q(conn):
-                r = conn.execute(
-                    "SELECT id, cliente, status, editor, video_file_id, video_file_name "
-                    "FROM client_reviews WHERE id=?", (review_id,)
-                ).fetchone()
-                return dict(r) if r else None
-            review = read_db(_q)
-            if not review:
-                return json_response(self, {"error": "no encontrado"}, status=404)
-            if not check_client_token(review["cliente"], token):
-                return json_response(self, {"error": "unauthorized"}, status=401)
-            if review["status"] != "pending":
-                return json_response(self, {"error": f"review ya respondida (status: {review['status']})"}, status=409)
-
-            new_status = 'approved' if approved else 'revision_requested'
-
+            # Crear review on-demand con status='revision_requested' directo
+            review_id_holder = {}
             def _op(conn):
-                conn.execute(
-                    "UPDATE client_reviews SET status=?, notes=?, responded_at=datetime('now') "
-                    "WHERE id=? AND status='pending'",
-                    (new_status, notes, review_id)
-                )
-            with_db(_op, message=f"review {review_id}: cliente {new_status}")
+                cur = conn.execute("""
+                    INSERT INTO client_reviews
+                        (cliente, video_file_id, video_file_name, editor, status, notes,
+                         created_at, responded_at)
+                    VALUES (?, ?, ?, ?, 'revision_requested', ?,
+                            datetime('now'), datetime('now'))
+                """, (cliente, file_id or None, file_name or None, editor, notes))
+                review_id_holder["id"] = cur.lastrowid
+            with_db(_op, message=f"review: nueva revisión pedida por {cliente}")
+            review_id = review_id_holder.get("id")
 
-            # Notificar editor + admin (mail + push) si pidió revisión
+            # Notificar editor + admin (mail + push)
+            review = {
+                "id": review_id,
+                "cliente": cliente,
+                "video_file_id": file_id,
+                "video_file_name": file_name or "(video)",
+                "editor": editor,
+            }
             try:
-                if approved:
-                    from notifier import notify_review_approved
-                    notify_review_approved(review_id, review)
-                else:
-                    from notifier import notify_revision_requested
-                    notify_revision_requested(review_id, review, notes)
+                from notifier import notify_revision_requested
+                notify_revision_requested(review_id, review, notes)
             except Exception as e:
                 print(f"notify error: {e}")
 
-            return json_response(self, {"ok": True, "status": new_status})
+            return json_response(self, {"ok": True, "id": review_id, "status": "revision_requested"})
         except Exception as e:
             return json_response(self, {"error": str(e)[:200], "trace": traceback.format_exc()[:1500]}, status=500)
 
@@ -231,7 +212,6 @@ class handler(BaseHTTPRequestHandler):
             if not (admin and check_token("ADMIN", token)):
                 return json_response(self, {"error": "admin required"}, status=401)
 
-            # ids: por query ?id=N o body {"ids":[...]}
             ids = []
             single = params.get("id", [""])[0]
             if single:

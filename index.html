@@ -636,11 +636,14 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
         if (revLink) {
             revLink.href = `/reviews.html?admin=1&t=${encodeURIComponent(TOKEN)}`;
             revLink.style.display = 'inline-block';
-            // Cargar badge con # de revisiones activas
+            // Badge con # de revisiones PEDIDAS (revision_requested).
+            // Ya no contamos 'pending' (eso era ruido — antes se creaba uno
+            // por cada video entregado). Solo aparece cuando el cliente
+            // realmente toca 'Quiero ajustar algo'.
             fetch(`/api/reviews?admin=1&t=${encodeURIComponent(TOKEN)}`)
                 .then(r => r.json())
                 .then(d => {
-                    const active = (d.stats?.pending || 0) + (d.stats?.revision_requested || 0);
+                    const active = d.stats?.revision_requested || 0;
                     if (active > 0) {
                         const b = document.getElementById('reviews-badge');
                         b.textContent = active;

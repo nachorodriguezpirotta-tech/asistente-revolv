@@ -63,42 +63,25 @@
 
 <script>
 const params = new URLSearchParams(location.search);
-const REVIEW_ID = params.get('id') || '';
+const CLIENTE = params.get('cliente') || '';
+const FILE_ID = params.get('file_id') || '';
+const FILE_NAME = params.get('file_name') || '';
+const EDITOR = params.get('editor') || '';
 const TOKEN = params.get('t') || '';
 
-if (!REVIEW_ID || !TOKEN) {
+if (!CLIENTE || !TOKEN) {
   document.getElementById('content').innerHTML = `<div class="success-card"><div class="icon">⚠️</div><h2>Link inválido</h2><p>El link parece estar roto. Pedile a Nacho que te mande uno nuevo.</p></div>`;
 } else {
-  loadReview();
+  renderForm();
 }
 
-async function loadReview() {
-  try {
-    const res = await fetch(`/api/review?action=info&id=${encodeURIComponent(REVIEW_ID)}&t=${encodeURIComponent(TOKEN)}`);
-    const d = await res.json();
-    if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
-    renderForm(d);
-  } catch (e) {
-    document.getElementById('content').innerHTML = `<div class="success-card"><div class="icon">⚠️</div><h2>Error</h2><p>${e.message}</p></div>`;
-  }
-}
-
-function renderForm(review) {
-  if (review.status === 'approved') {
-    document.getElementById('content').innerHTML = `<div class="success-card"><div class="icon">✅</div><h2>Ya lo aprobaste</h2><p>Marcamos este video como OK. Si querés cambiar algo, escribile a Nacho directo.</p></div>`;
-    return;
-  }
-  if (review.status === 'revision_requested' || review.status === 'resolved') {
-    document.getElementById('content').innerHTML = `<div class="success-card"><div class="icon">📝</div><h2>Ya pediste una revisión</h2><p>Tu editor ya está trabajando en los cambios. Te avisamos cuando esté.</p></div>`;
-    return;
-  }
-  // pending → mostrar form
+function renderForm() {
   document.getElementById('content').innerHTML = `
     <h1>¿Qué cambiarías?</h1>
     <p class="sub">Contame qué cambios querés que hagamos en este video. Sé lo más específico posible (timestamps, qué sacar, qué sumar).</p>
     <div class="video-box">
       <div class="label">Video</div>
-      <div class="name">${escape(review.video_file_name)}</div>
+      <div class="name">${escape(FILE_NAME || '(video)')}</div>
     </div>
     <label for="notes">Tus cambios:</label>
     <textarea id="notes" placeholder="Ej: En 0:23 sacar la pausa, cambiar el subtítulo del minuto 1:14 a 'X', el final que dure 2 segundos menos..."></textarea>
@@ -122,10 +105,11 @@ async function submitReview() {
   btn.textContent = 'Enviando...';
   status.style.display = 'none';
   try {
-    const res = await fetch(`/api/review?id=${encodeURIComponent(REVIEW_ID)}&t=${encodeURIComponent(TOKEN)}`, {
+    const qs = new URLSearchParams({ cliente: CLIENTE, file_id: FILE_ID, t: TOKEN });
+    const res = await fetch(`/api/review?${qs.toString()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved: false, notes }),
+      body: JSON.stringify({ notes, file_name: FILE_NAME, editor: EDITOR }),
     });
     const d = await res.json();
     if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
