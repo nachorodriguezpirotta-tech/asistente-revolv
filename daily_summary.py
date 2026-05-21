@@ -155,6 +155,78 @@ def build_mail_para_editor(editor: str, clientes: list):
     return subject, text, html
 
 
+def send_to_admin(dry_run: bool = False) -> dict:
+    """Manda el resumen completo solo al admin. Retorna {ok, msg_id, error}."""
+    grouped = get_pending_grouped()
+    subject, text, html = build_mail(grouped)
+    if dry_run:
+        return {"ok": True, "dry_run": True, "subject": subject}
+    try:
+        msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html,
+                            dedupe_window_minutes=5)
+        return {"ok": True, "msg_id": msg_id, "to": TEST_EMAIL}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def send_to_editor(editor: str, dry_run: bool = False) -> dict:
+    """Manda el resumen individual a UN editor específico. Retorna info.
+    Respeta vacaciones (no manda si está on_vacation) salvo que force=True."""
+    from aliases import get_notification_emails_runtime, _normalize as _norm
+    from tracker import cfg_is_on_vacation
+
+    if cfg_is_on_vacation(editor):
+        return {"ok": False, "skipped": "vacation", "editor": editor}
+
+    EDITOR_EMAILS = get_notification_emails_runtime()
+    email = None
+    for ed, em in EDITOR_EMAILS.items():
+        if _norm(ed) == _norm(editor):
+            email = em
+            editor = ed  # usar el nombre canónico
+            break
+    if not email:
+        return {"ok": False, "error": f"editor '{editor}' sin mail registrado", "editor": editor}
+
+    grouped = get_pending_grouped()
+    editor_clientes = []
+    for ed_key, clientes in grouped.items():
+        if _norm(ed_key) == _norm(editor):
+            editor_clientes = clientes
+            break
+
+    subject, text, html = build_mail_para_editor(editor, editor_clientes)
+    if dry_run:
+        return {"ok": True, "dry_run": True, "subject": subject, "editor": editor,
+                "clientes_count": len(editor_clientes)}
+    try:
+        msg_id = send_mail(to=email, subject=subject, body_text=text, body_html=html,
+                            dedupe_window_minutes=5)
+        return {"ok": True, "msg_id": msg_id, "to": email, "editor": editor,
+                "clientes_count": len(editor_clientes)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200], "editor": editor}
+
+
+def send_to_all_editors(dry_run: bool = False, include_admin: bool = False) -> list[dict]:
+    """Manda a TODOS los editores que estén en DAILY_SUMMARY_EDITORS (no en
+    vacaciones). Opcional: también incluir admin. Retorna lista de resultados."""
+    from aliases import (
+        get_notification_emails_runtime, get_daily_summary_editors_runtime,
+    )
+    EDITOR_EMAILS = get_notification_emails_runtime()
+    DAILY_EDITORS = get_daily_summary_editors_runtime()
+    results = []
+    if include_admin:
+        results.append({"role": "admin", **send_to_admin(dry_run=dry_run)})
+    for editor in EDITOR_EMAILS.keys():
+        if editor not in DAILY_EDITORS:
+            results.append({"editor": editor, "skipped": "not_in_daily_list"})
+            continue
+        results.append({"role": "editor", **send_to_editor(editor, dry_run=dry_run)})
+    return results
+
+
 def run(dry_run: bool = False):
     from aliases import (
         get_notification_emails_runtime, get_daily_summary_editors_runtime,

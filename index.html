@@ -1039,6 +1039,22 @@ function renderAdmin(data) {
     }
     linksHtml += '</div></details>';
 
+    // Sección "Mandar resumen del día manualmente" — útil cuando GHA no
+    // disparó el cron a las 8am, o cuando Ignacio quiere reenviarlo
+    let summaryHtml = '<details class="editor-block" style="margin-bottom:24px;"><summary style="cursor:pointer; font-size: 16px; font-weight: 600;">📋 Mandar resumen del día (manual)</summary><div style="margin-top:16px;">';
+    summaryHtml += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">';
+    summaryHtml += `<button onclick="sendDailySummary('all', this)" style="background:#ff4747; color:white; border:none; padding:10px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">📨 Mandar a todos los editores</button>`;
+    summaryHtml += `<button onclick="sendDailySummary('admin', this)" style="background:#2d3445; color:#e8eaed; border:none; padding:10px 16px; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer;">📥 Solo a mí</button>`;
+    summaryHtml += '</div>';
+    summaryHtml += '<div style="font-size:12px; color:var(--text-dim); margin-bottom:10px;">O solo a un editor específico:</div>';
+    summaryHtml += '<div style="display:flex; gap:6px; flex-wrap:wrap;">';
+    // Botones individuales por editor (solo los que tienen daily_summary on, los que están en byEditor)
+    for (const ed of Object.keys(editorLinks).sort()) {
+        summaryHtml += `<button onclick="sendDailySummary('${escapeHtml(ed)}', this)" style="background:#1a1e27; color:#e8eaed; border:1px solid #2a2f3a; padding:7px 12px; border-radius:6px; font-size:12px; cursor:pointer;">📨 ${escapeHtml(ed)}</button>`;
+    }
+    summaryHtml += '</div></div></details>';
+    linksHtml += summaryHtml;
+
     const editorProgresses = data.editor_progresses || {};
     let html = renderSummaryBanner(data.stats) + linksHtml;
     for (const ed of editores) {
@@ -1826,6 +1842,45 @@ function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
+}
+
+// Mandar resumen del día manualmente. `target` = 'all', 'admin', o nombre de editor
+async function sendDailySummary(target, btn) {
+    const labels = {
+        'all': 'a todos los editores',
+        'admin': 'a tu mail',
+    };
+    const human = labels[target] || `a ${target}`;
+    if (!confirm(`¿Mandar el resumen de hoy ${human}?`)) return;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Enviando...';
+    try {
+        const res = await fetch(`/api/daily_summary?admin=1&t=${encodeURIComponent(TOKEN)}&target=${encodeURIComponent(target)}`, {
+            method: 'POST',
+        });
+        const d = await res.json();
+        if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
+
+        let msg = '';
+        if (target === 'all') {
+            msg = `✅ Enviado a ${d.sent} editor${d.sent !== 1 ? 'es' : ''}` +
+                  (d.skipped > 0 ? ` (${d.skipped} skipped)` : '');
+        } else if (target === 'admin') {
+            if (d.result?.ok) msg = '✅ Enviado a tu mail';
+            else msg = '⚠️ ' + (d.result?.error || 'algo falló');
+        } else {
+            const r = d.result || {};
+            if (r.ok) msg = `✅ Enviado a ${r.editor} (${r.clientes_count || 0} cliente${r.clientes_count !== 1 ? 's' : ''})`;
+            else if (r.skipped === 'vacation') msg = `🌴 ${r.editor} está de vacaciones — no se envía`;
+            else msg = '⚠️ ' + (r.error || 'algo falló');
+        }
+        btn.textContent = msg;
+        setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 4000);
+    } catch (e) {
+        btn.textContent = '❌ ' + (e.message || 'error');
+        setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 4000);
+    }
 }
 
 // ─────────── VOICE NOTES ───────────

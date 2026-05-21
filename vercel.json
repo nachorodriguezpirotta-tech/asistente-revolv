@@ -48,6 +48,10 @@
     "api/voice_note.py": {
       "memory": 256,
       "maxDuration": 10
+    },
+    "api/daily_summary.py": {
+      "memory": 256,
+      "maxDuration": 30
     }
   }
 }
