@@ -407,15 +407,19 @@ Archivo: {file_name}{link_text}
         any_sent = False
         for dest in destinatarios:
             try:
-                # dedupe_window=30min: si dos workers de GHA procesaron en paralelo
+                # dedupe_window=6h: si dos workers de GHA procesaron en paralelo
                 # el mismo editado y mandaron el mismo mail, mail_log lo atrapa y
                 # evitamos el duplicado (bug reportado por Ignacio 20/may).
+                # Subido de 30min a 6h porque cuando un scan falla al pushear
+                # tracker.db (bug 21/may con tracker.db conflict), el siguiente
+                # scan re-procesa el archivo. Con ventana 30min, si pasó más,
+                # se mandaba duplicado. 6h cubre casi cualquier retraso de retry.
                 # Para correcciones, usamos dedupe_key_override estable (no depende
                 # del editor ni del file_id) para atrapar el caso "Agus" vs "—".
                 _override = _correction_dedupe_key if is_correction else None
                 msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html,
                                    kind="completion", cliente=cliente, editor=editor,
-                                   dedupe_window_minutes=30,
+                                   dedupe_window_minutes=360,
                                    dedupe_key_override=_override)
                 print(f"  ✅ mail cierre enviado a {dest}: {editor} → {cliente} (msg_id={msg_id})")
                 any_sent = True
@@ -671,8 +675,10 @@ Nacho te subió tu video nuevo:
 </body></html>
 """
     try:
+        # dedupe 6h: ver comentario en send_completion_mails. Mismo archivo
+        # a mismo cliente no se manda 2 veces aunque haya retry de scan.
         msg_id = send_mail(to=to_email, subject=subject, body_text=text, body_html=html,
-                            dedupe_window_minutes=30)
+                            dedupe_window_minutes=360)
         print(f"   📧 mail al cliente {cliente} ({to_email}): {file_name} (msg_id={msg_id})")
         return True
     except Exception as e:
@@ -773,8 +779,9 @@ a llegar al cliente un mail nuevo con la versión corregida.
 
     for dest in destinatarios:
         try:
+            # dedupe 6h, mismo razonamiento que en send_completion_mails
             msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html,
-                                dedupe_window_minutes=30)
+                                dedupe_window_minutes=360)
             print(f"   📧 revisión enviada a {dest} (msg_id={msg_id})")
         except Exception as e:
             print(f"   ⚠️ falló mail revisión a {dest}: {e}")
