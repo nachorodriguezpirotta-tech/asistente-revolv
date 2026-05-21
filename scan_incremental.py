@@ -55,7 +55,13 @@ META_KEY_TOKEN = "drive_changes_page_token"
 def _build_folder_index() -> tuple[dict, dict]:
     """Devuelve (folder_id_a_cliente_real, raw_folder_id_a_cliente_real).
     Sirve para identificar rápido si un archivo cambiado está en una carpeta
-    relevante (sin tener que descubrir TODO Drive de cero)."""
+    relevante (sin tener que descubrir TODO Drive de cero).
+
+    También incluye CLIENT_DELIVERY_FOLDERS (carpetas extra donde un editor
+    entrega editados para un cliente, distintas a la carpeta principal del
+    cliente). Bug 21/may: Rami subió "7. lo minimo baño.mp4" a la delivery
+    folder de Rafa Elvram y el scan no la pescó porque no estaba mapeada.
+    """
     conn = get_conn()
     rows = conn.execute("SELECT folder_id, cliente, raw_folder_id FROM clients").fetchall()
     conn.close()
@@ -65,6 +71,18 @@ def _build_folder_index() -> tuple[dict, dict]:
         folder_to_client[r["folder_id"]] = r["cliente"]
         if r["raw_folder_id"]:
             raw_to_client[r["raw_folder_id"]] = r["cliente"]
+
+    # Agregar delivery folders extra (configuradas en aliases.CLIENT_DELIVERY_FOLDERS
+    # o en cfg_delivery_folders en DB). Solo si la cliente ya está mapeada arriba.
+    try:
+        from aliases import get_delivery_folders_runtime
+        delivery = get_delivery_folders_runtime()
+        for cliente, folder_id in delivery.items():
+            if folder_id and folder_id not in folder_to_client:
+                folder_to_client[folder_id] = cliente
+    except Exception as e:
+        print(f"   ⚠️ no se cargaron delivery folders: {e}")
+
     return folder_to_client, raw_to_client
 
 
