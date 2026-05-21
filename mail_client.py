@@ -34,30 +34,73 @@ def _get_service():
     return _service_cache
 
 
-def already_sent_recently(to: str, subject: str, minutes: int = 30) -> Optional[str]:
-    """Busca en Gmail (cuenta del sistema) si ya hay un mail enviado con este
-    subject al mismo destinatario en los últimos N minutos. Retorna el msg_id
-    del más reciente si existe, None si no.
+def _sync_mail_log_from_remote() -> bool:
+    """Hace 'git pull --rebase' en el directorio del repo para traer el último
+    mail_log de tracker.db pusheado por otros workers de GHA. Sirve como
+    sincronización antes de cada envío crítico para evitar duplicados.
 
-    Sirve como dedupe entre containers de GHA: si Worker A ya envió, Worker B
-    consulta Gmail (source of truth) y skipea. Cubre el caso donde el mail_log
-    de tracker.db se pierde por race condition de push concurrente.
+    Si no estamos en un repo git (ej. local de desarrollo), retorna False
+    silenciosamente.
+    """
+    import subprocess
+    try:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Verificar que es repo git
+        check = subprocess.run(
+            ["git", "-C", repo_root, "rev-parse", "--git-dir"],
+            capture_output=True, timeout=5
+        )
+        if check.returncode != 0:
+            return False
+        # Stash cualquier cambio local (no debería haber, pero por las dudas)
+        subprocess.run(["git", "-C", repo_root, "stash", "--quiet"],
+                       capture_output=True, timeout=5)
+        # Pull rebase silencioso
+        pull = subprocess.run(
+            ["git", "-C", repo_root, "pull", "--rebase", "--quiet"],
+            capture_output=True, timeout=15
+        )
+        # Restore stash si había algo
+        subprocess.run(["git", "-C", repo_root, "stash", "pop", "--quiet"],
+                       capture_output=True, timeout=5)
+        return pull.returncode == 0
+    except Exception as e:
+        print(f"   ⚠️ git pull falló: {e}")
+        return False
+
+
+def already_sent_recently(to: str, subject: str, minutes: int = 30) -> Optional[str]:
+    """Dedupe via mail_log de tracker.db. Antes de chequear, hace git pull
+    --rebase para tener la última versión del mail_log (otros workers de
+    GHA pueden haber logueado envíos que nuestra DB local todavía no ve).
+
+    Si encuentra un envío del mismo subject al mismo to en los últimos N min,
+    retorna el msg_id del existente. Si no, None.
+
+    Antes intentábamos via Gmail Search API pero el OAuth solo tiene scope
+    `gmail.send` y no permite list/search → 403. Esta versión usa la DB
+    sincronizada via git como source of truth.
     """
     try:
         from datetime import datetime, timedelta
-        service = _get_service()
-        cutoff = int((datetime.now() - timedelta(minutes=minutes)).timestamp())
-        # Escapear comillas en subject — Gmail search syntax
-        safe_subject = subject.replace('"', '\\"')
-        q = f'in:sent to:{to} subject:"{safe_subject}" after:{cutoff}'
-        res = service.users().messages().list(userId="me", q=q, maxResults=1).execute()
-        msgs = res.get("messages") or []
-        if msgs:
-            return msgs[0].get("id")
+        # Sincronizar con el último estado del repo (puede tener envíos de
+        # otros workers). Skipea silencioso si no estamos en GHA.
+        _sync_mail_log_from_remote()
+
+        from tracker import get_conn
+        conn = get_conn()
+        cutoff = (datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+        row = conn.execute(
+            "SELECT msg_id FROM mail_log "
+            "WHERE to_email=? AND subject=? AND sent_at >= ? AND success=1 "
+            "ORDER BY sent_at DESC LIMIT 1",
+            (to, subject, cutoff)
+        ).fetchone()
+        conn.close()
+        if row and row[0]:
+            return row[0]
         return None
     except Exception as e:
-        # Si la query falla (cuota, red, etc.), NO bloquear el envío — mejor
-        # arriesgar 1 duplicado que no avisar nada.
         print(f"   ⚠️ dedupe check falló (continúa enviando): {e}")
         return None
 

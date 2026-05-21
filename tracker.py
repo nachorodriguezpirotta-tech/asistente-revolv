@@ -378,6 +378,8 @@ def init_db():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_log_sent ON mail_log(sent_at)")
+    # Índice para que el dedupe (lookup por to_email + subject + sent_at) sea rápido.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_log_dedupe ON mail_log(to_email, subject, sent_at)")
 
     # Tabla pending_completion_mails: cola persistente de mails de cierre/decremento.
     # Cuando el closer detecta un editado nuevo, INSERT acá ANTES de mandar mail.
