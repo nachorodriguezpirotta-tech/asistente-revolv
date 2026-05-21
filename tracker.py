@@ -267,6 +267,22 @@ def init_db():
         )
     """)
 
+    # Attachments de revisiones (fotos que el cliente sube para mostrar cambios).
+    # Guardados como BLOB en SQLite. Cap por el endpoint POST (5MB cada una).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS client_review_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            review_id INTEGER NOT NULL,
+            filename TEXT,
+            mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+            blob BLOB NOT NULL,
+            size_bytes INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (review_id) REFERENCES client_reviews(id) ON DELETE CASCADE
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_review_attach_review ON client_review_attachments(review_id);")
+
     # Revisiones de clientes: cuando entregamos un video, el cliente puede
     # aprobar (👍) o pedir cambios (📝). Cada revisión queda registrada con
     # el texto que dejó el cliente. Cuando el editor sube la corrección
@@ -1579,6 +1595,48 @@ def mark_review_resolved_for_client_video(cliente: str, video_file_name: str) ->
     conn.commit()
     conn.close()
     return review_id
+
+
+def list_attachments_for_review(review_id: int) -> list[dict]:
+    """Lista metadata (sin el blob) de attachments de una review.
+    El blob se sirve por GET /api/review_attachment?id=N."""
+    if not review_id:
+        return []
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT id, review_id, filename, mime_type, size_bytes, created_at
+        FROM client_review_attachments
+        WHERE review_id = ?
+        ORDER BY id ASC
+    """, (review_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_attachment_blob(attachment_id: int) -> Optional[dict]:
+    """Lee un attachment completo (con blob). Retorna None si no existe."""
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT id, review_id, filename, mime_type, blob, size_bytes
+        FROM client_review_attachments WHERE id = ?
+    """, (attachment_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_attachment_to_review(review_id: int, filename: str, mime_type: str,
+                              blob: bytes) -> int:
+    """Inserta un attachment para una review. Retorna el id."""
+    conn = get_conn()
+    cur = conn.execute("""
+        INSERT INTO client_review_attachments
+            (review_id, filename, mime_type, blob, size_bytes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (review_id, filename, mime_type, blob, len(blob), now_iso()))
+    aid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return aid
 
 
 def count_open_reviews_for_editor(editor: str) -> int:

@@ -38,8 +38,8 @@
       "maxDuration": 10
     },
     "api/review.py": {
-      "memory": 256,
-      "maxDuration": 10
+      "memory": 512,
+      "maxDuration": 30
     },
     "api/reviews.py": {
       "memory": 256,
@@ -52,6 +52,10 @@
     "api/daily_summary.py": {
       "memory": 256,
       "maxDuration": 30
+    },
+    "api/review_attachment.py": {
+      "memory": 256,
+      "maxDuration": 10
     }
   }
 }

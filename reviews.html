@@ -196,8 +196,24 @@ function renderItem(r) {
         ${resolved ? `<span>✅ ${resolved}</span>` : ''}
       </div>
       ${r.notes ? `<div class="notes">${escape(r.notes)}</div>` : ''}
+      ${renderAttachments(r)}
     </div>
   `;
+}
+
+function renderAttachments(r) {
+  const atts = r.attachments || [];
+  if (atts.length === 0) return '';
+  const thumbs = atts.map(a => {
+    const url = `/api/review_attachment?id=${a.id}&admin=1&t=${encodeURIComponent(TOKEN)}`;
+    return `<a href="${url}" target="_blank" style="display:block;">
+      <img src="${url}" alt="${escape(a.filename||'')}" style="width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid #2a2f3a;">
+    </a>`;
+  }).join('');
+  return `<div style="margin-top:10px; padding-top:10px; border-top:1px solid #2a2f3a;">
+    <div style="font-size:11px; color:#8a93a3; margin-bottom:6px;">📷 ${atts.length} foto${atts.length!==1?'s':''} adjunta${atts.length!==1?'s':''}</div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap;">${thumbs}</div>
+  </div>`;
 }
 
 async function deleteReview(id, cliente) {

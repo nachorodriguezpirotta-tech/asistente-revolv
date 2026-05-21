@@ -25,13 +25,24 @@ except Exception as _e:
 
 def _build_admin(conn):
     rows = conn.execute("""
-        SELECT id, cliente, video_file_id, video_file_name, editor, status,
-               notes, created_at, responded_at, resolved_at
-        FROM client_reviews
-        ORDER BY id DESC
+        SELECT r.id, r.cliente, r.video_file_id, r.video_file_name, r.editor, r.status,
+               r.notes, r.created_at, r.responded_at, r.resolved_at,
+               (SELECT COUNT(*) FROM client_review_attachments a WHERE a.review_id = r.id) as attachments_count
+        FROM client_reviews r
+        ORDER BY r.id DESC
         LIMIT 200
     """).fetchall()
-    items = [dict(r) for r in rows]
+    items = []
+    for r in rows:
+        d = dict(r)
+        if d.get("attachments_count", 0) > 0:
+            # Listar metadata de cada attachment para que la UI muestre thumbs
+            atts = conn.execute(
+                "SELECT id, filename, mime_type FROM client_review_attachments WHERE review_id=? ORDER BY id",
+                (r["id"],)
+            ).fetchall()
+            d["attachments"] = [dict(a) for a in atts]
+        items.append(d)
 
     # Stats
     stats = conn.execute("""

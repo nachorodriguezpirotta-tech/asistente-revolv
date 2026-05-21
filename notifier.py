@@ -650,10 +650,49 @@ Nacho te subió tu video nuevo:
 # ─── NOTIFICACIONES DE REVISIONES ────────────────────────────────────────────
 
 def notify_revision_requested(review_id: int, review: dict, notes: str) -> None:
-    """Cliente pidió revisión → mail + push al editor + admin."""
+    """Cliente pidió revisión → mail + push al editor + admin.
+    Si la revisión tiene attachments (fotos), incluye links + thumbnails
+    en el mail."""
     cliente = review.get("cliente", "?")
     editor = review.get("editor")
     video = review.get("video_file_name", "(video)")
+
+    # Listar attachments si hay
+    attachments_info = []
+    try:
+        from tracker import list_attachments_for_review
+        attachments_info = list_attachments_for_review(review_id) if review_id else []
+    except Exception as e:
+        print(f"   ⚠️ list_attachments_for_review: {e}")
+
+    # Construir bloque de attachments para texto y HTML
+    attach_text = ""
+    attach_html = ""
+    if attachments_info:
+        attach_text = f"\n\n📷 {len(attachments_info)} foto(s) adjunta(s) — ver en el dashboard de revisiones:\n"
+        admin_token = ""
+        try:
+            from api._shared import make_token
+            admin_token = make_token("ADMIN")
+        except Exception:
+            pass
+        for a in attachments_info:
+            url = _build_vercel_url(f"/api/review_attachment?id={a['id']}&admin=1&t={admin_token}")
+            attach_text += f"  · {a.get('filename') or 'imagen'}: {url}\n"
+        attach_html = (
+            f'<div style="margin:18px 0;padding:14px 18px;background:#f4f8fc;border-left:3px solid #60a5fa;border-radius:6px;">'
+            f'<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:8px;">'
+            f'📷 {len(attachments_info)} foto(s) adjunta(s) por el cliente</div>'
+            f'<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+        )
+        for a in attachments_info:
+            url = _build_vercel_url(f"/api/review_attachment?id={a['id']}&admin=1&t={admin_token}")
+            attach_html += (
+                f'<a href="{url}" target="_blank" style="display:block;">'
+                f'<img src="{url}" alt="{a.get("filename") or ""}" style="width:120px;height:120px;object-fit:cover;border-radius:6px;border:1px solid #ddd;">'
+                f'</a>'
+            )
+        attach_html += '</div></div>'
 
     subject = f"📝 Revisión pedida: {cliente} — {video}"
     body_text = f"""El cliente {cliente} pidió cambios en su último video:
@@ -664,7 +703,7 @@ def notify_revision_requested(review_id: int, review: dict, notes: str) -> None:
 Lo que pide cambiar:
 ─────────────────────
 {notes}
-─────────────────────
+─────────────────────{attach_text}
 
 Cuando subas la corrección (mismo Video N, mismo nombre), el sistema
 detecta la corrección y se cierra la revisión automáticamente. Le va
@@ -682,6 +721,7 @@ a llegar al cliente un mail nuevo con la versión corregida.
 <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:6px;">Lo que pide cambiar</div>
 <div style="white-space:pre-wrap;font-size:14px;color:#222;">{notes}</div>
 </div>
+{attach_html}
 <p style="font-size:13px;color:#666;">Cuando subas la corrección (mismo nombre de video) el sistema cierra la revisión y le manda mail al cliente automáticamente.</p>
 <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
 <p style="color:#888;font-size:12px;">— Asistente Revolv</p>

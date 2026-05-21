@@ -154,21 +154,71 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
             length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
-            try:
-                body = json.loads(raw)
-            except Exception:
-                return json_response(self, {"error": "body inválido"}, status=400)
+            content_type = (self.headers.get("Content-Type") or "").lower()
+            raw_body = self.rfile.read(length) if length > 0 else b""
 
-            notes = (body.get("notes") or "").strip()
-            file_name = (body.get("file_name") or "").strip()
-            editor = (body.get("editor") or "").strip() or None
+            notes = ""
+            file_name = ""
+            editor = None
+            attachments = []  # lista de (filename, mime, bytes)
+
+            if "multipart/form-data" in content_type:
+                # Parsear multipart manualmente (Vercel runtime no trae cgi.FieldStorage limpio)
+                import email
+                import email.policy
+                # Reconstruir un mensaje MIME para usar el parser de email
+                msg = email.message_from_bytes(
+                    b"Content-Type: " + content_type.encode() + b"\r\n\r\n" + raw_body,
+                    policy=email.policy.default,
+                )
+                for part in msg.iter_parts():
+                    disposition = part.get("Content-Disposition", "")
+                    if "form-data" not in disposition:
+                        continue
+                    # Parsear nombre del field
+                    params_disp = {}
+                    for chunk in disposition.split(";"):
+                        if "=" in chunk:
+                            k, v = chunk.strip().split("=", 1)
+                            params_disp[k.strip()] = v.strip(' "')
+                    field_name = params_disp.get("name", "")
+                    fname = params_disp.get("filename")
+                    payload = part.get_payload(decode=True) or b""
+                    if fname:
+                        # Es archivo (imagen)
+                        if len(attachments) >= 5:
+                            continue  # cap 5 imgs
+                        if len(payload) > 5 * 1024 * 1024:
+                            return json_response(self, {"error": f"imagen '{fname}' muy grande (max 5MB)"}, status=413)
+                        mime = part.get_content_type() or "image/jpeg"
+                        if not mime.startswith("image/"):
+                            return json_response(self, {"error": f"'{fname}' no es una imagen"}, status=400)
+                        attachments.append((fname, mime, payload))
+                    else:
+                        # Es texto
+                        text = payload.decode("utf-8", errors="replace") if isinstance(payload, bytes) else str(payload)
+                        if field_name == "notes":
+                            notes = text.strip()
+                        elif field_name == "file_name":
+                            file_name = text.strip()
+                        elif field_name == "editor":
+                            editor = text.strip() or None
+            else:
+                # JSON clásico (sin imágenes)
+                try:
+                    body = json.loads(raw_body.decode("utf-8") if raw_body else "{}")
+                except Exception:
+                    return json_response(self, {"error": "body inválido"}, status=400)
+                notes = (body.get("notes") or "").strip()
+                file_name = (body.get("file_name") or "").strip()
+                editor = (body.get("editor") or "").strip() or None
+
             if not notes:
                 return json_response(self, {"error": "contanos qué cambiar"}, status=400)
             if len(notes) > 5000:
                 return json_response(self, {"error": "notas muy largas (max 5000 chars)"}, status=400)
 
-            # Crear review on-demand con status='revision_requested' directo
+            # Crear review + attachments en UNA sola transacción + un solo push DB
             review_id_holder = {}
             def _op(conn):
                 cur = conn.execute("""
@@ -178,17 +228,26 @@ class handler(BaseHTTPRequestHandler):
                     VALUES (?, ?, ?, ?, 'revision_requested', ?,
                             datetime('now'), datetime('now'))
                 """, (cliente, file_id or None, file_name or None, editor, notes))
-                review_id_holder["id"] = cur.lastrowid
-            with_db(_op, message=f"review: nueva revisión pedida por {cliente}")
+                rid = cur.lastrowid
+                review_id_holder["id"] = rid
+                # Insertar attachments si los hay
+                for fname, mime, blob in attachments:
+                    conn.execute("""
+                        INSERT INTO client_review_attachments
+                            (review_id, filename, mime_type, blob, size_bytes, created_at)
+                        VALUES (?, ?, ?, ?, ?, datetime('now'))
+                    """, (rid, fname, mime, blob, len(blob)))
+            with_db(_op, message=f"review: nueva revisión pedida por {cliente}" + (f" (+{len(attachments)} imgs)" if attachments else ""))
             review_id = review_id_holder.get("id")
 
-            # Notificar editor + admin (mail + push)
+            # Notificar editor + admin (mail + push) con links a las imágenes
             review = {
                 "id": review_id,
                 "cliente": cliente,
                 "video_file_id": file_id,
                 "video_file_name": file_name or "(video)",
                 "editor": editor,
+                "attachments_count": len(attachments),
             }
             try:
                 from notifier import notify_revision_requested
@@ -196,7 +255,8 @@ class handler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"notify error: {e}")
 
-            return json_response(self, {"ok": True, "id": review_id, "status": "revision_requested"})
+            return json_response(self, {"ok": True, "id": review_id, "status": "revision_requested",
+                                          "attachments": len(attachments)})
         except Exception as e:
             return json_response(self, {"error": str(e)[:200], "trace": traceback.format_exc()[:1500]}, status=500)
 

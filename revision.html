@@ -86,9 +86,55 @@ function renderForm() {
     <label for="notes">Tus cambios:</label>
     <textarea id="notes" placeholder="Ej: En 0:23 sacar la pausa, cambiar el subtítulo del minuto 1:14 a 'X', el final que dure 2 segundos menos..."></textarea>
     <div class="hint">Sé detallado — cuanto más claro, más rápido te lo arreglamos.</div>
+
+    <label for="files" style="margin-top:18px;">📷 Fotos (opcional):</label>
+    <div style="background:#fafafa; border:1px dashed #ddd; border-radius:8px; padding:14px; text-align:center; margin-bottom:6px;">
+      <input id="files" type="file" accept="image/*" multiple style="display:none;" onchange="onFilesPicked(this.files)">
+      <button type="button" onclick="document.getElementById('files').click()" style="background:#fff; border:1px solid #ccc; padding:10px 18px; border-radius:6px; cursor:pointer; font-size:14px; font-weight:600;">📎 Sumar fotos</button>
+      <div style="font-size:12px; color:#888; margin-top:6px;">Max 5 imágenes · 5MB cada una</div>
+    </div>
+    <div id="previews" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;"></div>
+
     <button id="submit" class="btn" onclick="submitReview()">Enviar pedido de cambio</button>
     <div id="status" style="display:none;" class="status"></div>
   `;
+}
+
+// ─── Fotos adjuntas ───
+let PICKED_FILES = [];
+function onFilesPicked(filesList) {
+  const newFiles = Array.from(filesList);
+  for (const f of newFiles) {
+    if (PICKED_FILES.length >= 5) {
+      alert('Máximo 5 imágenes');
+      break;
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      alert(`"${f.name}" pesa más de 5MB`);
+      continue;
+    }
+    if (!f.type.startsWith('image/')) {
+      alert(`"${f.name}" no es una imagen`);
+      continue;
+    }
+    PICKED_FILES.push(f);
+  }
+  renderPreviews();
+}
+function renderPreviews() {
+  const cont = document.getElementById('previews');
+  if (!cont) return;
+  cont.innerHTML = PICKED_FILES.map((f, i) => {
+    const url = URL.createObjectURL(f);
+    return `<div style="position:relative; width:80px; height:80px; border-radius:8px; overflow:hidden; border:1px solid #ddd;">
+      <img src="${url}" style="width:100%; height:100%; object-fit:cover;">
+      <button onclick="removeFile(${i})" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:white; border:none; border-radius:50%; width:22px; height:22px; cursor:pointer; font-size:14px; line-height:1;">×</button>
+    </div>`;
+  }).join('');
+}
+function removeFile(i) {
+  PICKED_FILES.splice(i, 1);
+  renderPreviews();
 }
 
 async function submitReview() {
@@ -102,18 +148,33 @@ async function submitReview() {
     return;
   }
   btn.disabled = true;
-  btn.textContent = 'Enviando...';
+  btn.textContent = PICKED_FILES.length > 0 ? `Subiendo ${PICKED_FILES.length} foto(s)...` : 'Enviando...';
   status.style.display = 'none';
   try {
     const qs = new URLSearchParams({ cliente: CLIENTE, file_id: FILE_ID, t: TOKEN });
-    const res = await fetch(`/api/review?${qs.toString()}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notes, file_name: FILE_NAME, editor: EDITOR }),
-    });
+    let res;
+    if (PICKED_FILES.length > 0) {
+      // Multipart con imágenes
+      const fd = new FormData();
+      fd.append('notes', notes);
+      fd.append('file_name', FILE_NAME);
+      fd.append('editor', EDITOR);
+      for (const f of PICKED_FILES) {
+        fd.append('files', f, f.name);
+      }
+      res = await fetch(`/api/review?${qs.toString()}`, { method: 'POST', body: fd });
+    } else {
+      // JSON clásico
+      res = await fetch(`/api/review?${qs.toString()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes, file_name: FILE_NAME, editor: EDITOR }),
+      });
+    }
     const d = await res.json();
     if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
-    document.getElementById('content').innerHTML = `<div class="success-card"><div class="icon">📬</div><h2>¡Listo!</h2><p>Le pasamos tus cambios al editor.<br>Te avisamos cuando esté la nueva versión.</p></div>`;
+    const imgsMsg = d.attachments > 0 ? `<br><span style="color:#888;font-size:13px;">+ ${d.attachments} foto${d.attachments !== 1 ? 's' : ''} adjunta${d.attachments !== 1 ? 's' : ''}</span>` : '';
+    document.getElementById('content').innerHTML = `<div class="success-card"><div class="icon">📬</div><h2>¡Listo!</h2><p>Le pasamos tus cambios al editor.${imgsMsg}<br>Te avisamos cuando esté la nueva versión.</p></div>`;
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Enviar pedido de cambio';
