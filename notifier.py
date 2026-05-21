@@ -867,13 +867,35 @@ def notify_correction_ready_to_client(cliente: str, file_name: str,
     display = target["display_name"] or cliente.split()[0]
     video = file_name
 
+    # Link al video en Drive (mismas reglas de fallback que send_client_delivery_mail)
+    if edited_folder_id:
+        video_url = f"https://drive.google.com/drive/folders/{edited_folder_id}"
+        video_label = "Ver carpeta del editado"
+    elif client_folder_id:
+        video_url = f"https://drive.google.com/drive/folders/{client_folder_id}"
+        video_label = f"Ver carpeta de {cliente}"
+    elif file_id:
+        video_url = f"https://drive.google.com/file/d/{file_id}/view"
+        video_label = "Ver video en Drive"
+    else:
+        video_url = None
+        video_label = None
+
+    link_text = f"\n📁 {video_label}: {video_url}\n" if video_url else ""
+    link_html = (
+        f'<p style="text-align:center;margin:24px 0 8px;">'
+        f'<a href="{video_url}" style="background:#22c55e;color:white;padding:12px 22px;'
+        f'border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">'
+        f'📁 {video_label}</a></p>'
+    ) if video_url else ""
+
     subject = f"🎬 Tu revisión está lista — {video}"
     body_text = f"""Hola {display}!
 
 Acabo de subir la versión corregida de tu video:
 
   📹 {video}
-
+{link_text}
 Pegale una mirada y avisame si quedó bien.
 
 Un abrazo,
@@ -893,6 +915,7 @@ Revolv
 <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">VIDEO CORREGIDO</div>
 <div style="font-size:16px;color:#111;font-weight:600;">{video}</div>
 </div>
+{link_html}
 <p style="font-size:14px;color:#666;text-align:center;">Pegale una mirada y avisame si quedó bien.</p>
 </div>
 <div style="text-align:center;margin-top:28px;color:#888;font-size:13px;line-height:1.6;">
@@ -920,6 +943,7 @@ def notify_revision_resolved(review_id: int, review: dict) -> None:
     """El editor subió la corrección → mail al cliente con la nueva versión."""
     cliente = review.get("cliente", "?")
     video = review.get("video_file_name", "(video)")
+    video_file_id = review.get("video_file_id")
     from tracker import cfg_client_should_be_notified, _correction_stem
     target = cfg_client_should_be_notified(cliente)
     if not target:
@@ -927,13 +951,29 @@ def notify_revision_resolved(review_id: int, review: dict) -> None:
     to_email = target["email"]
     display = target["display_name"] or cliente.split()[0]
 
+    # Link al video. El review solo guarda file_id del original (no folder),
+    # así que armamos un link directo al archivo en Drive.
+    if video_file_id:
+        video_url = f"https://drive.google.com/file/d/{video_file_id}/view"
+        video_label = "Ver video en Drive"
+    else:
+        video_url = None
+        video_label = None
+    link_text = f"\n📁 {video_label}: {video_url}\n" if video_url else ""
+    link_html = (
+        f'<p style="text-align:center;margin:24px 0 8px;">'
+        f'<a href="{video_url}" style="background:#22c55e;color:white;padding:12px 22px;'
+        f'border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">'
+        f'📁 {video_label}</a></p>'
+    ) if video_url else ""
+
     subject = f"🎬 Tu revisión está lista — {video}"
     body_text = f"""Hola {display}!
 
 Acabo de subir la versión corregida de tu video:
 
   📹 {video}
-
+{link_text}
 Pegale una mirada y avisame si quedó bien.
 
 Un abrazo,
@@ -953,6 +993,7 @@ Revolv
 <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">VIDEO CORREGIDO</div>
 <div style="font-size:16px;color:#111;font-weight:600;">{video}</div>
 </div>
+{link_html}
 <p style="font-size:14px;color:#666;text-align:center;">Pegale una mirada y avisame si quedó bien.</p>
 </div>
 <div style="text-align:center;margin-top:28px;color:#888;font-size:13px;line-height:1.6;">
