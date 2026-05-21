@@ -1,0 +1,87 @@
+name: Audit & Recover (safety net)
+
+# Red de seguridad: cruza Drive vs tracker.db cada 30 min y procesa
+# cualquier archivo que el scan incremental se haya perdido.
+#
+# Causas conocidas por las que puede perderse algo:
+#   - GHA cron throttling (skip de runs de 5min)
+#   - Drive Changes API eventual-consistency
+#   - tracker.db push conflict → próximo scan no ve mail_log
+#
+# Ventana por defecto: 12h. Si el scan incremental funciona, este
+# audit no hace nada (todo está en DB). Si el scan se perdió algo,
+# este audit lo recupera dentro de los 30min.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # cada 30 min
+  workflow_dispatch: {}
+
+concurrency:
+  group: scan-drive   # mismo lock que scan-incremental y scan: nunca corren a la vez
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run audit & recover
+        env:
+          OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+        run: python audit_recover.py --hours 12
+
+      - name: Commit DB if changed
+        run: |
+          git config user.name "asistente-bot"
+          git config user.email "bot@revolv.local"
+          if ! git status --porcelain tracker.db | grep -q .; then
+            echo "DB sin cambios"
+            exit 0
+          fi
+          git add tracker.db
+          git commit -m "[bot-audit] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]"
+          # Mismo retry-with-theirs que scan-incremental
+          for attempt in 1 2 3; do
+            if git pull --rebase -X theirs; then
+              if git push; then
+                echo "DB actualizada (intento $attempt)"
+                exit 0
+              fi
+            else
+              echo "⚠️ Conflicto en rebase (intento $attempt), abort y retry"
+              git rebase --abort || true
+              git fetch origin main
+              git reset --soft origin/main
+              git add tracker.db
+              git commit -m "[bot-audit] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]" || true
+            fi
+            sleep $((2 * attempt))
+          done
+          echo "❌ No se pudo pushear tracker.db después de 3 intentos"
+          exit 1
