@@ -263,6 +263,19 @@ def run(notify: bool = False):
             # (El scan completo se encarga de descubrir clientes nuevos cada hora.)
             continue
 
+        # OVERRIDE: si el owner es un editor conocido, ES editado (no importa
+        # dónde lo haya puesto). El cliente JAMÁS sube con cuenta del editor.
+        # Bug 21/may: Valen subió "reel 13" a /Natalia López/Material/Contenido/
+        # Reel 13/ y se clasificó como crudo por estar dentro de /Material/.
+        if is_crudo:
+            try:
+                from classifier import identify_editor_by_owner
+                if identify_editor_by_owner(f):
+                    print(f"  🎯 owner es editor → override a editado: {f['name'][:40]}")
+                    is_crudo = False
+            except Exception:
+                pass
+
         # CRUDO en /Material/: crear task + mandar mail
         if is_crudo:
             if is_file_known(f["id"]):

@@ -113,6 +113,12 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
             stats["owners_sin_cliente"].add(owner)
             continue
 
+        # OVERRIDE: si owner es editor conocido, ES editado (mismo razonamiento
+        # que scan_incremental.py — el cliente jamás sube con cuenta de editor).
+        if is_crudo and identify_editor_by_owner(f):
+            print(f"  🎯 owner es editor → override a editado: {f['name'][:40]}")
+            is_crudo = False
+
         size = int(f["size"]) if f.get("size") else None
         parent0 = (f.get('parents') or ['?'])[0]
 
