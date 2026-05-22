@@ -1170,6 +1170,27 @@ def log_mail(to_email: str, subject: str, kind: str = "",
         pass
 
 
+def completion_mail_already_sent(cliente: str, file_id: str, file_name: str,
+                                   minutes: int = 360) -> bool:
+    """¿Ya se mandó un completion mail (admin) para este archivo en los últimos N min?
+
+    Usa el MISMO dedupe_key estable que usa notifier.send_completion_mails para
+    encolar completion mails. Si retorna True, el archivo YA FUE PROCESADO por
+    otro worker (incremental o audit) y NO debe re-procesarse: ni re-claim, ni
+    re-decrement, ni re-mail.
+
+    Bug 21/may: el audit re-procesaba archivos que el incremental ya había
+    completado pero cuyo tracker.db nunca se pusheó (conflicto), generando
+    mail duplicado + double-decrement de pending_count.
+    """
+    if not cliente or not file_id:
+        return False
+    import hashlib
+    key_str = f"completion-admin|{cliente.strip().lower()}|{file_id or file_name}"
+    dkey = hashlib.sha1(key_str.encode()).hexdigest()[:24]
+    return bool(check_recent_mail_by_key(dkey, minutes=minutes))
+
+
 def check_recent_mail_by_key(dedupe_key: str, minutes: int = 30) -> Optional[str]:
     """Busca en mail_log si hay un envío success=1 con el dedupe_key dado
     en los últimos N minutos. Retorna el msg_id (o '(no-id)' si el envío

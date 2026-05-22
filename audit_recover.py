@@ -167,6 +167,19 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
         # sig is True (editado seguro) o sig is None (ambiguo - default permisivo editado)
         if is_edited_known(f['id']):
             continue
+        # Defensa contra double-process: si el incremental ya mandó el completion
+        # mail para este archivo (mail_log dedupe estable), no re-procesarlo
+        # aunque el archivo no figure en known_edited_files (caso típico:
+        # incremental no pusheó tracker.db pero sí pusheó mail_log).
+        from mail_client import _sync_mail_log_from_remote
+        from tracker import completion_mail_already_sent
+        try:
+            _sync_mail_log_from_remote()
+        except Exception:
+            pass
+        if completion_mail_already_sent(cliente, f["id"], f["name"]):
+            print(f"  ⏭️  ya procesado por incremental: {cliente} / {f['name'][:40]}")
+            continue
         claimed = claim_edited_file(
             file_id=f["id"], cliente=cliente, folder_id="(audit)",
             name=f["name"], size=size, created_time=f.get("createdTime"),

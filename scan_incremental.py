@@ -399,6 +399,19 @@ def run(notify: bool = False):
         # Es editado → cerrar task pendiente (si hay)
         if is_edited_known(f["id"]):
             continue
+        # Defensa contra double-process: si OTRO worker ya mandó completion mail
+        # para este archivo recientemente (porque pusheó mail_log aunque
+        # tracker.db haya quedado desincronizado), no re-procesar. Bug 21/may:
+        # V61/V62 Alberto mandados dos veces con counters distintos.
+        from mail_client import _sync_mail_log_from_remote
+        try:
+            _sync_mail_log_from_remote()
+        except Exception:
+            pass
+        from tracker import completion_mail_already_sent
+        if completion_mail_already_sent(cliente_real, f["id"], f["name"]):
+            print(f"  ⏭️  ya procesado por otro worker (mail_log): {cliente_real} / {f['name'][:40]}")
+            continue
         size = int(f["size"]) if f.get("size") else None
         claimed = claim_edited_file(
             file_id=f["id"], cliente=cliente_real, folder_id="(incremental)",

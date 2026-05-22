@@ -376,6 +376,14 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
             subject = f"📹 {editor} entregó {file_name} de {cliente} ({rest_text})"
             estado_text = f"{editor} entregó 1 video de {cliente}.\n{rest_text}."
             estado_html = f"<p>{editor} entregó 1 video de <strong>{cliente}</strong>. <strong>{rest_text}</strong>.</p>"
+            # Dedupe estable por file_id: si dos workers procesan el MISMO archivo
+            # (incremental + audit, p.ej.), el counter "(N restantes)" puede ser
+            # distinto entre ellos porque cada uno decremental pending. El subject
+            # cambia → el dedupe por subject NO atrapa → mail duplicado.
+            # Bug reportado 21/may: V61/V62 Alberto, 2 mails cada uno con counters
+            # distintos ("1 restante" vs "0 restantes (cliente cerrado)").
+            # Fix: dedupe_key basado en file_id (idéntico para el mismo archivo).
+            _completion_dedupe_key = f"completion-admin|{cliente.strip().lower()}|{file_id or file_name}"
 
         link_text = f"\n📁 {video_label}: {video_url}\n" if video_url else ""
         link_html = f'<p style="margin: 20px 0;"><a href="{video_url}" style="background:#ff4747;color:white;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:600;">📁 {video_label}</a></p>' if video_url else ""
@@ -416,7 +424,7 @@ Archivo: {file_name}{link_text}
                 # se mandaba duplicado. 6h cubre casi cualquier retraso de retry.
                 # Para correcciones, usamos dedupe_key_override estable (no depende
                 # del editor ni del file_id) para atrapar el caso "Agus" vs "—".
-                _override = _correction_dedupe_key if is_correction else None
+                _override = _correction_dedupe_key if is_correction else _completion_dedupe_key
                 msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html,
                                    kind="completion", cliente=cliente, editor=editor,
                                    dedupe_window_minutes=360,
