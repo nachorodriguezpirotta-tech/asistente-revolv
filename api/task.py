@@ -445,6 +445,18 @@ class handler(BaseHTTPRequestHandler):
             if not cliente_r or not new_editor:
                 return json_response(self, {"error": "falta cliente o new_editor"}, status=400)
 
+            # Detectar el placeholder "sin editor" del UI. El backend
+            # (api/data.py) reemplaza editor NULL/'' por "— sin editor —"
+            # para mostrar. El UI nos manda ese mismo string. Lo tratamos
+            # como "filtrar por NULL o vacío" en el WHERE.
+            # Bug 21/may: reassign "sin editor" → Fran no se guardaba porque
+            # WHERE editor='— sin editor —' no matcheaba con editor=''.
+            is_no_editor_placeholder = (
+                not current_editor or
+                current_editor.startswith("—") or
+                "sin editor" in current_editor.lower()
+            )
+
             updated_count = {"n": 0}
             def op_reassign(conn):
                 # Verificar que NO exista ya una task del nuevo editor con el mismo cliente
@@ -455,17 +467,23 @@ class handler(BaseHTTPRequestHandler):
                 if existing:
                     raise ValueError("ya_existe")
                 # Reasignar
-                if current_editor:
+                if is_no_editor_placeholder:
+                    # Match tasks con editor NULL o '' (string vacío)
+                    r = conn.execute(
+                        "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) "
+                        "AND (editor IS NULL OR editor='') AND status='pending'",
+                        (new_editor, cliente_r),
+                    )
+                else:
                     r = conn.execute(
                         "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
                         (new_editor, cliente_r, current_editor),
                     )
-                else:
-                    r = conn.execute(
-                        "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
-                        (new_editor, cliente_r),
-                    )
                 updated_count["n"] = r.rowcount
+                if updated_count["n"] == 0:
+                    # No actualizamos nada — el cliente no existe con el editor
+                    # actual. Avisamos al frontend.
+                    raise ValueError("not_found")
 
             try:
                 with_db(op_reassign, message=f"manual: reasignar {cliente_r}: {current_editor} → {new_editor}")
@@ -473,6 +491,8 @@ class handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 if "ya_existe" in str(e):
                     return json_response(self, {"error": f"{new_editor} ya tiene pending de {cliente_r}"}, status=409)
+                if "not_found" in str(e):
+                    return json_response(self, {"error": f"No se encontró task pending de {cliente_r}"}, status=404)
                 return json_response(self, {"error": str(e)[:200]}, status=500)
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
