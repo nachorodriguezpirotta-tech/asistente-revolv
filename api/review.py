@@ -195,6 +195,7 @@ class handler(BaseHTTPRequestHandler):
             print(f"[DEBUG] body length={len(raw_body)}")
             print(f"[DEBUG] body first 200 bytes={raw_body[:200]!r}")
 
+            _parser_debug = {}
             if "multipart/form-data" in content_type:
                 # Parser multipart manual — más confiable que email.policy en
                 # el runtime de Vercel (que tuvo problemas reportados).
@@ -211,6 +212,10 @@ class handler(BaseHTTPRequestHandler):
                 # body splits por --boundary
                 delim = ("--" + boundary).encode()
                 parts = raw_body.split(delim)
+                _parser_debug["boundary_len"] = len(boundary)
+                _parser_debug["delim_len"] = len(delim)
+                _parser_debug["num_parts"] = len(parts)
+                _parser_debug["first_50_body"] = raw_body[:50].decode("utf-8", errors="replace")
                 # primera parte es preamble (vacía), última es "--" + epilogo
                 for raw_part in parts[1:-1]:
                     # Strip CRLF inicial y final
@@ -269,7 +274,7 @@ class handler(BaseHTTPRequestHandler):
             print(f"[DEBUG] notes={notes!r}, attachments={len(attachments)}, file_name={file_name!r}")
             if not notes and not attachments:
                 return json_response(self, {"error": "Escribi algo o suma una foto",
-                                              "_debug": {"ct_len": len(content_type), "body_len": len(raw_body), "ct": content_type[:80]}}, status=400)
+                                              "_debug": {"ct_len": len(content_type), "body_len": len(raw_body), "ct": content_type[:80], "parser": _parser_debug}}, status=400)
             if len(notes) > 5000:
                 return json_response(self, {"error": "notas muy largas (max 5000 chars)"}, status=400)
             if not notes:
