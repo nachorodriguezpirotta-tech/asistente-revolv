@@ -182,7 +182,12 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
             length = int(self.headers.get("Content-Length", "0"))
-            content_type = (self.headers.get("Content-Type") or "").lower()
+            # NO lowercaseamos todo el Content-Type porque el boundary es
+            # case-sensitive — el body lo respeta exactamente (camelcase, etc).
+            # Bug 22/may: .lower() corrompía boundaries case-sensitive →
+            # split no encontraba delimiter → multipart no parseaba.
+            content_type = (self.headers.get("Content-Type") or "")
+            content_type_lower = content_type.lower()  # solo para checks
             raw_body = self.rfile.read(length) if length > 0 else b""
 
             notes = ""
@@ -196,7 +201,7 @@ class handler(BaseHTTPRequestHandler):
             print(f"[DEBUG] body first 200 bytes={raw_body[:200]!r}")
 
             _parser_debug = {}
-            if "multipart/form-data" in content_type:
+            if "multipart/form-data" in content_type_lower:
                 # Parser multipart manual — más confiable que email.policy en
                 # el runtime de Vercel (que tuvo problemas reportados).
                 # Buscamos el boundary y spliteamos el body en partes.
