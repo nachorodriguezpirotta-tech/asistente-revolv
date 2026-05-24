@@ -558,12 +558,12 @@ if (urlToken && (urlEditor || urlAdmin)) {
     try {
         localStorage.setItem('revolv_auth', JSON.stringify({ editor: EDITOR, token: TOKEN, admin: IS_ADMIN }));
     } catch (e) {}
-    // Si entró con params y NO está en standalone (PWA), limpiar la URL
-    // para que el link compartido no quede expuesto en la barra
-    if (history.replaceState) {
-        const clean = location.pathname;
-        history.replaceState({}, '', clean);
-    }
+    // NOTA: antes limpiábamos los params de la URL con history.replaceState
+    // pero eso hacía que copy/paste de la URL no funcionara para compartir
+    // entre devices. Bug reportado 22/may: Ignacio copiaba URL del admin
+    // desde PC, la abría en celular, y el celular mostraba el dashboard
+    // de Valen (porque localStorage del celu tenía Valen guardado de antes).
+    // Dejamos los params visibles para que la URL sea "compartible".
 } else {
     try {
         const saved = JSON.parse(localStorage.getItem('revolv_auth') || 'null');
