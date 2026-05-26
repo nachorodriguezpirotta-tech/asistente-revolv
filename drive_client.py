@@ -560,26 +560,38 @@ def list_edited_files(client_folder_id: str, raw_folder_id: Optional[str],
             continue
         if _is_raw_subfolder_name(sub["name"]):
             continue
-        edited.extend(_list_recursive_videos(sub["id"], parent_name=sub["name"]))
+        edited.extend(_list_recursive_videos(sub["id"], parent_name=sub["name"],
+                                              cliente_name=client_folder_name))
     return edited
 
 
-def _list_recursive_videos(folder_id: str, parent_name: Optional[str] = None) -> list[dict]:
+def _list_recursive_videos(folder_id: str, parent_name: Optional[str] = None,
+                            cliente_name: Optional[str] = None) -> list[dict]:
     """
     Lista videos editados recursivamente, EXCLUYENDO subcarpetas Material/Raw/Crudos
     Y filtrando por clasificador (excluye archivos que parecen crudos por nombre).
+
+    cliente_name: si se pasa, se usa para el chequeo owner-vs-cliente del
+    classifier (override total para que el cliente subiendo crudos a
+    subcarpetas NO se confunda con editado). Bug 26/may: REEL 5.MOV de
+    Asthend en subfolder se contaba como editado porque sin cliente_name
+    el classifier caía al name pattern "^reel\\s*\\d+" → editado.
     """
-    from classifier import is_likely_editado
+    from classifier import classify
 
     out = []
     files = _list_files(folder_id, only_videos=True)
     for f in files:
-        if is_likely_editado(f, parent_name=parent_name):
-            out.append(f)
+        sig = classify(f, parent_name=parent_name, cliente_name=cliente_name)
+        # is_likely_editado equivalent: True/None → editado, False → crudo
+        if sig is False:
+            continue  # owner = cliente → CRUDO, no contamos como editado
+        out.append(f)
     for sub in _list_subfolders(folder_id):
         if _is_raw_subfolder_name(sub["name"]):
             continue
-        out.extend(_list_recursive_videos(sub["id"], parent_name=sub["name"]))
+        out.extend(_list_recursive_videos(sub["id"], parent_name=sub["name"],
+                                           cliente_name=cliente_name))
     return out
 
 
