@@ -599,7 +599,7 @@ Nacho te subió tu video nuevo:
             "t": token,
         })
         review_url_approve = _build_vercel_url(f"/api/review?{params_approve}")
-        review_url_revise = _build_vercel_url(f"/revision.html?{params_revise}")
+        review_url_revise = f"https://revolv-portal.vercel.app/r?{params_revise}"
     except Exception as e:
         print(f"   ⚠️ no se pudieron generar URLs de revisión: {e}")
 
