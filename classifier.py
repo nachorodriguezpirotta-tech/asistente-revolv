@@ -23,6 +23,8 @@ from aliases import EDITOR_EMAILS
 
 # Set de mails de editores en lowercase para matching rápido
 _EDITOR_EMAILS_LOWER = {e.strip().lower() for e in EDITOR_EMAILS.values() if e}
+# Normalize Gmail dots/aliases (ramiro.lema00@gmail vs ramirolema00@gmail).
+# Recalculamos esto en cada check con _normalize_email() definido más abajo.
 
 
 def _normalize(s: str) -> str:
@@ -113,6 +115,32 @@ def _name_signals(name: str) -> Optional[bool]:
     return None
 
 
+def _normalize_email(em: str) -> str:
+    """Normaliza email para comparación, respetando reglas de Gmail:
+      - lowercase
+      - quita puntos del local part SOLO si es @gmail.com / @googlemail.com
+        (Gmail trata ab.c@gmail == abc@gmail como el mismo mailbox)
+      - quita "+alias" del local part (ab+x@... → ab@...)
+
+    Bug 26/may: ramiro.lema00@gmail.com (real owner del archivo) no matcheaba
+    con ramirolema00@gmail.com (en cfg_editors) → identify_editor_by_owner
+    retornaba None → fallback al Sheet → Sheet asignaba "Ale" a Jose Social
+    Pulse Media (cliente de Rami) → mails mal atribuidos."""
+    if not em:
+        return ""
+    em = em.strip().lower()
+    if "@" not in em:
+        return em
+    local, _, domain = em.partition("@")
+    # Strip +alias
+    if "+" in local:
+        local = local.split("+", 1)[0]
+    # Gmail/Googlemail ignoran puntos en local part
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.replace(".", "")
+    return f"{local}@{domain}"
+
+
 def identify_editor_by_owner(file: dict) -> Optional[str]:
     """Si el owner del archivo es uno de los editores conocidos, retorna su NOMBRE.
     Útil para saber QUIÉN REALMENTE entregó un editado (puede no coincidir con
@@ -122,13 +150,17 @@ def identify_editor_by_owner(file: dict) -> Optional[str]:
     no hay info de owner)."""
     from aliases import get_editor_emails_runtime
     emails_map = get_editor_emails_runtime()  # {Name: email}
-    # Invertir: {email_lower: Name}
-    by_email = {(v or "").strip().lower(): k for k, v in emails_map.items() if v}
+    # Invertir: {email_normalized: Name} — normalize Gmail dots/+aliases
+    by_email = {}
+    for k, v in emails_map.items():
+        if not v:
+            continue
+        by_email[_normalize_email(v)] = k
     if not by_email:
         return None
     for em in _get_owner_emails(file):
-        if em in by_email:
-            return by_email[em]
+        if _normalize_email(em) in by_email:
+            return by_email[_normalize_email(em)]
     return None
 
 
@@ -228,7 +260,8 @@ def _owner_signal(file: dict, cliente_name: Optional[str] = None) -> Optional[bo
         return None
 
     # 1) Editor conocido → EDITADO (alta confianza)
-    if _EDITOR_EMAILS_LOWER and any(em in _EDITOR_EMAILS_LOWER for em in candidates):
+    _editor_norm = {_normalize_email(e) for e in _EDITOR_EMAILS_LOWER}
+    if _editor_norm and any(_normalize_email(em) in _editor_norm for em in candidates):
         return True
 
     # 2) Owner matchea el nombre del cliente → CRUDO (cliente subió)
@@ -259,7 +292,8 @@ def classify(file: dict, parent_name: Optional[str] = None,
     """
     # 1. Editor conocido → EDITADO (override total)
     candidates = _get_owner_emails(file)
-    if _EDITOR_EMAILS_LOWER and any(em in _EDITOR_EMAILS_LOWER for em in candidates):
+    _editor_norm = {_normalize_email(e) for e in _EDITOR_EMAILS_LOWER}
+    if _editor_norm and any(_normalize_email(em) in _editor_norm for em in candidates):
         return True
 
     # 2. Owner es el cliente (fuzzy) → CRUDO (override sobre nombre)
