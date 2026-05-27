@@ -59,6 +59,7 @@ jobs:
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+          DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}
         run: |
           for i in 1 2 3; do
             python scan_incremental.py --notify && break

@@ -60,6 +60,7 @@ jobs:
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+          DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}
         # Reintento: hasta 3 intentos con backoff exponencial (10s, 30s)
         run: |
           for i in 1 2 3; do
