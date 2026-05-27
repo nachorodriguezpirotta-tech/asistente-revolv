@@ -32,7 +32,7 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # debería tardar segundos, 5 min es paranoia
+    timeout-minutes: 10  # bumped de 5 → 10 (caso backlog grande)
 
     steps:
       - name: Checkout repo
