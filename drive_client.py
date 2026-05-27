@@ -605,8 +605,8 @@ def get_start_page_token() -> str:
     return res["startPageToken"]
 
 
-def list_changes_since(page_token: str) -> tuple[list[dict], str]:
-    """Lista todos los cambios en Drive desde el page_token dado.
+def list_changes_since(page_token: str, max_pages: int = 5) -> tuple[list[dict], str]:
+    """Lista cambios en Drive desde el page_token dado.
     Devuelve (lista_de_changes, nuevo_page_token).
 
     Cada change tiene:
@@ -616,11 +616,18 @@ def list_changes_since(page_token: str) -> tuple[list[dict], str]:
       - time: timestamp del cambio
 
     El nuevo_page_token sirve para la PRÓXIMA llamada incremental.
+
+    max_pages: límite de páginas (default 5 × 1000 = 5000 cambios max por scan).
+    Bug 27/may: cuando el page_token tenía 40h+ de cambios acumulados (1M
+    eventos), la paginación tardaba >5min y GHA cancelaba el job. Cada scan
+    siguiente repetía lo mismo. Con max_pages, después de N páginas avanzamos
+    el token y la próxima ronda continúa desde donde quedamos.
     """
     service = get_service()
     all_changes = []
     current_token = page_token
-    while True:
+    pages_fetched = 0
+    while pages_fetched < max_pages:
         res = service.changes().list(
             pageToken=current_token,
             pageSize=1000,
@@ -631,6 +638,7 @@ def list_changes_since(page_token: str) -> tuple[list[dict], str]:
             includeRemoved=True,
         ).execute()
         all_changes.extend(res.get("changes", []))
+        pages_fetched += 1
         next_page = res.get("nextPageToken")
         if next_page:
             current_token = next_page
@@ -638,6 +646,11 @@ def list_changes_since(page_token: str) -> tuple[list[dict], str]:
         # Última página devuelve newStartPageToken para usar la próxima vez
         new_start = res.get("newStartPageToken") or current_token
         return all_changes, new_start
+    # Hit max_pages — devolvemos lo que tenemos y el current_token (no avanzamos
+    # al newStartPageToken porque no llegamos al final). Próximo scan continúa.
+    print(f"   ⚠️  list_changes_since: hit max_pages ({max_pages}). "
+          f"Procesando {len(all_changes)} cambios. Próximo scan continúa.")
+    return all_changes, current_token
 
 
 if __name__ == "__main__":
