@@ -14,7 +14,9 @@ name: Audit & Recover (safety net)
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # cada 30 min
+    - cron: '*/10 * * * *'   # cada 10 min — GHA cron de scan-incremental es
+                              # inconfiable (gaps de 1h+), audit es safety net
+                              # más cercana para minimizar retraso de mails
   workflow_dispatch: {}
 
 concurrency:
