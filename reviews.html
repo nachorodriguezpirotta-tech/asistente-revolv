@@ -195,7 +195,7 @@ function renderItem(r) {
         ${responded ? `<span>💬 ${responded}</span>` : ''}
         ${resolved ? `<span>✅ ${resolved}</span>` : ''}
       </div>
-      ${r.notes ? `<div class="notes">${escape(r.notes)}</div>` : ''}
+      ${r.notes ? `<div class="notes">${linkify(r.notes)}</div>` : ''}
       ${renderAttachments(r)}
     </div>
   `;
@@ -246,6 +246,14 @@ function fmtDate(iso) {
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+// Escapa HTML y convierte URLs http(s):// en <a> clickeables.
+function linkify(s) {
+  const escaped = escape(s);
+  return escaped.replace(/(https?:\/\/[^\s<]+)/g, (url) =>
+    `<a href="${url}" target="_blank" rel="noopener" style="color:#7dd3fc;text-decoration:underline;">${url}</a>`
+  );
 }
 
 if (!TOKEN) {
