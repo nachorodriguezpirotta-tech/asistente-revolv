@@ -1,61 +1,18 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": null,
-  "buildCommand": null,
-  "installCommand": null,
-  "outputDirectory": null,
-  "rewrites": [
-    { "source": "/", "destination": "/index.html" },
-    { "source": "/stats", "destination": "/stats.html" },
-    { "source": "/config", "destination": "/config.html" },
-    { "source": "/mistats", "destination": "/mistats.html" },
-    { "source": "/calendar", "destination": "/calendar.html" },
-    { "source": "/manifest.json", "destination": "/manifest.json" }
-  ],
-  "functions": {
-    "api/data.py": {
-      "memory": 256,
-      "maxDuration": 10
+  "experimentalServices": {
+    "abandoned-cart-calls": {
+      "root": "abandoned-cart-calls",
+      "routePrefix": "/_/abandoned-cart-calls"
     },
-    "api/task.py": {
-      "memory": 256,
-      "maxDuration": 10
+    "carrito-abandonado": {
+      "root": "carrito-abandonado",
+      "entrypoint": "server.js",
+      "routePrefix": "/_/carrito-abandonado"
     },
-    "api/stats.py": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/config.py": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/push.py": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/calendar.py": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/review.py": {
-      "memory": 512,
-      "maxDuration": 30
-    },
-    "api/reviews.py": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/voice_note.py": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/daily_summary.py": {
-      "memory": 256,
-      "maxDuration": 30
-    },
-    "api/review_attachment.py": {
-      "memory": 256,
-      "maxDuration": 10
+    "revolv-autocut": {
+      "root": "revolv-autocut",
+      "entrypoint": "app:app",
+      "routePrefix": "/_/revolv-autocut"
     }
   }
 }
