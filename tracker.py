@@ -474,7 +474,7 @@ def init_db():
             )
         """)
 
-    # Seed: Benja con dos contadores
+    # Seed: contadores por editor
     now = datetime.now().isoformat(timespec='seconds')
     conn.execute("""
         INSERT OR IGNORE INTO editor_progress (editor, label, current, total, updated_at)
@@ -483,6 +483,15 @@ def init_db():
     conn.execute("""
         INSERT OR IGNORE INTO editor_progress (editor, label, current, total, updated_at)
         VALUES ('Benja', 'Avanzados', 0, 30, ?)
+    """, (now,))
+    # Valen: Intermedios y Avanzados, ambos /10 (pedido Ignacio 26/may)
+    conn.execute("""
+        INSERT OR IGNORE INTO editor_progress (editor, label, current, total, updated_at)
+        VALUES ('Valen', 'Intermedios', 0, 10, ?)
+    """, (now,))
+    conn.execute("""
+        INSERT OR IGNORE INTO editor_progress (editor, label, current, total, updated_at)
+        VALUES ('Valen', 'Avanzados', 0, 10, ?)
     """, (now,))
     conn.commit()
     conn.close()
