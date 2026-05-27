@@ -1,44 +1,52 @@
 """
-GET /api/trigger?secret=XXX
+GET /api/trigger?t=<token>
 
-Endpoint para que un servicio externo (cron-job.org) dispare el workflow
-scan-incremental de GitHub Actions. Es un "booster" — GHA cron de */5 es
-inconfiable (gaps de 1h+), así que cron-job.org pingea esto cada 1-2 min
-y garantiza latencia baja para detectar videos nuevos.
+Endpoint para que cron-job.org dispare el workflow scan-incremental de GHA.
+Booster cuando el cron */5 de GHA skipea (latencia 1h+).
 
-Auth: secret en query string (?secret=). Comparado contra TRIGGER_SECRET
-env var. Si no matchea → 401.
-
-Trigger: workflow_dispatch via GitHub API usando GITHUB_PAT (ya configurado
-para otras cosas en Vercel env vars).
-
-Idempotente: si scan-incremental ya está corriendo, el concurrency group
-'scan-drive' del workflow garantiza que no se dispare en paralelo.
+Token: HMAC(DASHBOARD_SECRET, "trigger")[:16]. Reusa el secret que ya está
+sincronizado entre GH Actions y Vercel — sin env var nueva.
 """
 
+import hmac
+import hashlib
 import json
 import os
-import sys
-import traceback
-import hmac
+import secrets
 import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from _shared import json_response, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, GITHUB_PAT, check_token
-    _IMPORT_ERROR = None
-except Exception as _e:
-    _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
+_env_secret = os.environ.get("DASHBOARD_SECRET", "").strip()
+if _env_secret:
+    DASHBOARD_SECRET = _env_secret
+else:
+    DASHBOARD_SECRET = "ephemeral-" + secrets.token_urlsafe(24)
 
+GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "nachorodriguezpirotta-tech")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "asistente-revolv")
+GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
+GITHUB_PAT = os.environ.get("GITHUB_PAT", "")
 WORKFLOW_FILE = os.environ.get("TRIGGER_WORKFLOW", "scan-incremental.yml")
 
 
-def _dispatch_workflow() -> tuple[bool, str]:
-    """Llama a workflow_dispatch via GitHub API. Devuelve (ok, message)."""
+def _make_token(name: str) -> str:
+    return hmac.new(
+        DASHBOARD_SECRET.encode(),
+        name.lower().encode(),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+
+
+def _check_token(name: str, token: str) -> bool:
+    if not name or not token:
+        return False
+    return hmac.compare_digest(_make_token(name), token)
+
+
+def _dispatch_workflow():
     if not GITHUB_PAT:
         return False, "GITHUB_PAT no configurado"
     url = (f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
@@ -51,7 +59,6 @@ def _dispatch_workflow() -> tuple[bool, str]:
     req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            # workflow_dispatch returns 204 No Content on success
             if resp.status in (200, 201, 204):
                 return True, f"triggered {WORKFLOW_FILE}"
             return False, f"GitHub API status {resp.status}"
@@ -61,27 +68,30 @@ def _dispatch_workflow() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {str(e)[:200]}"
 
 
+def _json(handler, payload, status=200):
+    body = json.dumps(payload).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            if _IMPORT_ERROR:
-                return json_response(self, {"error": "import", "detail": _IMPORT_ERROR}, status=500)
-
             params = parse_qs(urlparse(self.path).query)
-            # Reusamos el DASHBOARD_SECRET (ya sincronizado entre GH y Vercel).
-            # check_token("TRIGGER", token) → HMAC(DASHBOARD_SECRET, "trigger")
-            # cron-job.org pingea con ese token precomputado.
             token = (params.get("t", [""])[0] or "").strip()
-            if not check_token("TRIGGER", token):
-                return json_response(self, {"error": "unauthorized"}, status=401)
-
+            if not _check_token("TRIGGER", token):
+                return _json(self, {"error": "unauthorized"}, status=401)
             ok, msg = _dispatch_workflow()
             if ok:
-                return json_response(self, {"ok": True, "msg": msg})
-            return json_response(self, {"ok": False, "error": msg}, status=502)
-
+                return _json(self, {"ok": True, "msg": msg})
+            return _json(self, {"ok": False, "error": msg}, status=502)
         except Exception as e:
-            return json_response(self, {"error": str(e)[:200], "trace": traceback.format_exc()[:500]}, status=500)
+            return _json(self, {"error": str(e)[:200]}, status=500)
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -89,4 +99,5 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.end_headers()
 
-    def log_message(self, *a, **kw): pass
+    def log_message(self, *a, **kw):
+        pass
