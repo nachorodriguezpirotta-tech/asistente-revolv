@@ -605,7 +605,7 @@ def get_start_page_token() -> str:
     return res["startPageToken"]
 
 
-def list_changes_since(page_token: str, max_pages: int = 5) -> tuple[list[dict], str]:
+def list_changes_since(page_token: str, max_pages: int = 20) -> tuple[list[dict], str]:
     """Lista cambios en Drive desde el page_token dado.
     Devuelve (lista_de_changes, nuevo_page_token).
 
