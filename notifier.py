@@ -240,14 +240,20 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
         if dry_run:
             print(f"     (dry-run, no se envía)")
             continue
+        # Dedupe estable basado en task_ids ordenados — si dos workers procesan
+        # el MISMO grupo de tasks pending, generan la misma key y dedupean.
+        # Bug 27/may Liliana Corporate: subject "(2 archivos)" idéntico, dos
+        # workers consecutivos pero >30min apart, dedupe por subject falló.
+        # Window 6h alineada con los otros mails (completion, client).
+        sorted_task_ids = sorted(task_ids)
+        notif_dedupe_key = f"notif-pending|{cliente.strip().lower()}|{editor or ''}|{','.join(str(t) for t in sorted_task_ids)}"
+
         any_sent = False
         for dest in destinatarios:
             try:
-                # dedupe_window=30min evita que dos workers paralelos del scan
-                # manden el mismo "Material nuevo de X" si ambos detectaron
-                # los mismos archivos antes de que mail_log se sincronizara
                 msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html,
-                                   dedupe_window_minutes=30)
+                                   dedupe_window_minutes=360,
+                                   dedupe_key_override=f"{notif_dedupe_key}|{dest.lower()}")
                 print(f"     ✅ enviado a {dest} · msg_id={msg_id}")
                 any_sent = True
             except Exception as e:
