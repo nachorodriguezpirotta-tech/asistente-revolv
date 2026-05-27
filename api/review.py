@@ -285,17 +285,42 @@ class handler(BaseHTTPRequestHandler):
             if not notes:
                 notes = "(Cliente adjunto fotos sin texto — ver imagenes)"
 
-            # Crear review + attachments en UNA sola transacción + un solo push DB
+            # UPSERT: si ya hay review pedida abierta para (cliente, file_id),
+            # actualizar las notas + reemplazar attachments. Si no, INSERT nueva.
+            # Así el portal puede "Reenviar feedback" sin generar múltiples
+            # entries en el dashboard del editor.
             review_id_holder = {}
             def _op(conn):
-                cur = conn.execute("""
-                    INSERT INTO client_reviews
-                        (cliente, video_file_id, video_file_name, editor, status, notes,
-                         created_at, responded_at)
-                    VALUES (?, ?, ?, ?, 'revision_requested', ?,
-                            datetime('now'), datetime('now'))
-                """, (cliente, file_id or None, file_name or None, editor, notes))
-                rid = cur.lastrowid
+                existing = conn.execute("""
+                    SELECT id FROM client_reviews
+                    WHERE cliente=? AND COALESCE(video_file_id,'')=COALESCE(?,'')
+                      AND status='revision_requested'
+                    ORDER BY id DESC LIMIT 1
+                """, (cliente, file_id or None)).fetchone()
+                if existing:
+                    rid = existing[0]
+                    conn.execute("""
+                        UPDATE client_reviews
+                           SET notes=?,
+                               video_file_name=COALESCE(?, video_file_name),
+                               editor=COALESCE(?, editor),
+                               responded_at=datetime('now')
+                         WHERE id=?
+                    """, (notes, file_name or None, editor, rid))
+                    # Reemplazar attachments: borrar los viejos
+                    conn.execute(
+                        "DELETE FROM client_review_attachments WHERE review_id=?",
+                        (rid,),
+                    )
+                else:
+                    cur = conn.execute("""
+                        INSERT INTO client_reviews
+                            (cliente, video_file_id, video_file_name, editor, status, notes,
+                             created_at, responded_at)
+                        VALUES (?, ?, ?, ?, 'revision_requested', ?,
+                                datetime('now'), datetime('now'))
+                    """, (cliente, file_id or None, file_name or None, editor, notes))
+                    rid = cur.lastrowid
                 review_id_holder["id"] = rid
                 # Insertar attachments si los hay
                 for fname, mime, blob in attachments:
