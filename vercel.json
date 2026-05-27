@@ -79,21 +79,5 @@
       "memory": 128,
       "maxDuration": 10
     }
-  },
-  "experimentalServices": {
-    "abandoned-cart-calls": {
-      "root": "abandoned-cart-calls",
-      "routePrefix": "/_/abandoned-cart-calls"
-    },
-    "carrito-abandonado": {
-      "root": "carrito-abandonado",
-      "entrypoint": "server.js",
-      "routePrefix": "/_/carrito-abandonado"
-    },
-    "revolv-autocut": {
-      "root": "revolv-autocut",
-      "entrypoint": "app:app",
-      "routePrefix": "/_/revolv-autocut"
-    }
   }
 }
