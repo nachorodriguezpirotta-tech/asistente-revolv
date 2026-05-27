@@ -82,10 +82,14 @@ def _json(handler, payload, status=200):
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            params = parse_qs(urlparse(self.path).query)
-            token = (params.get("t", [""])[0] or "").strip()
-            if not _check_token("TRIGGER", token):
-                return _json(self, {"error": "unauthorized"}, status=401)
+            # Vercel Cron envía header x-vercel-cron automáticamente.
+            # Si viene de Vercel Cron, no necesita token externo.
+            is_vercel_cron = self.headers.get("x-vercel-cron") is not None
+            if not is_vercel_cron:
+                params = parse_qs(urlparse(self.path).query)
+                token = (params.get("t", [""])[0] or "").strip()
+                if not _check_token("TRIGGER", token):
+                    return _json(self, {"error": "unauthorized"}, status=401)
             ok, msg = _dispatch_workflow()
             if ok:
                 return _json(self, {"ok": True, "msg": msg})
