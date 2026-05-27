@@ -1305,12 +1305,15 @@ def cfg_get_notification_emails() -> dict:
 def _video_key(name: str) -> Optional[str]:
     """Extrae la 'key' canónica de un video editado para detectar correcciones.
     Ej:
-      'Video 1.mp4'           → 'video 1'
+      'Video 1.mp4'            → 'video 1'
       'Video 1 corrección.mp4' → 'video 1'
-      'Video 1 v2.mp4'        → 'video 1'
-      'Video 1 final.mp4'     → 'video 1'
-      'Reel 5.mov'            → 'reel 5'
-      'IMG_4123.MOV'          → None (no es editado numerado)
+      'Video 1 v2.mp4'         → 'video 1'
+      'Video 1 final.mp4'      → 'video 1'
+      'Reel 5.mov'             → 'reel 5'
+      '46. AACC1.mp4'          → 'num 46'   (formato Jose Social Pulse, Aroa)
+      '9. boton.mp4'           → 'num 9'
+      '16 - OCTAVIAN.mp4'      → 'num 16'
+      'IMG_4123.MOV'           → None
     """
     if not name:
         return None
@@ -1322,8 +1325,10 @@ def _video_key(name: str) -> Optional[str]:
     m = re.search(r'\b(video|reel|tanda)\s*(\d+)', norm)
     if m:
         return f"{m.group(1)} {m.group(2)}"
-    # También '15 - X' (formato '16 - OCTAVIAN' etc.)
-    m = re.match(r'^(\d+)\s*[-–_]\s*', norm)
+    # Formato '^N. X' / '^N - X' / '^N _ X' (común en Jose, Aroa, Roger, etc.)
+    # Bug 27/may: '46. AACC1.mp4' y '46.AACC1.mp4' no se detectaban como video
+    # numerado → corrections se mandaban como entregas nuevas → mails duplicados.
+    m = re.match(r'^(\d+)\s*[\.\-–_:]\s*\w', norm)
     if m:
         return f"num {m.group(1)}"
     return None
@@ -1358,6 +1363,9 @@ def _correction_stem(name: str) -> str:
     ]
     for p in suffix_patterns:
         s = re.sub(p, '', s).strip()
+    # Normalizar separadores (./-_) entre dígitos y texto: "46.aacc1" y
+    # "46. aacc1" deben dar el mismo stem. Bug 27/may Aroa.
+    s = re.sub(r'(\d)\s*[\.\-_:]\s*', r'\1 ', s)
     return " ".join(s.split())  # colapsar espacios
 
 
