@@ -621,6 +621,35 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
     subtitle.textContent = IS_ADMIN
         ? 'Vista global — todos los editores'
         : 'Tus pendientes hoy';
+    // Link "📝 Revisiones" — visible para admin Y editores.
+    // Filtro automático en /api/reviews:
+    //  - admin → ve todas
+    //  - editor → ve solo las suyas (WHERE editor=?)
+    const revLink = document.getElementById('reviews-link');
+    if (revLink) {
+        const revQs = IS_ADMIN
+            ? `admin=1&t=${encodeURIComponent(TOKEN)}`
+            : `editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`;
+        revLink.href = `/reviews.html?${revQs}`;
+        revLink.style.display = 'inline-block';
+        // Badge con # de revisiones pedidas.
+        //  - admin: d.stats.revision_requested
+        //  - editor: d.open_count
+        fetch(`/api/reviews?${revQs}`)
+            .then(r => r.json())
+            .then(d => {
+                const active = IS_ADMIN
+                    ? (d.stats?.revision_requested || 0)
+                    : (d.open_count || 0);
+                if (active > 0) {
+                    const b = document.getElementById('reviews-badge');
+                    b.textContent = active;
+                    b.style.display = 'inline-block';
+                }
+            })
+            .catch(() => {});
+    }
+
     if (IS_ADMIN) {
         const statsLink = document.getElementById('stats-link');
         if (statsLink) {
@@ -631,26 +660,6 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
         if (calLink) {
             calLink.href = `/calendar.html?t=${encodeURIComponent(TOKEN)}`;
             calLink.style.display = 'inline-block';
-        }
-        const revLink = document.getElementById('reviews-link');
-        if (revLink) {
-            revLink.href = `/reviews.html?admin=1&t=${encodeURIComponent(TOKEN)}`;
-            revLink.style.display = 'inline-block';
-            // Badge con # de revisiones PEDIDAS (revision_requested).
-            // Ya no contamos 'pending' (eso era ruido — antes se creaba uno
-            // por cada video entregado). Solo aparece cuando el cliente
-            // realmente toca 'Quiero ajustar algo'.
-            fetch(`/api/reviews?admin=1&t=${encodeURIComponent(TOKEN)}`)
-                .then(r => r.json())
-                .then(d => {
-                    const active = d.stats?.revision_requested || 0;
-                    if (active > 0) {
-                        const b = document.getElementById('reviews-badge');
-                        b.textContent = active;
-                        b.style.display = 'inline-block';
-                    }
-                })
-                .catch(() => {});
         }
         const cfgLink = document.getElementById('config-link');
         if (cfgLink) {
