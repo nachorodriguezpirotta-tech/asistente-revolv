@@ -1491,6 +1491,24 @@ async function onDrop(e) {
     }
 }
 
+// Toast no-bloqueante (vs alert que detiene el flow)
+function _showToast(msg, color = '#fbbf24') {
+    let t = document.getElementById('_g-toast');
+    if (!t) {
+        t = document.createElement('div');
+        t.id = '_g-toast';
+        t.style.cssText = 'position:fixed; bottom:24px; right:24px; padding:10px 16px; border-radius:8px; font-size:13px; font-weight:500; z-index:9999; opacity:0; transition:opacity .2s; max-width:400px;';
+        document.body.appendChild(t);
+    }
+    t.style.background = color + '22';
+    t.style.color = color;
+    t.style.border = `1px solid ${color}`;
+    t.textContent = msg;
+    t.style.opacity = '1';
+    clearTimeout(t._h);
+    t._h = setTimeout(() => { t.style.opacity = '0'; }, 3000);
+}
+
 // Queue de patches con coalescing: clicks rápidos del +/- no se pisan.
 // Si hay un PATCH in-flight, los siguientes clicks solo updatean el target
 // y se mandan en 1 sola request cuando el primero termina.
@@ -1556,28 +1574,51 @@ async function adjustCount(cliente, editor, _ignoredCurrentValue, delta, btn) {
     window._patchQueue.set(key, entry);
 
     try {
-        // Loop: mandamos hasta que el target coincida con lo último enviado
+        // Loop: mandamos hasta que el target coincida con lo último enviado.
+        // Cada attempt tiene retry interno con backoff si el server devuelve
+        // HTML/500 (Vercel saturado por muchos PATCH simultáneos).
         let lastSent = null;
         while (entry.target !== lastSent) {
             const sending = entry.target;
             const body = { cliente, count: sending, t: TOKEN };
             if (IS_ADMIN) { body.admin = 1; if (editor) body.editor = editor; }
             else { body.editor = EDITOR; }
-            const res = await fetch('/api/task', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await res.json();
-            if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+            // Retry con backoff: si Vercel/DB devuelve HTML "An error o...",
+            // esperamos y reintentamos hasta 4 veces antes de dar por perdido.
+            let ok = false;
+            for (let attempt = 0; attempt < 4 && !ok; attempt++) {
+                try {
+                    const res = await fetch('/api/task', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    const text = await res.text();
+                    let data;
+                    try { data = JSON.parse(text); }
+                    catch { throw new Error('server retornó HTML — saturado'); }
+                    if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+                    ok = true;
+                } catch (err) {
+                    if (attempt < 3) {
+                        const wait = 500 * Math.pow(2, attempt);  // 500, 1000, 2000
+                        await new Promise(r => setTimeout(r, wait));
+                        continue;
+                    }
+                    throw err;
+                }
+            }
             lastSent = sending;
-            // Si el target cambió durante el fetch, el while sigue
         }
     } catch (e) {
-        // Rollback al valor actual del server lo va a corregir; mientras tanto
-        // mantenemos el optimistic update (que es lo que el user clickeó).
+        // Mantenemos el optimistic update (lo que el user vió). El próximo
+        // refresh va a re-sincronizar con el server. NO mostramos alert para
+        // no interrumpir el flow — solo un toast silencioso en console.
         console.error('adjustCount:', e);
-        alert('No se pudo guardar: ' + e.message);
+        // Toast pequeño (no alert que bloquea) si la cosa falló del todo
+        if (typeof _showToast === 'function') {
+            _showToast('⚠️ Server saturado — cambio aplicado local, se sincroniza al refrescar');
+        }
     } finally {
         window._patchQueue.delete(key);
     }
