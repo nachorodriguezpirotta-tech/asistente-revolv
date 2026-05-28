@@ -94,6 +94,17 @@ def _process_standard_client(c, packs):
     for f in files:
         if is_file_known(f["id"]):
             continue
+        # OVERRIDE: si el owner/lastModifying del archivo es un editor conocido,
+        # NO es crudo — es un editado mal ubicado. Skipear este flow.
+        # Bug 28/may Egdylu: Rami subió yt.dejar.mp4 a /Material/, scan.py lo
+        # clasificó como crudo + asignó a Fran (editor del Sheet) por error.
+        try:
+            from classifier import identify_editor_by_owner
+            if identify_editor_by_owner(f):
+                print(f"  🎯 [scan] owner es editor → skip como crudo: {f['name'][:50]}")
+                continue
+        except Exception:
+            pass
         size = int(f["size"]) if f.get("size") else None
         # Archivo viejo (createdTime > 3 días atrás) → tratar como baseline,
         # NO crear task ni mandar mail. Evita falsos positivos de archivos
@@ -266,6 +277,13 @@ def run(notify: bool = False):
             for f in crudos:
                 if is_file_known(f["id"]):
                     continue
+                # OVERRIDE: owner editor → skip (es editado mal ubicado).
+                try:
+                    from classifier import identify_editor_by_owner
+                    if identify_editor_by_owner(f):
+                        continue
+                except Exception:
+                    pass
                 size = int(f["size"]) if f.get("size") else None
                 created = _parse_created(f.get("createdTime"))
                 is_baseline_file = first_time and (not created or created < recent_threshold)
