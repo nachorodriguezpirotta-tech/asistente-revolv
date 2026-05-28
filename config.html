@@ -230,38 +230,14 @@ function _resolveAliasOrNickname(name) {
 }
 
 function _groupClientEditors(list) {
-  const groups = {};  // normalized → {canonical, editor, source, aliases[], all_clientes[]}
-  for (const row of list) {
-    // Resolver alias/nickname primero — Cris Garzón → Cristian Garzón
-    const resolved = _resolveAliasOrNickname(row.cliente);
-    const norm = _normName(resolved);
-    if (!norm) continue;
-    if (!groups[norm]) {
-      groups[norm] = {
-        canonical: resolved,
-        editor: row.editor,
-        source: row.source,
-        all_clientes: [row.cliente],
-      };
-    } else {
-      const g = groups[norm];
-      if (!g.all_clientes.includes(row.cliente)) g.all_clientes.push(row.cliente);
-      // Preferir el nombre canónico más largo (más completo)
-      if (resolved.length > g.canonical.length) {
-        g.canonical = resolved;
-      }
-      // Preferir override > sheet > ninguno
-      const priority = { 'override': 3, 'sheet': 2, 'ninguno': 1 };
-      if ((priority[row.source] || 0) > (priority[g.source] || 0)) {
-        g.editor = row.editor;
-        g.source = row.source;
-      }
-    }
-  }
-  // Sort por nombre canónico
-  return Object.values(groups).sort((a, b) =>
-    a.canonical.localeCompare(b.canonical, 'es')
-  );
+  // El backend ya agrupa via subset/prefix tokens + Excel. Acá solo mapeamos
+  // la estructura al formato que espera _renderCERows().
+  return list.map(row => ({
+    canonical: row.cliente,
+    editor: row.editor,
+    source: row.source,
+    all_clientes: [row.cliente, ...(row.aliases || [])],
+  }));
 }
 
 function renderClientEditors() {
