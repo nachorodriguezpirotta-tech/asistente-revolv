@@ -250,6 +250,17 @@ def init_db():
         )
     """)
 
+    # Asignación editor por cliente (override del Sheet). Cuando Nacho edita
+    # en el dashboard "este cliente lo maneja Juan", se guarda acá. El lookup
+    # de editor primero mira esta tabla, después cae al Sheet. Pedido 28/may.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cfg_client_editor (
+            cliente TEXT PRIMARY KEY,
+            editor TEXT NOT NULL,
+            updated_at TEXT
+        )
+    """)
+
     # Alertas idempotentes: una vez por (cliente, subfolder). Cuando aparece un
     # crudo en una subfolder "tipo" (Youtube/Reels/Shorts/...) que no está
     # mapeada en cfg_subfolder_editors, registramos acá para mandar UN mail al
@@ -1052,6 +1063,48 @@ def upsert_subfolder_editor(cliente: str, subfolder: str, editor: str) -> None:
     """, (cliente, subfolder or "", editor, now_iso()))
     conn.commit()
     conn.close()
+
+
+# ─── Asignación editor por cliente (override del Sheet) ──────────────────────
+
+def cfg_set_client_editor(cliente: str, editor: Optional[str]) -> None:
+    """Asignar editor a cliente manualmente desde el dashboard.
+    Si editor es None/'', borra el override (vuelve a usar el Sheet)."""
+    if not cliente:
+        return
+    conn = get_conn()
+    if not editor:
+        conn.execute("DELETE FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?)", (cliente,))
+    else:
+        conn.execute("""
+            INSERT INTO cfg_client_editor (cliente, editor, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at
+        """, (cliente, editor, now_iso()))
+    conn.commit()
+    conn.close()
+
+
+def cfg_get_client_editor(cliente: str) -> Optional[str]:
+    """Devuelve el editor asignado manualmente a este cliente, o None si
+    no hay override (caller cae al Sheet con get_editor_for_client)."""
+    if not cliente:
+        return None
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT editor FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?)",
+        (cliente,)
+    ).fetchone()
+    conn.close()
+    return row["editor"] if row else None
+
+
+def cfg_list_client_editors() -> dict:
+    """Devuelve {cliente: editor} de todos los overrides manuales."""
+    conn = get_conn()
+    rows = conn.execute("SELECT cliente, editor FROM cfg_client_editor").fetchall()
+    conn.close()
+    return {r["cliente"]: r["editor"] for r in rows}
 
 
 def get_editor_for_subfolder(cliente: str, subfolder_name: Optional[str]) -> Optional[str]:
