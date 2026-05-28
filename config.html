@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Configuración — Asistente Revolv</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#0f1115; color:#e8eaed;
+    padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+  }
+  .page-content { padding:16px; padding-top:12px; }
+  .app-header {
+    position: sticky; top: 0; z-index: 50;
+    background: #0f1115; padding: 12px 16px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    border-bottom: 1px solid #2a2f3a;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .back-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 40px; min-height: 40px;
+    background: rgba(255,255,255,0.06); border-radius: 10px;
+    color: #e8eaed; text-decoration: none;
+    font-size: 18px; font-weight: 600;
+  }
+  .back-btn:active { background: rgba(255,255,255,0.12); }
+  .header-title { flex: 1; min-width: 0; }
+  .header-title h1 { margin:0; font-size:17px; font-weight:600; }
+  .header-title .subtitle { font-size:11px; color:#8a93a3; margin-top:2px; }
+  @media (min-width: 700px) {
+    .page-content { padding:24px; max-width:1100px; margin: 0 auto; }
+    .app-header { padding: 16px 24px; padding-top: calc(16px + env(safe-area-inset-top)); }
+    .header-title h1 { font-size:22px; }
+    .header-title .subtitle { font-size:13px; }
+  }
+  .tabs { display:flex; gap:2px; margin-bottom:16px; border-bottom:1px solid #2a2f3a; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .tab { padding:12px 14px; background:transparent; border:none; color:#8a93a3; cursor:pointer; font-size:13px; font-weight:500; font-family:inherit; border-bottom:2px solid transparent; white-space:nowrap; min-height:44px; }
+  .tab:hover { color:#e8eaed; }
+  .tab.active { color:#e8eaed; border-bottom-color:#4ade80; }
+  .panel { display:none; }
+  .panel.active { display:block; }
+  .section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .add-btn { background:#1f3a26; color:#4ade80; border:1px solid #2a4a30; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; }
+  .add-btn:hover { background:#264d2f; }
+  .table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:16px; border-radius:10px; border:1px solid #2a2f3a; }
+  table { width:100%; border-collapse:collapse; background:#1a1e27; min-width:500px; }
+  th, td { padding:10px 12px; text-align:left; font-size:12px; border-bottom:1px solid #2a2f3a; white-space:nowrap; }
+  th { background:#14171f; color:#8a93a3; font-weight:500; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; }
+  @media (min-width: 700px) { th, td { padding:11px 14px; font-size:13px; } th { font-size:11px; } }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:#1f2430; }
+  td.name { font-weight:600; color:#e8eaed; }
+  td.mono { font-family: monospace; font-size:12px; color:#8a93a3; }
+  td.actions { text-align:right; white-space:nowrap; }
+  .icon-btn { background:transparent; border:1px solid #2a2f3a; color:#8a93a3; padding:4px 10px; border-radius:5px; font-size:12px; cursor:pointer; margin-left:4px; }
+  .icon-btn:hover { background:#1f2430; color:#e8eaed; }
+  .icon-btn.danger:hover { background:#3a1a1a; color:#f87171; border-color:#5a2a2a; }
+  .toggle { display:inline-block; width:36px; height:20px; background:#2a2f3a; border-radius:20px; position:relative; cursor:pointer; transition:background 0.15s; }
+  .toggle.on { background:#4ade80; }
+  .toggle::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; background:white; border-radius:50%; transition:left 0.15s; }
+  .toggle.on::after { left:18px; }
+  .ptr-indicator { position:fixed; top:0; left:50%; transform:translate(-50%, -60px); background:#1a1e27; border:1px solid #2a2f3a; color:#e8eaed; padding:8px 16px; border-radius:0 0 12px 12px; font-size:13px; font-weight:500; z-index:1000; opacity:0; pointer-events:none; transition:transform 0.2s, opacity 0.2s; display:flex; align-items:center; gap:8px; box-shadow:0 4px 12px rgba(0,0,0,0.3); }
+  .ptr-indicator.visible { opacity:1; }
+  .ptr-indicator.ready .arrow { transform: rotate(180deg); color:#4ade80; }
+  .ptr-indicator .arrow { display:inline-block; transition:transform 0.2s; }
+  .ptr-indicator.loading .arrow { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading, .error, .empty { padding:32px; text-align:center; color:#8a93a3; }
+  .error { color:#ff7676; white-space:pre-wrap; }
+
+  /* Modal */
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:100; padding:16px; }
+  .modal-bg.open { display:flex; }
+  .modal { background:#1a1e27; border:1px solid #2a2f3a; border-radius:12px; padding:24px; max-width:480px; width:100%; }
+  .modal h3 { margin:0 0 18px; font-size:17px; }
+  .field { margin-bottom:14px; }
+  .field label { display:block; font-size:12px; color:#8a93a3; margin-bottom:6px; }
+  .field input, .field select { width:100%; background:#0f1115; border:1px solid #2a2f3a; color:#e8eaed; padding:9px 12px; border-radius:6px; font-size:14px; font-family:inherit; }
+  .field input:focus, .field select:focus { outline:none; border-color:#4ade80; }
+  .field-hint { font-size:11px; color:#5a6478; margin-top:4px; }
+  .field-row { display:flex; gap:8px; align-items:center; }
+  .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+  .btn { padding:8px 16px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; border:none; font-family:inherit; }
+  .btn-primary { background:#4ade80; color:#0f1115; }
+  .btn-primary:hover { background:#3ec170; }
+  .btn-secondary { background:transparent; color:#8a93a3; border:1px solid #2a2f3a; }
+  .btn-secondary:hover { color:#e8eaed; }
+</style>
+</head>
+<body>
+  <div id="ptr" class="ptr-indicator"><span class="arrow">↓</span><span class="label">Tirá para refrescar</span></div>
+  <header class="app-header">
+    <a href="javascript:goBack()" class="back-btn" title="Volver">←</a>
+    <div class="header-title">
+      <h1>⚙️ Configuración</h1>
+      <div class="subtitle">Editores, apodos, aliases</div>
+    </div>
+  </header>
+
+  <div class="page-content">
+    <div class="tabs">
+      <button class="tab active" data-tab="editors">👤 Editores</button>
+      <button class="tab" data-tab="assign">🔗 Asignaciones</button>
+      <button class="tab" data-tab="clients">📧 Clientes</button>
+      <button class="tab" data-tab="detected">🆕 Detectadas <span id="detected-badge" style="background:#f87171;color:white;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px;display:none;">0</span></button>
+      <button class="tab" data-tab="nicknames">🏷️ Apodos</button>
+      <button class="tab" data-tab="aliases">📂 Aliases</button>
+      <button class="tab" data-tab="delivery">📁 Extras</button>
+      <button class="tab" data-tab="maillog">📨 Mails</button>
+    </div>
+
+    <div id="content"><div class="loading">Cargando…</div></div>
+  </div>
+
+  <!-- Modal genérico -->
+  <div id="modal-bg" class="modal-bg">
+    <div class="modal" id="modal">
+      <h3 id="modal-title">Editar</h3>
+      <div id="modal-body"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" id="modal-save" onclick="submitModal()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const params = new URLSearchParams(location.search);
+let TOKEN = params.get('t') || '';
+if (TOKEN) {
+    try {
+        const saved = JSON.parse(localStorage.getItem('revolv_auth') || '{}');
+        localStorage.setItem('revolv_auth', JSON.stringify({ ...saved, token: TOKEN, admin: true }));
+    } catch (e) {}
+} else {
+    try {
+        const saved = JSON.parse(localStorage.getItem('revolv_auth') || 'null');
+        if (saved && saved.token) TOKEN = saved.token;
+    } catch (e) {}
+}
+const content = document.getElementById('content');
+
+let DATA = null;
+let ACTIVE_TAB = 'editors';
+let MODAL_STATE = null;
+
+function goBack() {
+  location.href = `/?admin=1&t=${encodeURIComponent(TOKEN)}`;
+}
+
+if (!TOKEN) {
+  content.innerHTML = '<div class="error">Falta token.</div>';
+} else {
+  loadConfig();
+}
+
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    ACTIVE_TAB = t.dataset.tab;
+    render();
+  });
+});
+
+async function loadConfig() {
+  content.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const res = await fetch(`/api/config?admin=1&t=${encodeURIComponent(TOKEN)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    DATA = data;
+    render();
+  } catch (e) {
+    content.innerHTML = `<div class="error">No pude cargar:\n${e.message}</div>`;
+  }
+}
+
+function render() {
+  if (!DATA) return;
+  // Badge de carpetas detectadas
+  const count = (DATA.pending_folders || []).length;
+  const badge = document.getElementById('detected-badge');
+  if (badge) {
+    badge.textContent = count;
+    badge.style.display = count > 0 ? 'inline-block' : 'none';
+  }
+  if (ACTIVE_TAB === 'editors') renderEditors();
+  else if (ACTIVE_TAB === 'assign') renderClientEditors();
+  else if (ACTIVE_TAB === 'clients') renderClientEmails();
+  else if (ACTIVE_TAB === 'detected') renderDetected();
+  else if (ACTIVE_TAB === 'nicknames') renderNicknames();
+  else if (ACTIVE_TAB === 'aliases') renderAliases();
+  else if (ACTIVE_TAB === 'delivery') renderDelivery();
+  else if (ACTIVE_TAB === 'maillog') renderMailLog();
+}
+
+// ──────────── ASIGNACIONES Cliente → Editor ────────────
+// Agrupación: clientes con mismo nombre normalizado (sin acentos, lowercase)
+// + aliases (cfg_aliases) + nicknames (cfg_nicknames) se muestran como UNA
+// sola fila. Ej: "Cristian Garzón", "Cristian Garzon", "Cris Garzón" (si está
+// aliased) → 1 entrada. Pedido Nacho 28/may.
+function _normName(s) {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// Resuelve nombre via aliases/nicknames si está configurado.
+// Cris Garzón (alias drive_name) → Cristian Garzón (cliente_real)
+function _resolveAliasOrNickname(name) {
+  const target = _normName(name);
+  if (!target) return name;
+  for (const a of (DATA.aliases || [])) {
+    if (_normName(a.drive_name) === target && a.cliente_real) {
+      return a.cliente_real;
+    }
+  }
+  for (const n of (DATA.nicknames || [])) {
+    if (_normName(n.nickname) === target && n.cliente_real) {
+      return n.cliente_real;
+    }
+  }
+  return name;
+}
+
+function _groupClientEditors(list) {
+  const groups = {};  // normalized → {canonical, editor, source, aliases[], all_clientes[]}
+  for (const row of list) {
+    // Resolver alias/nickname primero — Cris Garzón → Cristian Garzón
+    const resolved = _resolveAliasOrNickname(row.cliente);
+    const norm = _normName(resolved);
+    if (!norm) continue;
+    if (!groups[norm]) {
+      groups[norm] = {
+        canonical: resolved,
+        editor: row.editor,
+        source: row.source,
+        all_clientes: [row.cliente],
+      };
+    } else {
+      const g = groups[norm];
+      if (!g.all_clientes.includes(row.cliente)) g.all_clientes.push(row.cliente);
+      // Preferir el nombre canónico más largo (más completo)
+      if (resolved.length > g.canonical.length) {
+        g.canonical = resolved;
+      }
+      // Preferir override > sheet > ninguno
+      const priority = { 'override': 3, 'sheet': 2, 'ninguno': 1 };
+      if ((priority[row.source] || 0) > (priority[g.source] || 0)) {
+        g.editor = row.editor;
+        g.source = row.source;
+      }
+    }
+  }
+  // Sort por nombre canónico
+  return Object.values(groups).sort((a, b) =>
+    a.canonical.localeCompare(b.canonical, 'es')
+  );
+}
+
+function renderClientEditors() {
+  const list = DATA.client_editors || [];
+  const grouped = _groupClientEditors(list);
+  const editors = (DATA.editors || []).filter(e => e.active).map(e => e.name).sort();
+  const cont = document.getElementById('content');
+
+  // Solo monta el shell la primera vez (input + tabla vacía).
+  // Cambios de filtro NO re-montan el input → no pierde focus.
+  cont.innerHTML = `<div class="section-header">
+    <h2>🔗 Asignaciones Cliente → Editor</h2>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <input id="ce-filter" type="text" placeholder="Buscar cliente o editor..."
+        style="padding:8px 12px; background:#0f1218; color:#e8eaed; border:1px solid #2a2f3a; border-radius:6px; font-size:13px; min-width:220px;">
+    </div>
+  </div>
+  <p style="color:#8a93a3; font-size:13px; margin-top:-8px; margin-bottom:12px;">
+    ${grouped.length} clientes (de ${list.length} entries — agrupados por nombre normalizado). <strong>Override</strong> = setteado manual. <strong>Sheet</strong> = del Excel.
+  </p>
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th>Cliente</th><th>Editor</th><th>Fuente</th><th></th>
+    </tr></thead>
+    <tbody id="ce-tbody"></tbody>
+  </table></div>`;
+
+  // Cachear grupos y editores para los filtros
+  window._CE_GROUPED = grouped;
+  window._CE_EDITORS = editors;
+
+  // Hook listener del filtro — NO re-monta el shell, solo el tbody
+  const inp = document.getElementById('ce-filter');
+  inp.addEventListener('input', _ceApplyFilter);
+
+  _renderCERows(grouped);
+}
+
+function _ceApplyFilter() {
+  const filterVal = (document.getElementById('ce-filter')?.value || '').toLowerCase();
+  const grouped = window._CE_GROUPED || [];
+  const filtered = filterVal
+    ? grouped.filter(g => g.canonical.toLowerCase().includes(filterVal) ||
+                         (g.editor || '').toLowerCase().includes(filterVal) ||
+                         g.all_clientes.some(c => c.toLowerCase().includes(filterVal)))
+    : grouped;
+  _renderCERows(filtered);
+}
+
+function _renderCERows(groups) {
+  const tbody = document.getElementById('ce-tbody');
+  if (!tbody) return;
+  const editors = window._CE_EDITORS || [];
+  let html = '';
+  for (const g of groups) {
+    const c = escape(g.canonical);
+    const cAttr = escapeAttr(g.canonical);
+    const ed = g.editor || '';
+    const src = g.source || 'ninguno';
+    const srcBadge = src === 'override'
+      ? `<span style="background:#4ade8033; color:#4ade80; padding:2px 8px; border-radius:6px; font-size:11px;">override</span>`
+      : src === 'sheet'
+        ? `<span style="background:#60a5fa33; color:#60a5fa; padding:2px 8px; border-radius:6px; font-size:11px;">sheet</span>`
+        : `<span style="background:#f8717133; color:#f87171; padding:2px 8px; border-radius:6px; font-size:11px;">sin asignar</span>`;
+    const aliasesNote = g.all_clientes.length > 1
+      ? `<div style="font-size:11px; color:#8a93a3; margin-top:2px;">↳ también: ${g.all_clientes.filter(c => c !== g.canonical).map(escape).join(', ')}</div>`
+      : '';
+    const opts = ['<option value="">— sin editor —</option>']
+      .concat(editors.map(e => `<option value="${escapeAttr(e)}" ${e === ed ? 'selected' : ''}>${escape(e)}</option>`))
+      .join('');
+    html += `<tr>
+      <td>${c}${aliasesNote}</td>
+      <td>
+        <select onchange="saveClientEditor('${cAttr}', this.value, this)"
+          style="padding:6px 10px; background:#0f1218; color:#e8eaed; border:1px solid #2a2f3a; border-radius:6px; font-size:13px; min-width:130px;">
+          ${opts}
+        </select>
+      </td>
+      <td>${srcBadge}</td>
+      <td>${src === 'override'
+        ? `<button onclick="clearClientEditor('${cAttr}', this)" class="btn-del" style="font-size:11px; padding:4px 8px;">↩ Volver al Sheet</button>`
+        : ''}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+async function saveClientEditor(cliente, editor, sel) {
+  const orig = sel.value;
+  sel.disabled = true;
+  try {
+    if (!editor) {
+      // Quitar override
+      const res = await fetch('/api/config', {
+        method: 'DELETE',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'delete', data: {cliente}}),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } else {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'update', data: {cliente, editor}}),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    }
+    await loadConfig();
+  } catch (e) {
+    alert('Error guardando: ' + e.message);
+    sel.value = orig;
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+async function clearClientEditor(cliente, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'delete', data: {cliente}}),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await loadConfig();
+  } catch (e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false;
+  }
+}
+
+// ──────────── CLIENTES (mails) ────────────
+function renderClientEmails() {
+  const clients = DATA.client_emails || [];
+  let html = `<div class="section-header">
+    <h2>📧 Mails de clientes</h2>
+    <button class="add-btn" onclick="openClientEmailModal()">+ Nuevo cliente</button>
+  </div>
+  <div class="section-desc" style="font-size:12px; color:#8a93a3; margin-bottom:14px; line-height:1.5;">
+    Clientes con mail acá reciben automáticamente <strong>"🎬 Tu video está listo"</strong>
+    cuando se entrega un video. El mail NO menciona al editor (firma "Nacho · Revolv").
+    Activá uno por uno: si está OFF, el cliente NO recibe nada.
+  </div>`;
+  if (clients.length === 0) {
+    html += '<div class="empty">Sin clientes configurados todavía. Agregá uno con el botón arriba.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Cliente</th>
+      <th>Email</th>
+      <th>Saludo</th>
+      <th title="Recibe mail cuando se entrega un video">📬 Notif</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const c of clients) {
+      const enabled = !!c.notifications_enabled;
+      const display = c.display_name || (c.cliente.split(' ')[0]);
+      const status = enabled ? '🟢 ON' : '<span style="color:#5a6478">⚪ OFF</span>';
+      const masked = maskEmail(c.email);
+      html += `<tr>
+        <td class="name">${escape(c.cliente)}</td>
+        <td class="mono">${escape(masked)}</td>
+        <td>${escape(display)}</td>
+        <td>${status}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openClientEmailModal(${JSON.stringify(c)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteClientEmail(${JSON.stringify(c.cliente)})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
+}
+
+function openClientEmailModal(c) {
+  const isNew = !c;
+  MODAL_STATE = { type: 'client_email', isNew, data: c || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nuevo cliente (mail)' : `Editar mail · ${c.cliente}`;
+
+  // Para new: dropdown con TODOS los clientes conocidos (de tasks, clients,
+  // known_files). Excluye los que ya tienen mail configurado para evitar dupes.
+  // Para edit: input readonly con el nombre existente.
+  let clienteField;
+  if (isNew) {
+    const all = DATA.available_clients || [];
+    const alreadyConfigured = new Set((DATA.client_emails || []).map(x => (x.cliente || '').trim()));
+    const opciones = all
+      .filter(name => !alreadyConfigured.has((name || '').trim()))
+      .map(name => `<option value="${escapeAttr(name)}">${escape(name)}</option>`)
+      .join('');
+    clienteField = `
+      <div class="field"><label>Cliente <span style="color:#f87171">*</span></label>
+        <input id="m-c-name" type="text" list="m-c-name-list" placeholder="Escribí para filtrar… o tocá la flecha"
+               autocomplete="off" style="width:100%;">
+        <datalist id="m-c-name-list">${opciones}</datalist>
+        <div class="field-hint">${all.length} clientes disponibles · ${alreadyConfigured.size} ya configurados (no aparecen)</div>
+      </div>`;
+  } else {
+    clienteField = `
+      <div class="field"><label>Cliente</label>
+        <input id="m-c-name" type="text" value="${escapeAttr(c.cliente)}" readonly style="opacity:0.6">
+        <div class="field-hint">Para renombrar, borrá y creá uno nuevo</div>
+      </div>`;
+  }
+
+  document.getElementById('modal-body').innerHTML = `
+    ${clienteField}
+    <div class="field"><label>Email del cliente <span style="color:#f87171">*</span></label>
+      <div style="display:flex; gap:6px; align-items:stretch;">
+        <input id="m-c-email" type="password" value="${escapeAttr(c?.email || '')}" placeholder="cliente@gmail.com" style="flex:1;">
+        <button type="button" id="m-c-email-eye" onclick="toggleEmailVisibility()" title="Mostrar"
+                style="padding:0 12px; border:1px solid #2a2f3a; background:#1a1e27; color:#e8eaed; border-radius:6px; cursor:pointer; font-size:16px;">👁</button>
+      </div>
+      <div class="field-hint">Oculto por seguridad. Click 👁 para ver/editar. Ahí va el mail "🎬 tu video está listo"</div>
+    </div>
+    <div class="field"><label>Saludo (opcional)</label>
+      <input id="m-c-display" type="text" value="${escapeAttr(c?.display_name || '')}" placeholder="Ej: Roger">
+      <div class="field-hint">Si está vacío usa el primer nombre del cliente</div>
+    </div>
+    <div class="field field-row" style="gap:12px;">
+      <span class="toggle ${(c?.notifications_enabled !== 0) ? 'on' : ''}" id="m-c-enabled" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-c-enabled').click()">📬 Recibir mails cuando se entregue un video</label>
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+  // Focus en el dropdown para que se pueda escribir/tocar directo
+  setTimeout(() => { const i = document.getElementById('m-c-name'); if (i && isNew) i.focus(); }, 100);
+}
+
+async function deleteClientEmail(cliente) {
+  if (!confirm(`¿Borrar el mail configurado para "${cliente}"?\n\nDejará de recibir mails de entregas. Sus tasks/datos NO se tocan.`)) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin: 1, t: TOKEN, section: 'client_email', action: 'delete', data: { cliente } }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) {
+    alert('No se pudo borrar:\n' + e.message);
+  }
+}
+
+function renderMailLog() {
+  const logs = DATA.mail_log || [];
+  let html = `<div class="section-header">
+    <div><strong>${logs.length}</strong> últimos mails enviados</div>
+  </div>
+  <div style="font-size:12px; color:#8a93a3; margin-bottom:10px;">Historial reciente para verificar que cada mail haya salido.</div>`;
+  if (logs.length === 0) {
+    html += '<div class="empty">Sin registros aún.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Cuándo</th>
+      <th>Para</th>
+      <th>Asunto</th>
+      <th>OK</th>
+    </tr></thead><tbody>`;
+    for (const m of logs) {
+      const when = (m.sent_at || '').replace('T', ' ').slice(0, 16);
+      const ok = m.success ? '✅' : '<span style="color:#f87171">❌</span>';
+      const maskedTo = maskEmail(m.to_email || '');
+      html += `<tr>
+        <td class="mono">${escape(when)}</td>
+        <td class="mono">${escape(maskedTo)}</td>
+        <td>${escape(m.subject || '')}</td>
+        <td>${ok}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
+}
+
+// ──────────── DETECTADAS (carpetas Drive pendientes de aprobar) ────────────
+function renderDetected() {
+  const pending = DATA.pending_folders || [];
+  const editores = (DATA.editors || []).filter(e => e.active).map(e => e.name);
+  let html = `<div class="section-header">
+    <div><strong>${pending.length}</strong> carpetas detectadas en Drive sin asignar</div>
+  </div>
+  <div style="font-size:12px; color:#8a93a3; margin-bottom:10px;">
+    El sistema encontró estas carpetas en Mi Unidad que no son de clientes conocidos.
+    Aprobá si es un cliente nuevo (opcionalmente asignale un editor), o rechazá si no lo es.
+  </div>`;
+  if (pending.length === 0) {
+    html += '<div class="empty">🎉 No hay carpetas pendientes de decisión.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Carpeta en Drive</th>
+      <th>Detectada</th>
+      <th>Editor (opcional)</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const p of pending) {
+      const ed_options = editores.map(e => `<option value="${escape(e)}">${escape(e)}</option>`).join('');
+      html += `<tr>
+        <td class="name">
+          <a href="https://drive.google.com/drive/folders/${escape(p.folder_id)}" target="_blank" style="color:#60a5fa; text-decoration:none;">📁 ${escape(p.folder_name)}</a>
+        </td>
+        <td class="mono">${escape(p.detected_at?.slice(0, 16) || '')}</td>
+        <td>
+          <select id="ed-${escape(p.folder_id)}" style="background:#0f1115; color:#e8eaed; border:1px solid #2a2f3a; padding:5px 8px; border-radius:4px; font-size:12px;">
+            <option value="">— sin asignar —</option>
+            ${ed_options}
+          </select>
+        </td>
+        <td class="actions">
+          <button class="icon-btn" style="background:#1f3a26; color:#4ade80; border-color:#2a4a30;" onclick='approveFolder(${JSON.stringify(p.folder_id)})'>✓ Aprobar</button>
+          <button class="icon-btn danger" onclick='rejectFolder(${JSON.stringify(p.folder_id)})'>✕ Rechazar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
+}
+
+async function approveFolder(folder_id) {
+  const sel = document.getElementById('ed-' + folder_id);
+  const editor = sel ? sel.value : '';
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        admin: 1, t: TOKEN, section: 'pending_folder', action: 'update',
+        data: { folder_id, decision: 'approved', editor: editor || null }
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function rejectFolder(folder_id) {
+  if (!confirm('¿Marcar esta carpeta como NO-cliente? No volverá a aparecer.')) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        admin: 1, t: TOKEN, section: 'pending_folder', action: 'update',
+        data: { folder_id, decision: 'rejected' }
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// ──────────── EDITORES ────────────
+function renderEditors() {
+  let html = `<div class="section-header">
+    <div><strong>${DATA.editors.length}</strong> editores configurados</div>
+    <button class="add-btn" onclick="openEditorModal()">+ Nuevo editor</button>
+  </div>`;
+  if (DATA.editors.length === 0) {
+    html += '<div class="empty">No hay editores. Agregá uno con el botón arriba.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Nombre</th>
+      <th>Email</th>
+      <th title="Recibe mails de crudos, cierres y recordatorios">📬 Notif</th>
+      <th title="Recibe resumen diario 8am">📋 Resumen</th>
+      <th>Estado</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const ed of DATA.editors) {
+      let estado;
+      if (!ed.active) estado = '<span style="color:#5a6478">🔴 inactivo</span>';
+      else if (ed.on_vacation) estado = '<span style="color:#fbbf24">🌴 vacaciones</span>';
+      else estado = '🟢 activo';
+      html += `<tr>
+        <td class="name">${escape(ed.name)}</td>
+        <td class="mono">${ed.email ? escape(maskEmail(ed.email)) : '<span style="color:#5a6478">—</span>'}</td>
+        <td>${ed.receives_notifications && !ed.on_vacation ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
+        <td>${ed.receives_daily_summary && !ed.on_vacation ? '✅' : '<span style="color:#5a6478">—</span>'}</td>
+        <td>${estado}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openEditorModal(${JSON.stringify(ed)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteEditor(${JSON.stringify(ed.name)})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
+}
+
+function openEditorModal(ed) {
+  const isNew = !ed;
+  MODAL_STATE = { type: 'editor', isNew, data: ed || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nuevo editor' : 'Editar editor';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Nombre <span style="color:#f87171">*</span></label>
+      <input id="m-name" type="text" value="${escapeAttr(ed?.name || '')}" ${isNew ? '' : 'readonly style="opacity:0.6"'} placeholder="Ej: Rami">
+      <div class="field-hint">${isNew ? 'No se puede cambiar después' : 'Para renombrar borrá y creá uno nuevo'}</div>
+    </div>
+    <div class="field"><label>Email</label>
+      <input id="m-email" type="email" value="${escapeAttr(ed?.email || '')}" placeholder="editor@gmail.com">
+      <div class="field-hint">Se usa para identificar quién sube videos en Drive (y, si activás abajo, también para mandarle mails)</div>
+    </div>
+    <div class="field field-row" style="gap:12px;">
+      <span class="toggle ${ed?.receives_notifications ? 'on' : ''}" id="m-notif" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-notif').click()">📬 Recibe mails (crudos nuevos, cierres, recordatorios)</label>
+    </div>
+    <div class="field field-row" style="gap:12px;">
+      <span class="toggle ${ed?.receives_daily_summary ? 'on' : ''}" id="m-receives" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-receives').click()">📋 Recibe resumen diario 8am</label>
+    </div>
+    <div class="field field-row" style="gap:12px; padding:10px; background:rgba(251,191,36,0.06); border-radius:8px;">
+      <span class="toggle ${ed?.on_vacation ? 'on' : ''}" id="m-vacation" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-vacation').click()">🌴 De vacaciones (no recibe mails ni recordatorios)</label>
+    </div>
+    <div class="field field-row" style="gap:12px;">
+      <span class="toggle ${(ed?.active !== 0) ? 'on' : ''}" id="m-active" onclick="this.classList.toggle('on')"></span>
+      <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-active').click()">Activo (aparece en dashboard)</label>
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function deleteEditor(name) {
+  if (!confirm(`¿Borrar editor "${name}"?\n\nLas tasks que tenga seguirán existiendo pero quedarán huérfanas. Mejor reasignalas antes.`)) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin: 1, t: TOKEN, section: 'editor', action: 'delete', data: { name } }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) {
+    alert('No se pudo borrar:\n' + e.message);
+  }
+}
+
+// ──────────── APODOS ────────────
+function renderNicknames() {
+  let html = `<div class="section-header">
+    <div><strong>${DATA.nicknames.length}</strong> apodos configurados</div>
+    <button class="add-btn" onclick="openNicknameModal()">+ Nuevo apodo</button>
+  </div>`;
+  if (DATA.nicknames.length === 0) {
+    html += '<div class="empty">No hay apodos.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Apodo</th>
+      <th>Cliente real</th>
+      <th>Editor (opcional)</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const n of DATA.nicknames) {
+      html += `<tr>
+        <td class="name">${escape(n.nickname)}</td>
+        <td>${escape(n.cliente_real)}</td>
+        <td>${n.editor ? escape(n.editor) : '<span style="color:#5a6478">universal</span>'}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openNicknameModal(${JSON.stringify(n)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteRow("nickname", ${n.id})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
+}
+
+function openNicknameModal(n) {
+  const isNew = !n;
+  MODAL_STATE = { type: 'nickname', isNew, data: n || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nuevo apodo' : 'Editar apodo';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Apodo <span style="color:#f87171">*</span></label>
+      <input id="m-nickname" type="text" value="${escapeAttr(n?.nickname || '')}" placeholder="cris">
+      <div class="field-hint">Se normaliza a minúsculas. Ej: "cris", "delfi"</div>
+    </div>
+    <div class="field"><label>Cliente real <span style="color:#f87171">*</span></label>
+      <input id="m-real" type="text" value="${escapeAttr(n?.cliente_real || '')}" placeholder="Cristhian Fonseca">
+    </div>
+    <div class="field"><label>Editor específico (opcional)</label>
+      <input id="m-editor" type="text" value="${escapeAttr(n?.editor || '')}" placeholder="Vacío = universal">
+      <div class="field-hint">Solo si el mismo apodo significa cosas distintas según el editor</div>
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ──────────── ALIASES ────────────
+function renderAliases() {
+  let html = `<div class="section-header">
+    <div><strong>${DATA.aliases.length}</strong> aliases configurados</div>
+    <button class="add-btn" onclick="openAliasModal()">+ Nuevo alias</button>
+  </div>`;
+  html += `<div style="font-size:12px;color:#8a93a3;margin-bottom:10px;">Mapeo: nombre raro en Drive → cliente real del Sheet</div>`;
+  if (DATA.aliases.length === 0) {
+    html += '<div class="empty">No hay aliases.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Nombre en Drive</th>
+      <th>Cliente real</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const a of DATA.aliases) {
+      html += `<tr>
+        <td class="mono">${escape(a.drive_name)}</td>
+        <td>${escape(a.cliente_real)}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openAliasModal(${JSON.stringify(a)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteRow("alias", ${a.id})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
+}
+
+function openAliasModal(a) {
+  const isNew = !a;
+  MODAL_STATE = { type: 'alias', isNew, data: a || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nuevo alias' : 'Editar alias';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Nombre en Drive <span style="color:#f87171">*</span></label>
+      <input id="m-drive" type="text" value="${escapeAttr(a?.drive_name || '')}" placeholder="content roger rm founders">
+      <div class="field-hint">El nombre EXACTO de la carpeta en Drive (lowercase)</div>
+    </div>
+    <div class="field"><label>Cliente real <span style="color:#f87171">*</span></label>
+      <input id="m-real-a" type="text" value="${escapeAttr(a?.cliente_real || '')}" placeholder="Roger Marti">
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ──────────── DELIVERY FOLDERS ────────────
+function renderDelivery() {
+  let html = `<div class="section-header">
+    <div><strong>${DATA.delivery_folders.length}</strong> carpetas extra configuradas</div>
+    <button class="add-btn" onclick="openDeliveryModal()">+ Nueva</button>
+  </div>`;
+  html += `<div style="font-size:12px;color:#8a93a3;margin-bottom:10px;">Carpetas EXTRA donde se entregan editados para clientes específicos (fuera de su carpeta normal)</div>`;
+  if (DATA.delivery_folders.length === 0) {
+    html += '<div class="empty">No hay configuradas.</div>';
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr>
+      <th>Cliente</th>
+      <th>Folder ID</th>
+      <th>Descripción</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    for (const d of DATA.delivery_folders) {
+      html += `<tr>
+        <td class="name">${escape(d.cliente)}</td>
+        <td class="mono">${escape(d.folder_id)}</td>
+        <td>${d.description ? escape(d.description) : '<span style="color:#5a6478">—</span>'}</td>
+        <td class="actions">
+          <button class="icon-btn" onclick='openDeliveryModal(${JSON.stringify(d)})'>Editar</button>
+          <button class="icon-btn danger" onclick='deleteRow("delivery", ${d.id})'>Borrar</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  content.innerHTML = html;
+}
+
+function openDeliveryModal(d) {
+  const isNew = !d;
+  MODAL_STATE = { type: 'delivery', isNew, data: d || {} };
+  document.getElementById('modal-title').textContent = isNew ? 'Nueva carpeta extra' : 'Editar carpeta extra';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Cliente <span style="color:#f87171">*</span></label>
+      <input id="m-cli" type="text" value="${escapeAttr(d?.cliente || '')}" placeholder="Rafa Elvram">
+    </div>
+    <div class="field"><label>Folder ID de Drive <span style="color:#f87171">*</span></label>
+      <input id="m-fid" type="text" value="${escapeAttr(d?.folder_id || '')}" placeholder="1PUIRQ80fV9...">
+      <div class="field-hint">El ID está en la URL de Drive: drive.google.com/drive/folders/<strong>ID</strong></div>
+    </div>
+    <div class="field"><label>Descripción (opcional)</label>
+      <input id="m-desc" type="text" value="${escapeAttr(d?.description || '')}" placeholder="Editados Nacho abril 2026">
+    </div>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ──────────── MODAL submit ────────────
+function closeModal() { document.getElementById('modal-bg').classList.remove('open'); MODAL_STATE = null; }
+
+async function submitModal() {
+  if (!MODAL_STATE) return;
+  const { type, isNew, data } = MODAL_STATE;
+  let payload, section;
+  try {
+    if (type === 'editor') {
+      section = 'editor';
+      payload = {
+        name: document.getElementById('m-name').value.trim(),
+        email: document.getElementById('m-email').value.trim(),
+        receives_notifications: document.getElementById('m-notif').classList.contains('on'),
+        receives_daily_summary: document.getElementById('m-receives').classList.contains('on'),
+        on_vacation: document.getElementById('m-vacation').classList.contains('on'),
+        active: document.getElementById('m-active').classList.contains('on'),
+      };
+      if (!payload.name) return alert('Falta nombre');
+    } else if (type === 'nickname') {
+      section = 'nickname';
+      payload = {
+        id: data.id,
+        nickname: document.getElementById('m-nickname').value.trim(),
+        cliente_real: document.getElementById('m-real').value.trim(),
+        editor: document.getElementById('m-editor').value.trim() || null,
+      };
+      if (!payload.nickname || !payload.cliente_real) return alert('Falta apodo o cliente real');
+    } else if (type === 'alias') {
+      section = 'alias';
+      payload = {
+        id: data.id,
+        drive_name: document.getElementById('m-drive').value.trim(),
+        cliente_real: document.getElementById('m-real-a').value.trim(),
+      };
+      if (!payload.drive_name || !payload.cliente_real) return alert('Faltan campos');
+    } else if (type === 'delivery') {
+      section = 'delivery';
+      payload = {
+        id: data.id,
+        cliente: document.getElementById('m-cli').value.trim(),
+        folder_id: document.getElementById('m-fid').value.trim(),
+        description: document.getElementById('m-desc').value.trim(),
+      };
+      if (!payload.cliente || !payload.folder_id) return alert('Faltan campos');
+    } else if (type === 'client_email') {
+      section = 'client_email';
+      payload = {
+        cliente: document.getElementById('m-c-name').value.trim(),
+        email: document.getElementById('m-c-email').value.trim(),
+        display_name: document.getElementById('m-c-display').value.trim(),
+        notifications_enabled: document.getElementById('m-c-enabled').classList.contains('on'),
+      };
+      if (!payload.cliente) return alert('Falta nombre del cliente');
+      if (!payload.email || !payload.email.includes('@')) return alert('Email inválido');
+    }
+
+    const action = isNew ? 'create' : 'update';
+    const method = isNew ? 'POST' : 'PATCH';
+    const res = await fetch('/api/config', {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin: 1, t: TOKEN, section, action, data: payload }),
+    });
+    const r = await res.json();
+    if (!res.ok || !r.ok) throw new Error(r.error || ('HTTP ' + res.status));
+    closeModal();
+    loadConfig();
+  } catch (e) {
+    alert('Error:\n' + e.message);
+  }
+}
+
+async function deleteRow(section, id) {
+  if (!confirm('¿Borrar?')) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin: 1, t: TOKEN, section, action: 'delete', data: { id } }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    loadConfig();
+  } catch (e) {
+    alert('No se pudo borrar:\n' + e.message);
+  }
+}
+
+function escape(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+// Enmascarar mail para mostrar en tabla. Conserva primer char del local-part
+// + el dominio, todo lo del medio en bullets. Ej:
+//   alberto@gmail.com → a••••••@gmail.com
+//   info@x.com → i•••@x.com
+// Si el mail está vacío o malformado, retorna placeholder.
+function maskEmail(email) {
+  if (!email) return '—';
+  const at = email.indexOf('@');
+  if (at < 1) return '••••••';
+  const local = email.slice(0, at);
+  const domain = email.slice(at);  // incluye el @
+  const hidden = '•'.repeat(Math.max(3, Math.min(local.length - 1, 10)));
+  return local[0] + hidden + domain;
+}
+
+// Toggle del eye (👁) en el campo de email del modal — alterna entre
+// type="password" (oculto) y type="email" (visible).
+function toggleEmailVisibility() {
+  const input = document.getElementById('m-c-email');
+  const btn = document.getElementById('m-c-email-eye');
+  if (!input || !btn) return;
+  if (input.type === 'password') {
+    input.type = 'email';
+    btn.textContent = '🙈';
+    btn.title = 'Ocultar';
+  } else {
+    input.type = 'password';
+    btn.textContent = '👁';
+    btn.title = 'Mostrar';
+  }
+}
+function escapeAttr(s) { return escape(s); }
+
+// Pull-to-refresh
+(function() {
+  const ptr = document.getElementById('ptr'); if (!ptr) return;
+  const label = ptr.querySelector('.label');
+  const TH = 70; let sY = 0, pulling = false, dist = 0;
+  function show(d) {
+    ptr.style.transform = `translate(-50%, ${Math.min(d - 60, 10)}px)`;
+    ptr.classList.add('visible');
+    if (d >= TH) { ptr.classList.add('ready'); label.textContent = 'Soltá para refrescar'; }
+    else { ptr.classList.remove('ready'); label.textContent = 'Tirá para refrescar'; }
+  }
+  function hide() { ptr.classList.remove('visible','ready'); ptr.style.transform = 'translate(-50%,-60px)'; }
+  document.addEventListener('touchstart', e => {
+    if (window.scrollY > 0) return;
+    sY = e.touches[0].clientY; pulling = true; dist = 0;
+  }, {passive:true});
+  document.addEventListener('touchmove', e => {
+    if (!pulling) return;
+    if (window.scrollY > 0) { pulling = false; hide(); return; }
+    const dy = e.touches[0].clientY - sY;
+    if (dy <= 0) return;
+    dist = dy; show(dy);
+  }, {passive:true});
+  document.addEventListener('touchend', async () => {
+    if (!pulling) return; pulling = false;
+    if (dist >= TH) {
+      ptr.classList.add('loading'); label.textContent = 'Refrescando...';
+      try { await loadConfig(); } catch(e) {}
+      ptr.classList.remove('loading');
+    }
+    hide();
+  }, {passive:true});
+})();
+</script>
+</body>
+</html>
