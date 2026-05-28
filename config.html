@@ -107,6 +107,7 @@
   <div class="page-content">
     <div class="tabs">
       <button class="tab active" data-tab="editors">👤 Editores</button>
+      <button class="tab" data-tab="assign">🔗 Asignaciones</button>
       <button class="tab" data-tab="clients">📧 Clientes</button>
       <button class="tab" data-tab="detected">🆕 Detectadas <span id="detected-badge" style="background:#f87171;color:white;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px;display:none;">0</span></button>
       <button class="tab" data-tab="nicknames">🏷️ Apodos</button>
@@ -192,12 +193,118 @@ function render() {
     badge.style.display = count > 0 ? 'inline-block' : 'none';
   }
   if (ACTIVE_TAB === 'editors') renderEditors();
+  else if (ACTIVE_TAB === 'assign') renderClientEditors();
   else if (ACTIVE_TAB === 'clients') renderClientEmails();
   else if (ACTIVE_TAB === 'detected') renderDetected();
   else if (ACTIVE_TAB === 'nicknames') renderNicknames();
   else if (ACTIVE_TAB === 'aliases') renderAliases();
   else if (ACTIVE_TAB === 'delivery') renderDelivery();
   else if (ACTIVE_TAB === 'maillog') renderMailLog();
+}
+
+// ──────────── ASIGNACIONES Cliente → Editor ────────────
+function renderClientEditors() {
+  const list = DATA.client_editors || [];
+  const editors = (DATA.editors || []).filter(e => e.active).map(e => e.name).sort();
+  const cont = document.getElementById('content');
+
+  // Filtro de búsqueda
+  const filterVal = (document.getElementById('ce-filter')?.value || '').toLowerCase();
+  const filtered = filterVal
+    ? list.filter(x => (x.cliente || '').toLowerCase().includes(filterVal) ||
+                       (x.editor || '').toLowerCase().includes(filterVal))
+    : list;
+
+  let html = `<div class="section-header">
+    <h2>🔗 Asignaciones Cliente → Editor</h2>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <input id="ce-filter" type="text" placeholder="Buscar cliente o editor..."
+        oninput="renderClientEditors()" value="${escapeAttr(filterVal)}"
+        style="padding:8px 12px; background:#0f1218; color:#e8eaed; border:1px solid #2a2f3a; border-radius:6px; font-size:13px; min-width:220px;">
+    </div>
+  </div>
+  <p style="color:#8a93a3; font-size:13px; margin-top:-8px; margin-bottom:12px;">
+    ${list.length} clientes. <strong>Override</strong> = setteado manual desde acá. <strong>Sheet</strong> = viene del Excel. Editá el editor con click en el dropdown.
+  </p>
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th>Cliente</th><th>Editor</th><th>Fuente</th><th></th>
+    </tr></thead>
+    <tbody>`;
+  for (const row of filtered) {
+    const c = escape(row.cliente);
+    const cAttr = escapeAttr(row.cliente);
+    const ed = row.editor || '';
+    const src = row.source || 'ninguno';
+    const srcBadge = src === 'override'
+      ? `<span style="background:#4ade8033; color:#4ade80; padding:2px 8px; border-radius:6px; font-size:11px;">override</span>`
+      : src === 'sheet'
+        ? `<span style="background:#60a5fa33; color:#60a5fa; padding:2px 8px; border-radius:6px; font-size:11px;">sheet</span>`
+        : `<span style="background:#f8717133; color:#f87171; padding:2px 8px; border-radius:6px; font-size:11px;">sin asignar</span>`;
+    const opts = ['<option value="">— sin editor —</option>']
+      .concat(editors.map(e => `<option value="${escapeAttr(e)}" ${e === ed ? 'selected' : ''}>${escape(e)}</option>`))
+      .join('');
+    html += `<tr>
+      <td>${c}</td>
+      <td>
+        <select onchange="saveClientEditor('${cAttr}', this.value, this)"
+          style="padding:6px 10px; background:#0f1218; color:#e8eaed; border:1px solid #2a2f3a; border-radius:6px; font-size:13px; min-width:130px;">
+          ${opts}
+        </select>
+      </td>
+      <td>${srcBadge}</td>
+      <td>${src === 'override'
+        ? `<button onclick="clearClientEditor('${cAttr}', this)" class="btn-del" style="font-size:11px; padding:4px 8px;">↩ Volver al Sheet</button>`
+        : ''}</td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+  cont.innerHTML = html;
+}
+
+async function saveClientEditor(cliente, editor, sel) {
+  const orig = sel.value;
+  sel.disabled = true;
+  try {
+    if (!editor) {
+      // Quitar override
+      const res = await fetch('/api/config', {
+        method: 'DELETE',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'delete', data: {cliente}}),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } else {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'update', data: {cliente, editor}}),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    }
+    await loadConfig();
+  } catch (e) {
+    alert('Error guardando: ' + e.message);
+    sel.value = orig;
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+async function clearClientEditor(cliente, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'delete', data: {cliente}}),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await loadConfig();
+  } catch (e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false;
+  }
 }
 
 // ──────────── CLIENTES (mails) ────────────
