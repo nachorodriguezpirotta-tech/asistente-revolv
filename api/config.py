@@ -87,45 +87,73 @@ def _get_all_config(conn):
     # + el Sheet. Para cada cliente conocido, devuelve editor actual + flag
     # si es override o viene del Sheet. Pedido Nacho 28/may.
     client_editors = []
+    # Asegurar tabla de overrides (idempotente)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cfg_client_editor (
+                cliente TEXT PRIMARY KEY,
+                editor TEXT NOT NULL,
+                updated_at TEXT
+            )
+        """)
+    except Exception:
+        pass
+    # Cargar overrides
+    overrides = {}
     try:
         overrides = {r["cliente"]: r["editor"] for r in conn.execute(
             "SELECT cliente, editor FROM cfg_client_editor"
         ).fetchall()}
-        try:
-            from sheets_client import read_packs, get_editor_for_client as _ge
-            packs = read_packs()
-        except Exception:
-            packs = None
-            _ge = None
+    except Exception:
+        pass
+    # Cargar Sheet (defensivo: si falla, igual mostramos clientes con override y "ninguno" en el resto)
+    sheet_editors = {}
+    try:
+        from sheets_client import read_packs
+        import unicodedata
+        def _norm(s):
+            s = unicodedata.normalize("NFD", s or "")
+            s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+            return " ".join(s.lower().split())
+        packs = read_packs()
+        # Pre-build {normalized_name: editor} eligiendo la fila más reciente
+        for p in packs:
+            if not p.editor:
+                continue
+            k = _norm(p.cliente)
+            existing = sheet_editors.get(k)
+            if not existing or p.row > existing[1]:
+                sheet_editors[k] = (p.editor, p.row)
+    except Exception:
+        pass
+
+    # Build response
+    try:
+        import unicodedata
+        def _norm2(s):
+            s = unicodedata.normalize("NFD", s or "")
+            s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+            return " ".join(s.lower().split())
         for cli in available_clients:
             ovr = overrides.get(cli)
             if ovr:
-                editor_actual = ovr
-                source = "override"
+                client_editors.append({"cliente": cli, "editor": ovr, "source": "override"})
+                continue
+            # Buscar en Sheet (exact normalized, después contains)
+            target = _norm2(cli)
+            ed_from_sheet = sheet_editors.get(target)
+            if not ed_from_sheet:
+                for k, v in sheet_editors.items():
+                    if target and target in k:
+                        ed_from_sheet = v
+                        break
+                    if k and k in target:
+                        ed_from_sheet = v
+                        break
+            if ed_from_sheet:
+                client_editors.append({"cliente": cli, "editor": ed_from_sheet[0], "source": "sheet"})
             else:
-                editor_actual = None
-                if _ge:
-                    try:
-                        # Bypass del override (ya chequeamos): leemos directo del Sheet
-                        from sheets_client import _normalize as _norm
-                        if packs:
-                            target = _norm(cli)
-                            ms = [p for p in packs if p.editor and _norm(p.cliente) == target]
-                            if not ms:
-                                ms = [p for p in packs if p.editor and target in _norm(p.cliente)]
-                                if not ms:
-                                    ms = [p for p in packs if p.editor and _norm(p.cliente) in target]
-                            if ms:
-                                ms.sort(key=lambda p: p.row, reverse=True)
-                                editor_actual = ms[0].editor
-                    except Exception:
-                        pass
-                source = "sheet" if editor_actual else "ninguno"
-            client_editors.append({
-                "cliente": cli,
-                "editor": editor_actual,
-                "source": source,
-            })
+                client_editors.append({"cliente": cli, "editor": None, "source": "ninguno"})
     except Exception:
         pass
 
