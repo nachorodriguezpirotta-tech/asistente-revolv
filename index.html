@@ -621,35 +621,6 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
     subtitle.textContent = IS_ADMIN
         ? 'Vista global — todos los editores'
         : 'Tus pendientes hoy';
-    // Link "📝 Revisiones" — visible para admin Y editores.
-    // El backend en /api/reviews filtra automáticamente:
-    //  - admin → ve todas
-    //  - editor → ve solo las suyas (filter WHERE editor=?)
-    const revLink = document.getElementById('reviews-link');
-    if (revLink) {
-        const revQs = IS_ADMIN
-            ? `admin=1&t=${encodeURIComponent(TOKEN)}`
-            : `editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`;
-        revLink.href = `/reviews.html?${revQs}`;
-        revLink.style.display = 'inline-block';
-        // Badge con # de revisiones pedidas.
-        //  - admin response: d.stats.revision_requested
-        //  - editor response: d.open_count
-        fetch(`/api/reviews?${revQs}`)
-            .then(r => r.json())
-            .then(d => {
-                const active = IS_ADMIN
-                    ? (d.stats?.revision_requested || 0)
-                    : (d.open_count || 0);
-                if (active > 0) {
-                    const b = document.getElementById('reviews-badge');
-                    b.textContent = active;
-                    b.style.display = 'inline-block';
-                }
-            })
-            .catch(() => {});
-    }
-
     if (IS_ADMIN) {
         const statsLink = document.getElementById('stats-link');
         if (statsLink) {
@@ -660,6 +631,26 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
         if (calLink) {
             calLink.href = `/calendar.html?t=${encodeURIComponent(TOKEN)}`;
             calLink.style.display = 'inline-block';
+        }
+        const revLink = document.getElementById('reviews-link');
+        if (revLink) {
+            revLink.href = `/reviews.html?admin=1&t=${encodeURIComponent(TOKEN)}`;
+            revLink.style.display = 'inline-block';
+            // Badge con # de revisiones PEDIDAS (revision_requested).
+            // Ya no contamos 'pending' (eso era ruido — antes se creaba uno
+            // por cada video entregado). Solo aparece cuando el cliente
+            // realmente toca 'Quiero ajustar algo'.
+            fetch(`/api/reviews?admin=1&t=${encodeURIComponent(TOKEN)}`)
+                .then(r => r.json())
+                .then(d => {
+                    const active = d.stats?.revision_requested || 0;
+                    if (active > 0) {
+                        const b = document.getElementById('reviews-badge');
+                        b.textContent = active;
+                        b.style.display = 'inline-block';
+                    }
+                })
+                .catch(() => {});
         }
         const cfgLink = document.getElementById('config-link');
         if (cfgLink) {
@@ -1500,11 +1491,20 @@ async function onDrop(e) {
     }
 }
 
-async function adjustCount(cliente, editor, currentValue, delta, btn) {
-    const newCount = currentValue + delta;
-    if (newCount < 0) return;
+// Queue de patches con coalescing: clicks rápidos del +/- no se pisan.
+// Si hay un PATCH in-flight, los siguientes clicks solo updatean el target
+// y se mandan en 1 sola request cuando el primero termina.
+window._patchQueue = window._patchQueue || new Map();
+
+async function adjustCount(cliente, editor, _ignoredCurrentValue, delta, btn) {
     const clienteName = cliente.replace(/&#39;/g, "'");
     const editorName = editor ? editor.replace(/&#39;/g, "'") : null;
+    // Leer el count ACTUAL del state local (NO del HTML que puede estar stale)
+    const item = _findItem(clienteName, editorName);
+    if (!item) return;
+    const currentValue = item.videos || 0;
+    const newCount = currentValue + delta;
+    if (newCount < 0) return;
     // Si llega a 0 → tratar como delete con undo
     if (newCount === 0) {
         const card = btn.closest('.cliente-card');
@@ -1538,28 +1538,48 @@ async function adjustCount(cliente, editor, currentValue, delta, btn) {
         );
         return;
     }
-    // Optimistic: actualizar count + re-render
-    const item = _findItem(clienteName, editorName);
-    const prev = item ? item.videos : null;
-    if (item) {
-        item.videos = newCount;
-        render(LAST_DATA);
+    // Optimistic INSTANT: update count + re-render (re-render es barato)
+    item.videos = newCount;
+    render(LAST_DATA);
+
+    // Coalescing del PATCH al server
+    const key = `${clienteName}|${editorName || ''}`;
+    const existing = window._patchQueue.get(key);
+    if (existing) {
+        // Ya hay un patch in-flight. Solo actualizamos el target — cuando el
+        // current termine, el loop interno va a re-enviar con este valor.
+        existing.target = newCount;
+        return;
     }
-    // PATCH server
-    const body = { cliente, count: newCount, t: TOKEN };
-    if (IS_ADMIN) { body.admin = 1; if (editor) body.editor = editor; }
-    else { body.editor = EDITOR; }
+
+    const entry = { target: newCount };
+    window._patchQueue.set(key, entry);
+
     try {
-        const res = await fetch('/api/task', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        // Loop: mandamos hasta que el target coincida con lo último enviado
+        let lastSent = null;
+        while (entry.target !== lastSent) {
+            const sending = entry.target;
+            const body = { cliente, count: sending, t: TOKEN };
+            if (IS_ADMIN) { body.admin = 1; if (editor) body.editor = editor; }
+            else { body.editor = EDITOR; }
+            const res = await fetch('/api/task', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+            lastSent = sending;
+            // Si el target cambió durante el fetch, el while sigue
+        }
     } catch (e) {
-        if (item) { item.videos = prev; render(LAST_DATA); }
-        alert('No se pudo: ' + e.message);
+        // Rollback al valor actual del server lo va a corregir; mientras tanto
+        // mantenemos el optimistic update (que es lo que el user clickeó).
+        console.error('adjustCount:', e);
+        alert('No se pudo guardar: ' + e.message);
+    } finally {
+        window._patchQueue.delete(key);
     }
 }
 
