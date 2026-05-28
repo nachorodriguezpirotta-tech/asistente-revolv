@@ -208,7 +208,7 @@ function renderItem(r) {
         ${responded ? `<span>💬 ${responded}</span>` : ''}
         ${resolved ? `<span>✅ ${resolved}</span>` : ''}
       </div>
-      ${r.notes ? `<div class="notes">${linkify(r.notes)}</div>` : ''}
+      ${r.notes ? `<div class="notes">${linkify(r.notes, r)}</div>` : ''}
       ${renderAttachments(r)}
     </div>
   `;
@@ -277,11 +277,31 @@ function escape(s) {
 }
 
 // Escapa HTML y convierte URLs http(s):// en <a> clickeables.
-function linkify(s) {
+// Si reviewCtx tiene id+editor, los links al portal con view=editor se
+// enriquecen con &rid=ID&editor=X&edt=TOKEN para que el botón "Marcar
+// corregido" del portal pueda autenticarse contra el asistente.
+function linkify(s, reviewCtx) {
   const escaped = escape(s);
-  return escaped.replace(/(https?:\/\/[^\s<]+)/g, (url) =>
-    `<a href="${url}" target="_blank" rel="noopener" style="color:#7dd3fc;text-decoration:underline;">${url}</a>`
-  );
+  return escaped.replace(/(https?:\/\/[^\s<]+)/g, (url) => {
+    let finalUrl = url;
+    try {
+      const isPortalEditor = url.includes('revolv-portal.vercel.app/p/') && url.includes('view=editor');
+      if (isPortalEditor && reviewCtx && reviewCtx.id) {
+        const editorFor = IS_ADMIN ? (reviewCtx.editor || '') : EDITOR;
+        // Para admin, el token tiene que ser el del editor de la review
+        // (no el de admin) porque el endpoint /api/review?action=resolve
+        // valida editor+token o admin+token; pasamos admin=1 + admin token
+        // en ese caso.
+        const sep = url.includes('?') ? '&' : '?';
+        if (IS_ADMIN) {
+          finalUrl = `${url}${sep}rid=${reviewCtx.id}&adm=1&edt=${encodeURIComponent(TOKEN)}`;
+        } else if (editorFor) {
+          finalUrl = `${url}${sep}rid=${reviewCtx.id}&editor=${encodeURIComponent(editorFor)}&edt=${encodeURIComponent(TOKEN)}`;
+        }
+      }
+    } catch (_) {}
+    return `<a href="${finalUrl}" target="_blank" rel="noopener" style="color:#7dd3fc;text-decoration:underline;">${url}</a>`;
+  });
 }
 
 if (!TOKEN) {
