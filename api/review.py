@@ -131,6 +131,29 @@ class handler(BaseHTTPRequestHandler):
             editor = (params.get("editor", [""])[0] or "").strip()
             token = (params.get("t", [""])[0] or "").strip()
 
+            # MODO resolve: admin o editor marca la review como corregida.
+            # Auth NO va por cliente_token (que es del cliente, no del staff).
+            if action == "resolve":
+                review_id = (params.get("id", [""])[0] or "").strip()
+                if not review_id or not review_id.isdigit():
+                    return json_response(self, {"error": "id requerido"}, status=400)
+                is_admin = params.get("admin", [""])[0] == "1"
+                authorized = False
+                if is_admin:
+                    authorized = check_token("ADMIN", token)
+                elif editor:
+                    authorized = check_token(editor, token)
+                if not authorized:
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+
+                def _do(conn):
+                    conn.execute(
+                        "UPDATE client_reviews SET status='resolved', resolved_at=datetime('now') WHERE id=?",
+                        (int(review_id),),
+                    )
+                with_db(_do, message=f"review {review_id} marcada resuelta manualmente")
+                return json_response(self, {"ok": True, "id": int(review_id), "status": "resolved"})
+
             if not cliente:
                 if action == "info":
                     return json_response(self, {"error": "cliente requerido"}, status=400)

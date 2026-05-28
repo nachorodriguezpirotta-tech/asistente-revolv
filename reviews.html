@@ -68,6 +68,12 @@
   }
   .review:hover .del-btn { opacity:1; }
   .del-btn:hover { background:rgba(248,113,113,0.15); color:#f87171; }
+  .resolve-btn {
+    margin-left:auto; padding:5px 10px; background:rgba(74,222,128,0.12);
+    color:#4ade80; border:1px solid rgba(74,222,128,0.35); border-radius:6px;
+    font-size:11px; font-weight:600; cursor:pointer; transition:all 0.15s;
+  }
+  .resolve-btn:hover { background:rgba(74,222,128,0.25); }
   .empty { color:#5a6478; text-align:center; padding:40px 16px; }
   .loading { color:#5a6478; text-align:center; padding:40px 16px; }
   .error { color:#f87171; text-align:center; padding:24px; }
@@ -181,6 +187,12 @@ function renderItem(r) {
     ? `<button class="del-btn" onclick="deleteReview(${r.id}, '${escape(r.cliente).replace(/'/g, "&#39;")}')" title="Borrar esta revisión">🗑</button>`
     : '';
 
+  // Botón "✅ Marcar corregido" — visible si la review está activa.
+  const canResolve = r.status === 'revision_requested';
+  const resolveBtn = canResolve
+    ? `<button class="resolve-btn" onclick="resolveReview(${r.id}, '${escape(r.cliente).replace(/'/g, "&#39;")}')" title="Marcar como ya corregido">✅ Marcar corregido</button>`
+    : '';
+
   return `
     <div class="review ${isUrgent?'urgent':''}" data-id="${r.id}">
       <div class="row1">
@@ -188,6 +200,7 @@ function renderItem(r) {
         <span class="cliente">${escape(r.cliente)}</span>
         <span class="video">📹 ${escape(r.video_file_name || '?')}</span>
         ${r.editor ? `<span style="font-size:11px;color:#8a93a3;">· editor ${escape(r.editor)}</span>` : ''}
+        ${resolveBtn}
         ${delBtn}
       </div>
       <div class="meta">
@@ -225,6 +238,21 @@ async function deleteReview(id, cliente) {
     const d = await res.json();
     if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
     // Reload data para refresh stats
+    await load();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function resolveReview(id, cliente) {
+  if (!confirm(`¿Marcar como corregido el feedback de "${cliente}"?\n\nLa revisión pasa al histórico.`)) return;
+  try {
+    const authQs = IS_ADMIN
+      ? `admin=1&t=${encodeURIComponent(TOKEN)}`
+      : `editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`;
+    const res = await fetch(`/api/review?action=resolve&id=${id}&${authQs}`);
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
     await load();
   } catch (e) {
     alert('Error: ' + e.message);
