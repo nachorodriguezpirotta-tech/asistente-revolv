@@ -64,7 +64,7 @@ DAILY_SUMMARY_EDITORS = {"Rami", "Fran", "Benja", "Valen"}
 
 # Lista canónica de editores que SIEMPRE aparecen en el dashboard admin,
 # aunque no tengan pendientes en ese momento.
-EDITORS_LIST = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu", "Jere"]
+EDITORS_LIST = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu", "Jere", "Rafa"]
 
 
 # Carpetas extra donde se entregan editados para ciertos clientes.

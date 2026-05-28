@@ -11,7 +11,7 @@ import sys
 import hashlib
 import hmac
 
-EDITORS = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu"]
+EDITORS = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu", "Rafa"]
 
 
 def make_token(editor: str, secret: str) -> str:

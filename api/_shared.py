@@ -42,7 +42,7 @@ DB_FILE = "tracker.db"
 
 # Editores conocidos. Si quieren agregar uno nuevo, basta con modificar acá
 # (o aceptar cualquier nombre — más permisivo, menos seguro).
-EDITORS = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu"]
+EDITORS = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu", "Rafa"]
 
 
 # ────────── AUTH ──────────
