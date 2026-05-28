@@ -631,7 +631,7 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
 
 def mark_pending_task_for_renotification(cliente: str, editor: Optional[str],
                                           latest_file_id: str, latest_file_name: str,
-                                          min_silence_hours: float = 0.083) -> Optional[int]:
+                                          min_silence_hours: float = 6.0) -> Optional[int]:
     """Si ya hay task pending para (cliente, editor) y el último mail fue
     enviado hace >= min_silence_hours (o nunca), resetea mail_sent_at para
     que el notifier la procese de nuevo. Actualiza file_id/file_name al
@@ -642,7 +642,12 @@ def mark_pending_task_for_renotification(cliente: str, editor: Optional[str],
 
     Esto resuelve el caso: cliente tiene task pending vieja, sube 15 crudos
     nuevos, antes no se generaba mail → ahora sí se genera UN mail por el
-    batch (debounce de 6h)."""
+    batch (debounce de 6h).
+
+    Bug 28/may Paola Maqueda: el default era 0.083 (5 min) — cada vez que
+    Paola subía un archivo nuevo dentro de los 5 min se mandaba otro mail.
+    Subido a 6h: un solo mail por cliente cada 6h aunque entren más uploads
+    de la misma sesión / carpeta."""
     if not cliente:
         return None
     from datetime import datetime, timedelta
