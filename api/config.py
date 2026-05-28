@@ -106,52 +106,38 @@ def _get_all_config(conn):
         ).fetchall()}
     except Exception:
         pass
-    # Cargar Sheet (defensivo: si falla, igual mostramos clientes con override y "ninguno" en el resto)
+    # Editor actual por cliente — del último task creado (Sheet ya resolvió
+    # esto al detectar el archivo). Mucho más confiable que llamar read_packs()
+    # desde el endpoint (que falla en Vercel por algún issue de imports).
     sheet_editors = {}
     try:
-        from sheets_client import read_packs
-        import unicodedata
-        def _norm(s):
-            s = unicodedata.normalize("NFD", s or "")
-            s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-            return " ".join(s.lower().split())
-        packs = read_packs()
-        # Pre-build {normalized_name: editor} eligiendo la fila más reciente
-        for p in packs:
-            if not p.editor:
-                continue
-            k = _norm(p.cliente)
-            existing = sheet_editors.get(k)
-            if not existing or p.row > existing[1]:
-                sheet_editors[k] = (p.editor, p.row)
+        rows = conn.execute("""
+            SELECT cliente, editor, MAX(id) as last_id
+            FROM tasks
+            WHERE editor IS NOT NULL AND editor != '' AND editor != '—'
+            GROUP BY TRIM(cliente)
+        """).fetchall()
+        for r in rows:
+            sheet_editors[r["cliente"]] = r["editor"]
     except Exception:
         pass
 
     # Build response
     try:
-        import unicodedata
-        def _norm2(s):
-            s = unicodedata.normalize("NFD", s or "")
-            s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-            return " ".join(s.lower().split())
         for cli in available_clients:
             ovr = overrides.get(cli)
             if ovr:
                 client_editors.append({"cliente": cli, "editor": ovr, "source": "override"})
                 continue
-            # Buscar en Sheet (exact normalized, después contains)
-            target = _norm2(cli)
-            ed_from_sheet = sheet_editors.get(target)
-            if not ed_from_sheet:
+            ed = sheet_editors.get(cli)
+            if not ed:
+                # Buscar case-insensitive
                 for k, v in sheet_editors.items():
-                    if target and target in k:
-                        ed_from_sheet = v
+                    if k and cli and k.strip().lower() == cli.strip().lower():
+                        ed = v
                         break
-                    if k and k in target:
-                        ed_from_sheet = v
-                        break
-            if ed_from_sheet:
-                client_editors.append({"cliente": cli, "editor": ed_from_sheet[0], "source": "sheet"})
+            if ed:
+                client_editors.append({"cliente": cli, "editor": ed, "source": "sheet"})
             else:
                 client_editors.append({"cliente": cli, "editor": None, "source": "ninguno"})
     except Exception:
