@@ -82,6 +82,53 @@ def _get_all_config(conn):
         ).fetchall()]
     except Exception:
         pass
+
+    # Asignación editor por cliente — combina cfg_client_editor (override DB)
+    # + el Sheet. Para cada cliente conocido, devuelve editor actual + flag
+    # si es override o viene del Sheet. Pedido Nacho 28/may.
+    client_editors = []
+    try:
+        overrides = {r["cliente"]: r["editor"] for r in conn.execute(
+            "SELECT cliente, editor FROM cfg_client_editor"
+        ).fetchall()}
+        try:
+            from sheets_client import read_packs, get_editor_for_client as _ge
+            packs = read_packs()
+        except Exception:
+            packs = None
+            _ge = None
+        for cli in available_clients:
+            ovr = overrides.get(cli)
+            if ovr:
+                editor_actual = ovr
+                source = "override"
+            else:
+                editor_actual = None
+                if _ge:
+                    try:
+                        # Bypass del override (ya chequeamos): leemos directo del Sheet
+                        from sheets_client import _normalize as _norm
+                        if packs:
+                            target = _norm(cli)
+                            ms = [p for p in packs if p.editor and _norm(p.cliente) == target]
+                            if not ms:
+                                ms = [p for p in packs if p.editor and target in _norm(p.cliente)]
+                                if not ms:
+                                    ms = [p for p in packs if p.editor and _norm(p.cliente) in target]
+                            if ms:
+                                ms.sort(key=lambda p: p.row, reverse=True)
+                                editor_actual = ms[0].editor
+                    except Exception:
+                        pass
+                source = "sheet" if editor_actual else "ninguno"
+            client_editors.append({
+                "cliente": cli,
+                "editor": editor_actual,
+                "source": source,
+            })
+    except Exception:
+        pass
+
     return {
         "editors": editors,
         "nicknames": nicknames,
@@ -91,6 +138,7 @@ def _get_all_config(conn):
         "mail_log": mail_log,
         "client_emails": client_emails,
         "available_clients": available_clients,
+        "client_editors": client_editors,
     }
 
 
@@ -149,7 +197,7 @@ class handler(BaseHTTPRequestHandler):
             action = (body.get("action") or "").strip().lower()
             data = body.get("data") or {}
 
-            if section not in ("editor", "nickname", "alias", "delivery", "pending_folder", "client_email"):
+            if section not in ("editor", "nickname", "alias", "delivery", "pending_folder", "client_email", "client_editor"):
                 return json_response(self, {"error": f"section inválida: {section}"}, status=400)
             if action not in ("create", "update", "delete"):
                 return json_response(self, {"error": f"action inválida: {action}"}, status=400)
@@ -169,6 +217,8 @@ class handler(BaseHTTPRequestHandler):
                     self._op_pending_folder(conn, action, data, result)
                 elif section == "client_email":
                     self._op_client_email(conn, action, data, result)
+                elif section == "client_editor":
+                    self._op_client_editor(conn, action, data, result)
 
             with_db(op, message=f"config: {action} {section}")
             return json_response(self, {"ok": True, "section": section, "action": action, **result})
@@ -356,6 +406,42 @@ class handler(BaseHTTPRequestHandler):
                 WHERE TRIM(cliente)=TRIM(?)
             """, (email, display, enabled, now, cliente))
             result["updated"] = cliente
+
+    def _op_client_editor(self, conn, action, data, result):
+        """Maneja override de editor por cliente (cfg_client_editor).
+        action='update' setea/cambia el editor. action='delete' quita el
+        override (vuelve al Sheet).
+        """
+        from datetime import datetime
+        now = datetime.now().isoformat(timespec="seconds")
+        cliente = (data.get("cliente") or "").strip()
+        if not cliente:
+            raise ValueError("falta cliente")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cfg_client_editor (
+                cliente TEXT PRIMARY KEY,
+                editor TEXT NOT NULL,
+                updated_at TEXT
+            )
+        """)
+
+        if action == "delete":
+            conn.execute("DELETE FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?)", (cliente,))
+            result["deleted"] = cliente
+            return
+
+        editor = (data.get("editor") or "").strip()
+        if not editor:
+            raise ValueError("falta editor (usá action=delete para quitar el override)")
+
+        conn.execute("""
+            INSERT INTO cfg_client_editor (cliente, editor, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at
+        """, (cliente, editor, now))
+        result["updated" if action == "update" else "created"] = cliente
+        result["editor"] = editor
 
     def _op_pending_folder(self, conn, action, data, result):
         """action: 'update' con data.decision='approved'|'rejected', data.folder_id, opcional editor."""
