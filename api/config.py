@@ -106,40 +106,177 @@ def _get_all_config(conn):
         ).fetchall()}
     except Exception:
         pass
-    # Editor actual por cliente — del último task creado (Sheet ya resolvió
-    # esto al detectar el archivo). Mucho más confiable que llamar read_packs()
-    # desde el endpoint (que falla en Vercel por algún issue de imports).
-    sheet_editors = {}
+    # Editor por cliente — desde tabla cfg_excel_clients (sincronizada desde
+    # el Sheet vía GHA/script local). Es la fuente de verdad: tiene TODOS los
+    # clientes del Excel con su editor asignado, no solo los que tienen task.
+    sheet_editors = {}  # {normalized_name: (cliente_canonical, editor)}
+    import unicodedata
+    def _norm(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return " ".join(s.lower().split())
+    def _tokens(s):
+        # tokens significativos (≥3 chars, sin stopwords) para fuzzy subset match
+        STOP = {"de","del","la","el","los","las","y","e","o","u","a","con","sin","para","por"}
+        return [t for t in _norm(s).replace("/", " ").replace("-", " ").split()
+                if len(t) >= 3 and t not in STOP]
     try:
-        rows = conn.execute("""
-            SELECT cliente, editor, MAX(id) as last_id
-            FROM tasks
-            WHERE editor IS NOT NULL AND editor != '' AND editor != '—'
-            GROUP BY TRIM(cliente)
-        """).fetchall()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cfg_excel_clients (
+                cliente TEXT PRIMARY KEY,
+                editor TEXT,
+                row_in_sheet INTEGER,
+                synced_at TEXT
+            )
+        """)
+        rows = conn.execute(
+            "SELECT cliente, editor FROM cfg_excel_clients WHERE editor IS NOT NULL AND editor != ''"
+        ).fetchall()
         for r in rows:
-            sheet_editors[r["cliente"]] = r["editor"]
+            n = _norm(r["cliente"])
+            if n:
+                sheet_editors[n] = (r["cliente"], r["editor"])
     except Exception:
         pass
 
-    # Build response
+    # Build response: cada cliente conocido de Drive/tasks/etc se matchea
+    # contra el Excel — exact normalized → exact alias → fuzzy subset.
     try:
+        # Pre-build token sets del Excel
+        excel_tokens = {}  # excel_cliente → set(tokens)
+        for k, (excel_cli, _) in sheet_editors.items():
+            excel_tokens[excel_cli] = set(_tokens(excel_cli))
+
         for cli in available_clients:
             ovr = overrides.get(cli)
             if ovr:
                 client_editors.append({"cliente": cli, "editor": ovr, "source": "override"})
                 continue
-            ed = sheet_editors.get(cli)
-            if not ed:
-                # Buscar case-insensitive
-                for k, v in sheet_editors.items():
-                    if k and cli and k.strip().lower() == cli.strip().lower():
-                        ed = v
+            n = _norm(cli)
+            # 1) Match exacto normalizado
+            hit = sheet_editors.get(n)
+            if hit:
+                client_editors.append({"cliente": cli, "editor": hit[1], "source": "sheet"})
+                continue
+            # 2) Fuzzy subset: si tokens del cli son subset (o superset) de algún excel cliente
+            cli_t = set(_tokens(cli))
+            if cli_t:
+                best = None
+                best_overlap = 0
+                for excel_cli, et in excel_tokens.items():
+                    if not et:
+                        continue
+                    # subset match en cualquier dirección
+                    if cli_t <= et or et <= cli_t:
+                        overlap = len(cli_t & et)
+                        if overlap > best_overlap:
+                            best_overlap = overlap
+                            best = excel_cli
+                if best:
+                    editor = sheet_editors[_norm(best)][1]
+                    client_editors.append({"cliente": cli, "editor": editor, "source": "sheet"})
+                    continue
+            client_editors.append({"cliente": cli, "editor": None, "source": "ninguno"})
+
+        # Agregar clientes que están en Excel pero NO en available_clients
+        # (clientes en Excel sin folder de Drive todavía). Esos se ven igual.
+        avail_norm = {_norm(c) for c in available_clients}
+        for k, (excel_cli, editor) in sheet_editors.items():
+            if k not in avail_norm:
+                cli_t = set(_tokens(excel_cli))
+                matched = False
+                for c in available_clients:
+                    ct = set(_tokens(c))
+                    if cli_t and ct and (cli_t <= ct or ct <= cli_t):
+                        matched = True
                         break
-            if ed:
-                client_editors.append({"cliente": cli, "editor": ed, "source": "sheet"})
-            else:
-                client_editors.append({"cliente": cli, "editor": None, "source": "ninguno"})
+                if not matched:
+                    client_editors.append({"cliente": excel_cli, "editor": editor, "source": "sheet"})
+    except Exception:
+        pass
+
+    # AGRUPACIÓN: combinar variantes del mismo cliente en una sola fila.
+    # Reglas (conservadoras para evitar falsos positivos):
+    #   1. mismo nombre normalizado → grupo
+    #   2. shorter (≥2 tokens significativos) tokens ⊆ longer tokens → grupo
+    #   3. shorter (1 token) es prefix exacto del longer (>= 4 chars) → grupo
+    # No agrupa: "Darien" + "Jorge y Darien" (no prefix); "Amir" + "Daniel" (no prefix).
+    try:
+        def _prefix_match(a, b):
+            # ¿"a" es prefix exacto de "b" considerando palabras completas?
+            na, nb = _norm(a), _norm(b)
+            if not na or not nb or len(na) < 4:
+                return False
+            if nb == na:
+                return True
+            # b debe empezar con a seguido de espacio (palabra completa)
+            return nb.startswith(na + " ")
+
+        # Build grupos
+        groups = []  # list of {canonical, members:[{cli,editor,source}], editor, source}
+        consumed = set()  # indices already grouped
+
+        def _add_to_group(group, member):
+            group["members"].append(member)
+            # Preferir editor de override > sheet > ninguno
+            pri = {"override": 3, "sheet": 2, "ninguno": 1}
+            if pri.get(member["source"], 0) > pri.get(group["source"], 0):
+                group["editor"] = member["editor"]
+                group["source"] = member["source"]
+            # Preferir el canonical más largo
+            if len(member["cliente"]) > len(group["canonical"]):
+                group["canonical"] = member["cliente"]
+
+        # Sort by length DESC para que los más completos se agrupen primero
+        indexed = list(enumerate(client_editors))
+        indexed.sort(key=lambda x: -len(x[1]["cliente"]))
+
+        for idx, ce in indexed:
+            if idx in consumed:
+                continue
+            # Crear grupo nuevo con este como base
+            group = {
+                "canonical": ce["cliente"],
+                "editor": ce["editor"],
+                "source": ce["source"],
+                "members": [ce],
+            }
+            consumed.add(idx)
+            cli_t = set(_tokens(ce["cliente"]))
+            # Buscar todos los que matchean
+            for idx2, ce2 in indexed:
+                if idx2 in consumed:
+                    continue
+                cli2_t = set(_tokens(ce2["cliente"]))
+                merge = False
+                # Regla 1: exact normalized
+                if _norm(ce["cliente"]) == _norm(ce2["cliente"]):
+                    merge = True
+                # Regla 2: shorter (≥2 tokens) ⊆ longer
+                elif cli_t and cli2_t:
+                    if len(cli2_t) <= len(cli_t) and len(cli2_t) >= 2 and cli2_t <= cli_t:
+                        merge = True
+                    elif len(cli_t) <= len(cli2_t) and len(cli_t) >= 2 and cli_t <= cli2_t:
+                        merge = True
+                # Regla 3: shorter (1 token) es prefix exacto
+                if not merge:
+                    if _prefix_match(ce2["cliente"], ce["cliente"]) or _prefix_match(ce["cliente"], ce2["cliente"]):
+                        merge = True
+                if merge:
+                    _add_to_group(group, ce2)
+                    consumed.add(idx2)
+            groups.append(group)
+
+        # Reemplazar client_editors con la versión agrupada
+        client_editors = []
+        for g in sorted(groups, key=lambda x: x["canonical"].lower()):
+            aliases = [m["cliente"] for m in g["members"] if m["cliente"] != g["canonical"]]
+            client_editors.append({
+                "cliente": g["canonical"],
+                "editor": g["editor"],
+                "source": g["source"],
+                "aliases": aliases,
+            })
     except Exception:
         pass
 
