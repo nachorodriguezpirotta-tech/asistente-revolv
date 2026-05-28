@@ -154,6 +154,43 @@ class handler(BaseHTTPRequestHandler):
                 with_db(_do, message=f"review {review_id} marcada resuelta manualmente")
                 return json_response(self, {"ok": True, "id": int(review_id), "status": "resolved"})
 
+            # MODO renotify: admin re-dispara la notificación de una review existente.
+            # Útil cuando notify_revision_requested falló silenciosamente.
+            if action == "renotify":
+                review_id_param = (params.get("id", [""])[0] or "").strip()
+                is_admin = params.get("admin", [""])[0] == "1"
+                if not is_admin or not check_token("ADMIN", token):
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+                if not review_id_param or not review_id_param.isdigit():
+                    return json_response(self, {"error": "id requerido"}, status=400)
+
+                def _fetch(conn):
+                    row = conn.execute(
+                        "SELECT id, cliente, video_file_id, video_file_name, editor, notes FROM client_reviews WHERE id=?",
+                        (int(review_id_param),),
+                    ).fetchone()
+                    return dict(row) if row else None
+
+                row = read_db(_fetch)
+                if not row:
+                    return json_response(self, {"error": "review not found"}, status=404)
+                try:
+                    from notifier import notify_revision_requested
+                    review = {
+                        "id": row["id"],
+                        "cliente": row["cliente"],
+                        "video_file_id": row["video_file_id"],
+                        "video_file_name": row["video_file_name"] or "(video)",
+                        "editor": row["editor"],
+                        "attachments_count": 0,
+                    }
+                    notify_revision_requested(row["id"], review, row["notes"] or "(sin notas)")
+                    return json_response(self, {"ok": True, "renotified": row["id"]})
+                except Exception as e:
+                    import traceback
+                    tb = traceback.format_exc()
+                    return json_response(self, {"error": str(e)[:200], "trace": tb[:1500]}, status=500)
+
             if not cliente:
                 if action == "info":
                     return json_response(self, {"error": "cliente requerido"}, status=400)
@@ -368,7 +405,25 @@ class handler(BaseHTTPRequestHandler):
                 from notifier import notify_revision_requested
                 notify_revision_requested(review_id, review, notes)
             except Exception as e:
-                print(f"notify error: {e}")
+                import traceback
+                print(f"[NOTIFY ERROR] review_id={review_id} cliente={cliente} editor={editor}: {e}", flush=True)
+                traceback.print_exc()
+                # Marcar el log para que si falla, Ignacio pueda recuperar con
+                # /api/review?action=renotify&id=N&admin=1&t=...
+                try:
+                    from tracker import log_mail
+                    log_mail(
+                        to_email=editor or "(sin editor)",
+                        subject=f"[NOTIFY FALLO] Revisión id={review_id} de {cliente}",
+                        kind="notify-error",
+                        cliente=cliente,
+                        editor=editor,
+                        msg_id="",
+                        success=False,
+                        error=f"{type(e).__name__}: {str(e)[:200]}",
+                    )
+                except Exception:
+                    pass
 
             return json_response(self, {"ok": True, "id": review_id, "status": "revision_requested",
                                           "attachments": len(attachments)})
