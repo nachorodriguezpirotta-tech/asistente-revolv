@@ -118,11 +118,25 @@ def read_packs() -> list[Pack]:
 
 def get_editor_for_client(cliente_drive_name: str, packs: Optional[list[Pack]] = None) -> Optional[str]:
     """
-    Dado el nombre de una carpeta de cliente en Drive, busca en el Sheet la fila
-    más reciente de ese cliente y devuelve el editor responsable.
-    Match por nombre normalizado (case/acentos/espacios).
-    Si no hay match, retorna None.
+    Resuelve el editor asignado a un cliente.
+
+    Orden de prioridad:
+      1. cfg_client_editor (DB) — override manual desde el dashboard
+      2. Sheet (filas más recientes con match de nombre)
+      3. None
+
+    El override tiene prioridad porque Nacho lo puso a mano en el dashboard.
     """
+    # 1) Override manual desde el dashboard
+    try:
+        from tracker import cfg_get_client_editor
+        override = cfg_get_client_editor(cliente_drive_name)
+        if override:
+            return override
+    except Exception:
+        pass
+
+    # 2) Sheet (lookup original)
     if packs is None:
         packs = read_packs()
 
