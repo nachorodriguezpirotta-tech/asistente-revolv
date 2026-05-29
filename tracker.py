@@ -1577,8 +1577,11 @@ def _normalize_client_name(s: str) -> str:
 def cfg_get_client(cliente: str) -> Optional[dict]:
     """Devuelve la config del cliente o None si no está configurado.
 
-    Match: 1) exacto TRIM=TRIM (rápido). 2) fallback case-insensitive +
-    accent-insensitive (resuelve casos como David Hernandez ↔ David Hernández).
+    Match (orden de prioridad):
+      1. Exacto TRIM=TRIM (rápido)
+      2. Normalizado: lower + sin acentos (David Hernandez ↔ David Hernández)
+      3. Token subset: cfg_client tokens (≥2) ⊆ lookup tokens
+         (Cristina García ⊆ Cristina Garcia Munoz)
     """
     if not cliente:
         return None
@@ -1591,8 +1594,7 @@ def cfg_get_client(cliente: str) -> Optional[dict]:
     if row:
         conn.close()
         return dict(row)
-    # 2) Fallback: lower + sin acentos. Cargamos todos (la tabla es chica) y
-    #    comparamos normalizado. Solo se ejecuta cuando el exact match falló.
+    # 2 + 3) Fallback: lower + sin acentos + token subset
     target = _normalize_client_name(cliente)
     if not target:
         conn.close()
@@ -1602,10 +1604,28 @@ def cfg_get_client(cliente: str) -> Optional[dict]:
         FROM cfg_clients
     """).fetchall()
     conn.close()
+    # Match exacto normalizado
     for r in all_rows:
         if _normalize_client_name(r["cliente"]) == target:
             return dict(r)
-    return None
+    # Token subset: cfg_client tokens (>=2 significativos) están todos en lookup.
+    # Bug 29/may: Jere subió reel de "Cristina Garcia Munoz" pero cfg_clients
+    # tenía "Cristina García" — mail al cliente no se mandó porque match falló.
+    STOP = {"de","del","la","el","los","las","y","e","o","u","a","con","sin","para","por"}
+    def _tokens(s):
+        return {t for t in _normalize_client_name(s).split() if len(t) >= 3 and t not in STOP}
+    target_tokens = _tokens(cliente)
+    if not target_tokens:
+        return None
+    best = None
+    best_overlap = 0
+    for r in all_rows:
+        cfg_tokens = _tokens(r["cliente"])
+        if len(cfg_tokens) >= 2 and cfg_tokens.issubset(target_tokens):
+            if len(cfg_tokens) > best_overlap:
+                best_overlap = len(cfg_tokens)
+                best = r
+    return dict(best) if best else None
 
 
 def cfg_upsert_client(cliente: str, email: str, display_name: Optional[str] = None,
