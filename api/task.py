@@ -484,6 +484,24 @@ class handler(BaseHTTPRequestHandler):
                     # No actualizamos nada — el cliente no existe con el editor
                     # actual. Avisamos al frontend.
                     raise ValueError("not_found")
+                # IMPORTANTE: persistir el cambio como override permanente para
+                # que los próximos archivos de este cliente vayan al nuevo
+                # editor. Antes el cambio era SOLO de las tasks actuales —
+                # próximos scans creaban nueva task con el editor del Sheet
+                # original, pisando lo que el user reasignó. Bug 29/may.
+                from datetime import datetime as _dt
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS cfg_client_editor (
+                        cliente TEXT PRIMARY KEY,
+                        editor TEXT NOT NULL,
+                        updated_at TEXT
+                    )
+                """)
+                conn.execute("""
+                    INSERT INTO cfg_client_editor (cliente, editor, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at
+                """, (cliente_r, new_editor, _dt.now().isoformat(timespec='seconds')))
 
             try:
                 with_db(op_reassign, message=f"manual: reasignar {cliente_r}: {current_editor} → {new_editor}")
