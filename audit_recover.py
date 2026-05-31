@@ -173,6 +173,18 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
         # sig is True (editado seguro) o sig is None (ambiguo - default permisivo editado)
         if is_edited_known(f['id']):
             continue
+        # Archivo VIEJO (>3 días): registrar como baseline, NO mandar mail.
+        # Bug 31/may: archivos antiguos reaparecen en Drive Changes feed
+        # (share, audit, etc) y se mandaban como entrega nueva.
+        from scan import _is_file_too_old
+        if _is_file_too_old(f.get("createdTime"), max_age_days=3):
+            claim_edited_file(
+                file_id=f["id"], cliente=cliente, folder_id="(viejo-audit)",
+                name=f["name"], size=size, created_time=f.get("createdTime"),
+                is_baseline=True, closed_task_id=None,
+            )
+            print(f"  ⏭️  editado VIEJO baseline: {cliente} / {f['name'][:40]}")
+            continue
         # Defensa contra double-process: si el incremental ya mandó el completion
         # mail para este archivo (mail_log dedupe estable), no re-procesarlo
         # aunque el archivo no figure en known_edited_files (caso típico:
