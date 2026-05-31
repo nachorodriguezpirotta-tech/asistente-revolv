@@ -412,6 +412,21 @@ def run(notify: bool = False):
         # Es editado → cerrar task pendiente (si hay)
         if is_edited_known(f["id"]):
             continue
+        # Archivo VIEJO (createdTime > 3 días): no mandar mail "X entregó".
+        # Probably es un archivo que reaparece por share/permissions/audit
+        # de Drive, NO una entrega nueva. Bug 31/may: Rafa subió hace 20 días
+        # un archivo a Gaetan por error, y el sistema mandó mail "Rafa entregó"
+        # 6 veces porque Drive Changes API lo reportó como modificado.
+        # Lo registramos como baseline (conocido) para que no vuelva a procesarse.
+        if _is_file_too_old(f.get("createdTime"), max_age_days=3):
+            size = int(f["size"]) if f.get("size") else None
+            claim_edited_file(
+                file_id=f["id"], cliente=cliente_real, folder_id="(viejo-baseline)",
+                name=f["name"], size=size, created_time=f.get("createdTime"),
+                is_baseline=True, closed_task_id=None,
+            )
+            print(f"  ⏭️  editado VIEJO (>3 días) registrado como baseline, sin mail: {f['name'][:50]}")
+            continue
         # Defensa contra double-process: si OTRO worker ya mandó completion mail
         # para este archivo recientemente (porque pusheó mail_log aunque
         # tracker.db haya quedado desincronizado), no re-procesar. Bug 21/may:
