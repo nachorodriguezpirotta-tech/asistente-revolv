@@ -653,25 +653,25 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
 def mark_pending_task_for_renotification(cliente: str, editor: Optional[str],
                                           latest_file_id: str, latest_file_name: str,
                                           min_silence_hours: float = 6.0) -> Optional[int]:
-    """Si ya hay task pending para (cliente, editor) y el último mail fue
-    enviado hace >= min_silence_hours (o nunca), resetea mail_sent_at para
-    que el notifier la procese de nuevo. Actualiza file_id/file_name al
-    último archivo para que el subject del mail tenga algo actual.
+    """Hay una task pending para (cliente, editor) y entró material nuevo.
 
-    Retorna el id de la task afectada, o None si no aplica (no había
-    pending, o el último mail es muy reciente y no queremos spamear).
+    COMPORTAMIENTO (cambiado 01/jun por pedido de Ignacio):
+      - Si la task pending YA fue notificada (mail_sent_at no es NULL) →
+        NO re-notificar. El editor ya sabe que tiene material de ese cliente;
+        que siga subiendo tandas durante el día NO debe generar más mails.
+        Solo actualizamos file_id/file_name para que el dashboard muestre lo
+        último. Retorna None (el notifier no la procesa).
+      - Si la task pending NUNCA se notificó (mail_sent_at IS NULL) → la
+        dejamos lista para que el notifier mande EL primer (y único) mail.
 
-    Esto resuelve el caso: cliente tiene task pending vieja, sube 15 crudos
-    nuevos, antes no se generaba mail → ahora sí se genera UN mail por el
-    batch (debounce de 6h).
+    Resultado: UN solo mail "material nuevo de X" por sesión de trabajo.
+    Cuando el editor entrega (task se cierra) y el cliente sube material
+    nuevo, se crea una task nueva → recién ahí otro mail.
 
-    Bug 28/may Paola Maqueda: el default era 0.083 (5 min) — cada vez que
-    Paola subía un archivo nuevo dentro de los 5 min se mandaba otro mail.
-    Subido a 6h: un solo mail por cliente cada 6h aunque entren más uploads
-    de la misma sesión / carpeta."""
+    Bug 01/jun: Jennifer Díaz / Ismafeten mandaban mail toda vez que subían
+    otra tanda (cada 6h). Ahora 1 mail y listo hasta que se cierre la task."""
     if not cliente:
         return None
-    from datetime import datetime, timedelta
     conn = get_conn()
     if editor:
         row = conn.execute(
@@ -690,23 +690,22 @@ def mark_pending_task_for_renotification(cliente: str, editor: Optional[str],
         conn.close()
         return None
 
-    # Debounce: si el último mail fue hace <min_silence_hours, no resetear
-    last_sent = row["mail_sent_at"]
-    if last_sent:
-        try:
-            t = datetime.fromisoformat(last_sent.replace("Z", "+00:00"))
-            if t.tzinfo:
-                t = t.replace(tzinfo=None)
-            if (datetime.now() - t) < timedelta(hours=min_silence_hours):
-                conn.close()
-                return None  # demasiado reciente, no spamear
-        except Exception:
-            pass
+    already_notified = bool(row["mail_sent_at"])
+    if already_notified:
+        # Ya se mandó el mail de esta task pending. NO re-notificar.
+        # Solo actualizar el último archivo (para el dashboard), sin tocar
+        # mail_sent_at → el notifier NO la va a re-procesar.
+        conn.execute(
+            "UPDATE tasks SET file_id=?, file_name=? WHERE id=?",
+            (latest_file_id, latest_file_name, row["id"])
+        )
+        conn.commit()
+        conn.close()
+        return None
 
-    # Resetear mail_sent_at para que el notifier vuelva a procesar + actualizar
-    # file_id/file_name al último archivo
+    # Nunca se notificó (mail_sent_at IS NULL): dejar lista para el PRIMER mail.
     conn.execute(
-        "UPDATE tasks SET mail_sent_at=NULL, file_id=?, file_name=? WHERE id=?",
+        "UPDATE tasks SET file_id=?, file_name=? WHERE id=?",
         (latest_file_id, latest_file_name, row["id"])
     )
     conn.commit()
