@@ -484,8 +484,29 @@ function openClientEmailModal(c) {
   if (isNew) {
     const all = DATA.available_clients || [];
     const alreadyConfigured = new Set((DATA.client_emails || []).map(x => (x.cliente || '').trim()));
-    const opciones = all
-      .filter(name => !alreadyConfigured.has((name || '').trim()))
+    // Dedup por nombre normalizado (sin tildes, lowercase). "Electro Ángel"
+    // y "Electro Angel" se muestran UNA sola vez. Preferimos la variante con
+    // tildes (más correcta); si empatan, la más larga. Pedido Nacho 31/may.
+    const _norm = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const _accentScore = s => ((s || '').match(/[áéíóúñÁÉÍÓÚÑ]/g) || []).length;
+    const dedup = {};  // normalized → mejor nombre
+    for (const name of all) {
+      const t = (name || '').trim();
+      if (!t || alreadyConfigured.has(t)) continue;
+      // Excluir si una variante normalizada ya está configurada
+      const n = _norm(t);
+      const alreadyNorm = [...alreadyConfigured].some(c => _norm(c) === n);
+      if (alreadyNorm) continue;
+      const cur = dedup[n];
+      if (!cur) { dedup[n] = t; continue; }
+      // Preferir más tildes, después más largo
+      if (_accentScore(t) > _accentScore(cur) ||
+          (_accentScore(t) === _accentScore(cur) && t.length > cur.length)) {
+        dedup[n] = t;
+      }
+    }
+    const opciones = Object.values(dedup)
+      .sort((a, b) => a.localeCompare(b, 'es'))
       .map(name => `<option value="${escapeAttr(name)}">${escape(name)}</option>`)
       .join('');
     clienteField = `
@@ -493,7 +514,7 @@ function openClientEmailModal(c) {
         <input id="m-c-name" type="text" list="m-c-name-list" placeholder="Escribí para filtrar… o tocá la flecha"
                autocomplete="off" style="width:100%;">
         <datalist id="m-c-name-list">${opciones}</datalist>
-        <div class="field-hint">${all.length} clientes disponibles · ${alreadyConfigured.size} ya configurados (no aparecen)</div>
+        <div class="field-hint">${Object.keys(dedup).length} clientes disponibles · ${alreadyConfigured.size} ya configurados (no aparecen)</div>
       </div>`;
   } else {
     clienteField = `
