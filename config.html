@@ -835,6 +835,28 @@ function openAliasModal(a) {
 }
 
 // ──────────── DELIVERY FOLDERS ────────────
+// Extrae el folder_id de un link de Drive. Acepta:
+//   https://drive.google.com/drive/folders/1ABC...
+//   https://drive.google.com/drive/folders/1ABC...?usp=sharing
+//   1ABC...  (ya es ID puro — lo devuelve tal cual)
+function _extractFolderId(input) {
+  if (!input) return '';
+  const s = input.trim();
+  // Match drive.google.com URL
+  const m = s.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  // Match URL con id= (older format)
+  const m2 = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (m2) return m2[1];
+  // Asumir que ya es un ID puro
+  return s;
+}
+
+function _folderLink(folder_id) {
+  if (!folder_id) return '';
+  return `https://drive.google.com/drive/folders/${folder_id}`;
+}
+
 function renderDelivery() {
   let html = `<div class="section-header">
     <div><strong>${DATA.delivery_folders.length}</strong> carpetas extra configuradas</div>
@@ -846,14 +868,15 @@ function renderDelivery() {
   } else {
     html += `<div class="table-wrap"><table><thead><tr>
       <th>Cliente</th>
-      <th>Folder ID</th>
+      <th>Link de carpeta</th>
       <th>Descripción</th>
       <th></th>
     </tr></thead><tbody>`;
     for (const d of DATA.delivery_folders) {
+      const link = _folderLink(d.folder_id);
       html += `<tr>
         <td class="name">${escape(d.cliente)}</td>
-        <td class="mono">${escape(d.folder_id)}</td>
+        <td><a href="${escapeAttr(link)}" target="_blank" style="color:#60a5fa; text-decoration:none; font-size:13px;">📁 abrir carpeta ↗</a></td>
         <td>${d.description ? escape(d.description) : '<span style="color:#5a6478">—</span>'}</td>
         <td class="actions">
           <button class="icon-btn" onclick='openDeliveryModal(${JSON.stringify(d)})'>Editar</button>
@@ -870,13 +893,14 @@ function openDeliveryModal(d) {
   const isNew = !d;
   MODAL_STATE = { type: 'delivery', isNew, data: d || {} };
   document.getElementById('modal-title').textContent = isNew ? 'Nueva carpeta extra' : 'Editar carpeta extra';
+  const currentLink = d?.folder_id ? _folderLink(d.folder_id) : '';
   document.getElementById('modal-body').innerHTML = `
     <div class="field"><label>Cliente <span style="color:#f87171">*</span></label>
       <input id="m-cli" type="text" value="${escapeAttr(d?.cliente || '')}" placeholder="Rafa Elvram">
     </div>
-    <div class="field"><label>Folder ID de Drive <span style="color:#f87171">*</span></label>
-      <input id="m-fid" type="text" value="${escapeAttr(d?.folder_id || '')}" placeholder="1PUIRQ80fV9...">
-      <div class="field-hint">El ID está en la URL de Drive: drive.google.com/drive/folders/<strong>ID</strong></div>
+    <div class="field"><label>Link de carpeta de Drive <span style="color:#f87171">*</span></label>
+      <input id="m-fid" type="text" value="${escapeAttr(currentLink)}" placeholder="https://drive.google.com/drive/folders/1ABC...">
+      <div class="field-hint">Pegá el link completo de Drive — extrae el ID solo. También acepta el ID directamente.</div>
     </div>
     <div class="field"><label>Descripción (opcional)</label>
       <input id="m-desc" type="text" value="${escapeAttr(d?.description || '')}" placeholder="Editados Nacho abril 2026">
@@ -922,10 +946,11 @@ async function submitModal() {
       if (!payload.drive_name || !payload.cliente_real) return alert('Faltan campos');
     } else if (type === 'delivery') {
       section = 'delivery';
+      const rawFid = document.getElementById('m-fid').value.trim();
       payload = {
         id: data.id,
         cliente: document.getElementById('m-cli').value.trim(),
-        folder_id: document.getElementById('m-fid').value.trim(),
+        folder_id: _extractFolderId(rawFid),  // extrae ID del link de Drive
         description: document.getElementById('m-desc').value.trim(),
       };
       if (!payload.cliente || !payload.folder_id) return alert('Faltan campos');
