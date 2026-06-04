@@ -440,13 +440,16 @@ Archivo: {file_name}{link_text}
                 # Para correcciones, usamos dedupe_key_override estable (no depende
                 # del editor ni del file_id) para atrapar el caso "Agus" vs "—".
                 _override = _correction_dedupe_key if is_correction else _completion_dedupe_key
-                # ventana 1200 min (20h): el scan completo re-detecta editados
-                # viejos cuando los claims se pierden por concurrencia git. Con
-                # 6h el dedupe expiraba y se re-mandaba al día siguiente (bug
-                # 02/jun Agus → Luardo Gamero). 20h cubre todo el día.
+                # ventana 7 días (10080 min): el scan completo re-detecta
+                # editados viejos por días cuando los claims no persisten. Con
+                # 20h se re-mandaba a los 2 días (bug 04/jun Natalia Pereyra
+                # "5. reel 5" re-enviado 2 días después). 7 días por file_id
+                # es seguro: el mismo archivo físico no se re-notifica en una
+                # semana, y para entonces el filtro de "editado viejo >3 días"
+                # ya lo marcó baseline → deja de detectarse.
                 msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html,
                                    kind="completion", cliente=cliente, editor=editor,
-                                   dedupe_window_minutes=1200,
+                                   dedupe_window_minutes=10080,
                                    dedupe_key_override=_override)
                 print(f"  ✅ mail cierre enviado a {dest}: {editor} → {cliente} (msg_id={msg_id})")
                 any_sent = True
@@ -702,14 +705,12 @@ Nacho te subió tu video nuevo:
 </body></html>
 """
     try:
-        # dedupe 20h + key estable por (cliente, file_id): el mismo video al
+        # dedupe 7 días + key estable por (cliente, file_id): el mismo video al
         # mismo cliente no se manda 2 veces aunque el scan re-detecte el
-        # editado al día siguiente (bug concurrencia 02/jun). Key independiente
-        # del subject para robustez.
-        import hashlib as _hl
+        # editado por días (bug concurrencia). Key independiente del subject.
         _cli_override = f"client-delivery|{cliente.strip().lower()}|{file_id or file_name}"
         msg_id = send_mail(to=to_email, subject=subject, body_text=text, body_html=html,
-                            dedupe_window_minutes=1200,
+                            dedupe_window_minutes=10080,
                             dedupe_key_override=_cli_override)
         print(f"   📧 mail al cliente {cliente} ({to_email}): {file_name} (msg_id={msg_id})")
         return True
