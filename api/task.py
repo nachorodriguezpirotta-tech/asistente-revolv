@@ -275,20 +275,30 @@ class handler(BaseHTTPRequestHandler):
                         cli = resolved
                 deleted["cliente"] = cli
                 deleted["count"] = count_deleted
-                # Bloquear re-creación automática del cliente por 24 horas
-                # Bloquear AMBOS nombres por si vino apodo
-                blocked_until = (datetime.now() + timedelta(hours=24)).isoformat(timespec="seconds")
-                conn.execute("""
-                    INSERT INTO client_blocks (cliente, editor, blocked_until)
-                    VALUES (TRIM(?), ?, ?)
-                    ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until
-                """, (cli, target_editor or "", blocked_until))
-                if cli != cliente:
+                # Bloquear re-creación del cliente de forma PERMANENTE (10 años).
+                # Bug recurrente 04/jun: el block era de solo 24h → el scan
+                # re-detectaba los crudos del cliente al día siguiente y re-creaba
+                # la task. El usuario lo borraba, volvía, lo borraba, volvía.
+                # Ahora: borrar = quitar el cliente del dashboard para siempre.
+                # IMPORTANTE: bloquear con editor='' (cliente ENTERO, cualquier
+                # editor) para que el scan no lo re-cree ni con otro editor.
+                blocked_until = (datetime.now() + timedelta(days=3650)).isoformat(timespec="seconds")
+                for nombre in {cli, cliente}:
+                    # block del cliente entero (editor='')
                     conn.execute("""
                         INSERT INTO client_blocks (cliente, editor, blocked_until)
-                        VALUES (TRIM(?), ?, ?)
+                        VALUES (TRIM(?), '', ?)
                         ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until
-                    """, (cliente, target_editor or "", blocked_until))
+                    """, (nombre, blocked_until))
+                # Además marcar los CRUDOS actuales del cliente como baseline,
+                # para que ni siquiera se re-detecten (defensa extra).
+                try:
+                    conn.execute("""
+                        UPDATE known_files SET is_baseline=1
+                        WHERE TRIM(cliente)=TRIM(?) AND COALESCE(is_baseline,0)=0
+                    """, (cli,))
+                except Exception:
+                    pass
 
             try:
                 with_db(op_cliente, message=f"manual: borradas tasks de {cliente}" + (f" / {target_editor}" if target_editor else ""))
