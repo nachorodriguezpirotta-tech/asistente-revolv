@@ -60,18 +60,24 @@ def get_editor_stats(conn, editor: str, now: datetime) -> dict:
     # Ahora cuenta VIDEOS entregados desde mail_log (completion mails únicos por
     # dedupe_key). Cada completion mail = 1 video editado entregado por el editor.
     # COALESCE para no colapsar mails viejos con dedupe_key vacío.
+    # Excluir correcciones: una corrección NO es un video nuevo entregado, es
+    # re-trabajo del mismo video. Se excluyen los 🔧 (correcciones detectadas)
+    # y los nombres con "correc" (correcciones que entraron como entrega normal
+    # pero el archivo se llama "video 5 correccion"). FIX 05/jun: Duna daba 28
+    # con correcciones, pero Santi entregó 20 videos reales.
+    _exclude_corr = "AND subject NOT LIKE '%🔧%' AND LOWER(subject) NOT LIKE '%correc%'"
     delivered_week = conn.execute(
-        """SELECT COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject))
+        f"""SELECT COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject))
            FROM mail_log
            WHERE editor = ? AND kind = 'completion'
-             AND sent_at >= ? AND COALESCE(success,1) = 1""",
+             AND sent_at >= ? AND COALESCE(success,1) = 1 {_exclude_corr}""",
         (editor, week_ago),
     ).fetchone()[0]
     delivered_month = conn.execute(
-        """SELECT COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject))
+        f"""SELECT COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject))
            FROM mail_log
            WHERE editor = ? AND kind = 'completion'
-             AND sent_at >= ? AND COALESCE(success,1) = 1""",
+             AND sent_at >= ? AND COALESCE(success,1) = 1 {_exclude_corr}""",
         (editor, month_ago),
     ).fetchone()[0]
 
