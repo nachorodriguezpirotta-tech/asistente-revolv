@@ -4,8 +4,8 @@ GET /api/stats?admin=1&t=<admin_token>
 Métricas de productividad por editor:
   - pending_videos: videos pendientes (suma de pending_count)
   - pending_clientes: clientes con tareas pendientes
-  - delivered_week: tareas cerradas en últimos 7 días
-  - delivered_month: tareas cerradas en últimos 30 días
+  - delivered_week: VIDEOS entregados en últimos 7 días (no clientes)
+  - delivered_month: VIDEOS entregados en últimos 30 días
   - avg_turnaround_hours: tiempo promedio detectado → entregado (últimos 30 días)
   - oldest_pending_days: días desde la pending más vieja (0 si no hay pending)
   - health: "ok" | "warning" | "critical" según oldest_pending_days
@@ -54,13 +54,24 @@ def get_editor_stats(conn, editor: str, now: datetime) -> dict:
         (editor,),
     ).fetchone()[0]
 
-    # Entregados última semana / mes
+    # Entregados última semana / mes.
+    # FIX 05/jun: antes contaba tasks 'done' (= 1 por CLIENTE completado), no
+    # videos. Si Santi entregaba 20 videos de Duna era 1 task done → contaba 1.
+    # Ahora cuenta VIDEOS entregados desde mail_log (completion mails únicos por
+    # dedupe_key). Cada completion mail = 1 video editado entregado por el editor.
+    # COALESCE para no colapsar mails viejos con dedupe_key vacío.
     delivered_week = conn.execute(
-        "SELECT COUNT(*) FROM tasks WHERE editor = ? AND status = 'done' AND completed_at >= ?",
+        """SELECT COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject))
+           FROM mail_log
+           WHERE editor = ? AND kind = 'completion'
+             AND sent_at >= ? AND COALESCE(success,1) = 1""",
         (editor, week_ago),
     ).fetchone()[0]
     delivered_month = conn.execute(
-        "SELECT COUNT(*) FROM tasks WHERE editor = ? AND status = 'done' AND completed_at >= ?",
+        """SELECT COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject))
+           FROM mail_log
+           WHERE editor = ? AND kind = 'completion'
+             AND sent_at >= ? AND COALESCE(success,1) = 1""",
         (editor, month_ago),
     ).fetchone()[0]
 
