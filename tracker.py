@@ -2121,16 +2121,33 @@ def block_client(cliente: str, editor: Optional[str], hours: int = 24):
 
 
 def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
-    """Devuelve True si el cliente+editor tiene un bloqueo activo (no expirado)."""
+    """Devuelve True si el cliente tiene un bloqueo activo (no expirado).
+
+    Match: 1) exacto TRIM. 2) fallback normalizado (acentos/case) — para que
+    un block de 'Ronny Matrix Painting' atrape también 'Ronny Matrix painting'
+    o variaciones. Bug 04/jun: clientes reaparecían por mismatch de nombre.
+    """
+    from datetime import datetime
     conn = get_conn()
+    # 1) Match exacto (rápido)
     row = conn.execute("""
         SELECT blocked_until FROM client_blocks
         WHERE TRIM(cliente)=TRIM(?) AND (editor=? OR editor='' OR editor IS NULL)
+        ORDER BY blocked_until DESC LIMIT 1
     """, (cliente, editor or "")).fetchone()
+    if not row:
+        # 2) Fallback normalizado
+        target = _normalize_client_name(cliente)
+        all_rows = conn.execute("SELECT cliente, editor, blocked_until FROM client_blocks").fetchall()
+        for r in all_rows:
+            if _normalize_client_name(r["cliente"]) == target:
+                # editor flexible: el block del cliente entero (editor='') aplica
+                if not r["editor"] or r["editor"] == (editor or ""):
+                    row = r
+                    break
     conn.close()
     if not row:
         return False
-    from datetime import datetime
     try:
         until = datetime.fromisoformat(row["blocked_until"])
         return datetime.now() < until
