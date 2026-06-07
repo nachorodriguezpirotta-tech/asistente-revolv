@@ -42,7 +42,7 @@ DB_FILE = "tracker.db"
 
 # Editores conocidos. Si quieren agregar uno nuevo, basta con modificar acá
 # (o aceptar cualquier nombre — más permisivo, menos seguro).
-EDITORS = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu", "Rafa"]
+EDITORS = ["Rami", "Benja", "Fran", "Valen", "Santi", "Agus", "Samu"]
 
 
 # ────────── AUTH ──────────
@@ -143,13 +143,24 @@ def push_db(local_path: str, sha: str, message: str) -> dict:
     return _gh_request("PUT", f"/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{DB_FILE}", body)
 
 
-def with_db(operation, message: str, max_retries: int = 3):
+def with_db(operation, message: str, max_retries: int = 8, verify=None):
     """
     Wrapper que descarga DB, ejecuta operation(conn), y sube de vuelta.
     Maneja retry si hay conflict de sha (otro pusher modificó entre fetch y push).
 
-    `operation(conn)` debe devolver lo que se quiere retornar al caller (puede ser None).
+    `operation(conn)` debe devolver lo que se quiere retornar al caller.
+
+    `verify(conn) -> bool` (opcional): después de pushear, re-descarga la DB
+    del repo y corre verify(conn). Si devuelve False, significa que OTRO push
+    (ej. un scan con git rebase) pisó el cambio → reintenta toda la operación.
+    Esto garantiza que el guardado del usuario PERSISTE de verdad, no solo que
+    el push respondió 200. Pedido Ignacio 05/jun: "todo lo que hago se tiene
+    que guardar bien".
+
+    max_retries subido a 8 (era 3) con backoff exponencial para alta
+    concurrencia con los scans (cada 2 min).
     """
+    import random
     last_error = None
     for attempt in range(max_retries):
         local_path, sha = fetch_db()
@@ -163,13 +174,12 @@ def with_db(operation, message: str, max_retries: int = 3):
                 conn.close()
 
             push_db(local_path, sha, message)
-            return result
         except RuntimeError as e:
             err_str = str(e)
-            if "409" in err_str or "sha" in err_str.lower():
+            if "409" in err_str or "422" in err_str or "sha" in err_str.lower():
                 # Conflict: alguien más pusheó. Retry desde fetch.
                 last_error = e
-                time.sleep(0.5 * (attempt + 1))
+                time.sleep(min(0.5 * (2 ** attempt) + random.random(), 8))
                 continue
             raise
         finally:
@@ -177,6 +187,34 @@ def with_db(operation, message: str, max_retries: int = 3):
                 os.unlink(local_path)
             except Exception:
                 pass
+
+        # Push OK. Si hay verify, confirmar que el cambio PERSISTIÓ (no fue
+        # pisado por un scan que pusheó justo después con git rebase).
+        if verify is None:
+            return result
+        time.sleep(1.5)  # darle tiempo a que un push concurrente se asiente
+        vpath = None
+        try:
+            vpath, _ = fetch_db()
+            vconn = sqlite3.connect(vpath)
+            vconn.row_factory = sqlite3.Row
+            try:
+                ok = bool(verify(vconn))
+            finally:
+                vconn.close()
+        except Exception:
+            ok = True  # si la verificación falla por red, asumir OK (ya pusheamos)
+        finally:
+            if vpath:
+                try:
+                    os.unlink(vpath)
+                except Exception:
+                    pass
+        if ok:
+            return result
+        # El cambio fue pisado → reintentar toda la operación
+        last_error = RuntimeError("cambio pisado por push concurrente")
+        time.sleep(min(0.5 * (2 ** attempt) + random.random(), 8))
 
     raise RuntimeError(f"Falló tras {max_retries} retries: {last_error}")
 
