@@ -87,6 +87,50 @@ def get_service():
     return _thread_local.service
 
 
+# ─── Dedupe de mails vía Drive appProperties (atómico, no depende de git) ─────
+# El problema crónico de mails duplicados venía de que el registro de dedupe
+# (mail_log en tracker.db) se perdía cuando el push a git fallaba/se pisaba por
+# concurrencia. Drive appProperties es la fuente de verdad atómica: marcamos el
+# ARCHIVO mismo cuando se manda el mail. Todos los workers ven lo mismo, no hay
+# race de git. Pedido Ignacio 07/jun: "no puede haber un mismo mail repetido".
+
+def drive_was_mail_sent(file_id: str, kind: str = "completion") -> bool:
+    """¿Ya se mandó el mail de tipo `kind` para este archivo de Drive?
+    Lee appProperties['mailSent_<kind>']. True = ya mandado."""
+    if not file_id:
+        return False
+    try:
+        service = get_service()
+        f = service.files().get(
+            fileId=file_id, fields="appProperties", supportsAllDrives=True
+        ).execute()
+        props = f.get("appProperties") or {}
+        return props.get(f"mailSent_{kind}") == "1"
+    except Exception:
+        # Si falla la lectura (red, permisos), no bloquear el envío — el
+        # mail_log sigue funcionando como dedupe secundario.
+        return False
+
+
+def drive_mark_mail_sent(file_id: str, kind: str = "completion") -> bool:
+    """Marca el archivo de Drive como 'mail mandado' (appProperties).
+    Atómico y persistente — sobrevive cualquier problema de git."""
+    if not file_id:
+        return False
+    try:
+        service = get_service()
+        service.files().update(
+            fileId=file_id,
+            body={"appProperties": {f"mailSent_{kind}": "1"}},
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"   ⚠️ no se pudo marcar mailSent en Drive ({file_id}): {str(e)[:80]}")
+        return False
+
+
 def _list_subfolders(parent_id: str) -> list[dict]:
     service = get_service()
     folders = []
