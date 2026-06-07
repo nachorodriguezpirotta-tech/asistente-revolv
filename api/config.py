@@ -393,7 +393,35 @@ class handler(BaseHTTPRequestHandler):
                 elif section == "archive_client":
                     self._op_archive_client(conn, action, data, result)
 
-            with_db(op, message=f"config: {action} {section}")
+            # verify: confirma que el cambio PERSISTIÓ tras el push (no fue
+            # pisado por un scan concurrente). with_db reintenta si falla.
+            def _verify(conn):
+                try:
+                    if action == "delete":
+                        return True  # borrados: no re-verificamos
+                    if section == "client_email":
+                        cli = (data.get("cliente") or "").strip()
+                        email = (data.get("email") or "").strip().lower()
+                        r = conn.execute(
+                            "SELECT email FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cli,)
+                        ).fetchone()
+                        return bool(r and (r["email"] or "").lower() == email)
+                    if section == "client_editor":
+                        cli = (data.get("cliente") or "").strip()
+                        ed = (data.get("editor") or "").strip()
+                        r = conn.execute(
+                            "SELECT editor FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?)", (cli,)
+                        ).fetchone()
+                        return bool(r and r["editor"] == ed)
+                    if section == "editor":
+                        nm = (data.get("name") or "").strip()
+                        r = conn.execute("SELECT 1 FROM cfg_editors WHERE name=?", (nm,)).fetchone()
+                        return bool(r)
+                except Exception:
+                    return True  # si la verificación falla, no bloquear
+                return True
+
+            with_db(op, message=f"config: {action} {section}", verify=_verify)
             return json_response(self, {"ok": True, "section": section, "action": action, **result})
         except ValueError as e:
             return json_response(self, {"error": str(e)[:200]}, status=400)
