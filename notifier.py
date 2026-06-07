@@ -340,6 +340,28 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
         closed = c.get("closed", False)
         is_correction = bool(c.get("is_correction"))
 
+        # DEDUPE DEFINITIVO vía Drive appProperties (atómico, no depende de git).
+        # Si el archivo de Drive ya está marcado como "mail mandado", saltear.
+        # Esto resuelve el bug crónico de mails duplicados: el dedupe por
+        # mail_log fallaba cuando el registro se perdía en un push concurrente.
+        # Drive es la fuente de verdad compartida. Pedido Ignacio 07/jun.
+        if file_id and not is_correction:
+            try:
+                from drive_client import drive_was_mail_sent
+                if drive_was_mail_sent(file_id, "completion"):
+                    print(f"  ⏭️  Drive dedupe: mail de {file_name} ya mandado, SKIP")
+                    # marcar la cola como enviada para que no se reintente
+                    row_id = c.get("id")
+                    if isinstance(row_id, int):
+                        from tracker import mark_completion_mail_sent
+                        try:
+                            mark_completion_mail_sent(row_id)
+                        except Exception:
+                            pass
+                    continue
+            except Exception:
+                pass
+
         # Link a la CARPETA específica donde está el editado (ej. Mayo/Editados, Pack 1).
         # Tenemos varios fallbacks por si una opción no está disponible:
         if edited_folder_id:
@@ -456,6 +478,16 @@ Archivo: {file_name}{link_text}
                 sent += 1
             except Exception as e:
                 print(f"  ❌ falló mail cierre a {dest} [{cliente}]: {e}")
+
+        # Marcar el archivo en Drive como "mail mandado" — dedupe atómico que
+        # NO depende de git. Aunque tracker.db/mail_log se pierda en un push
+        # concurrente, este marcador persiste → no se re-manda nunca.
+        if any_sent and file_id and not is_correction:
+            try:
+                from drive_client import drive_mark_mail_sent
+                drive_mark_mail_sent(file_id, "completion")
+            except Exception:
+                pass
 
         # Push notification de cierre: SOLO al admin también (mismo criterio)
         if any_sent:
