@@ -59,7 +59,6 @@ jobs:
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
-          DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}
         run: |
           for i in 1 2 3; do
             python scan_incremental.py --notify && break
@@ -85,7 +84,7 @@ jobs:
           # solo el log de "ya procesado", y la próxima iteración recupera
           # cualquier estado faltante via Drive Changes page_token.
           for attempt in 1 2 3; do
-            if git pull --rebase -X theirs; then
+            if git pull --rebase -X ours; then
               if git push; then
                 echo "DB actualizada (intento $attempt)"
                 exit 0
