@@ -70,7 +70,7 @@ jobs:
           git commit -m "[bot-audit] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]"
           # Mismo retry-with-theirs que scan-incremental
           for attempt in 1 2 3; do
-            if git pull --rebase -X theirs; then
+            if git pull --rebase -X ours; then
               if git push; then
                 echo "DB actualizada (intento $attempt)"
                 exit 0
