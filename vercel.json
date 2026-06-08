@@ -75,6 +75,10 @@
       "memory": 256,
       "maxDuration": 10
     },
+    "api/client_videos.py": {
+      "memory": 256,
+      "maxDuration": 10
+    },
     "api/trigger.py": {
       "memory": 128,
       "maxDuration": 10
