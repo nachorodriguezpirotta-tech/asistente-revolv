@@ -505,16 +505,20 @@ function openClientEmailModal(c) {
         dedup[n] = t;
       }
     }
-    const opciones = Object.values(dedup)
-      .sort((a, b) => a.localeCompare(b, 'es'))
-      .map(name => `<option value="${escapeAttr(name)}">${escape(name)}</option>`)
-      .join('');
+    // Ordenar por nombre NORMALIZADO (sin tildes) para que "Álvaro" quede
+    // junto a las "A" arriba, no al fondo. Bug 07/jun: los nombres con tilde
+    // se iban al final del orden alfabético.
+    const lista = Object.values(dedup).sort((a, b) => _norm(a).localeCompare(_norm(b)));
+    // Guardar la lista para el filtro custom (búsqueda insensible a tildes).
+    window._CE_CLIENT_LIST = lista;
+    window._CE_NORM = _norm;
     clienteField = `
-      <div class="field"><label>Cliente <span style="color:#f87171">*</span></label>
-        <input id="m-c-name" type="text" list="m-c-name-list" placeholder="Escribí para filtrar… o tocá la flecha"
-               autocomplete="off" style="width:100%;">
-        <datalist id="m-c-name-list">${opciones}</datalist>
-        <div class="field-hint">${Object.keys(dedup).length} clientes disponibles · ${alreadyConfigured.size} ya configurados (no aparecen)</div>
+      <div class="field" style="position:relative;"><label>Cliente <span style="color:#f87171">*</span></label>
+        <input id="m-c-name" type="text" placeholder="Escribí para buscar… (sin importar tildes)"
+               autocomplete="off" style="width:100%;"
+               oninput="ceFilterClientes()" onfocus="ceFilterClientes()">
+        <div id="ce-cli-dropdown" style="display:none; position:absolute; left:0; right:0; z-index:50; background:#1a1e27; border:1px solid #2a2f3a; border-radius:8px; max-height:240px; overflow-y:auto; margin-top:2px; box-shadow:0 6px 20px rgba(0,0,0,0.4);"></div>
+        <div class="field-hint">${lista.length} clientes disponibles · ${alreadyConfigured.size} ya configurados (no aparecen)</div>
       </div>`;
   } else {
     clienteField = `
@@ -543,9 +547,49 @@ function openClientEmailModal(c) {
       <label style="margin:0; cursor:pointer;" onclick="document.getElementById('m-c-enabled').click()">📬 Recibir mails cuando se entregue un video</label>
     </div>`;
   document.getElementById('modal-bg').classList.add('open');
-  // Focus en el dropdown para que se pueda escribir/tocar directo
+  // Focus en el input para que se pueda escribir/tocar directo
   setTimeout(() => { const i = document.getElementById('m-c-name'); if (i && isNew) i.focus(); }, 100);
 }
+
+// Dropdown custom de clientes: búsqueda y orden INSENSIBLE a tildes.
+// El <datalist> nativo no matcheaba "alvaro" con "Álvaro" y ordenaba los
+// nombres con tilde al fondo. Esto lo resuelve. Pedido Nacho 07/jun.
+function ceFilterClientes() {
+  const inp = document.getElementById('m-c-name');
+  const dd = document.getElementById('ce-cli-dropdown');
+  if (!inp || !dd) return;
+  const lista = window._CE_CLIENT_LIST || [];
+  const norm = window._CE_NORM || (s => (s || '').toLowerCase());
+  const q = norm(inp.value);
+  // Filtrar por substring normalizado (sin tildes). Si el input está vacío,
+  // mostrar todos.
+  const matches = (q ? lista.filter(n => norm(n).includes(q)) : lista).slice(0, 50);
+  if (matches.length === 0) {
+    dd.style.display = 'none';
+    return;
+  }
+  dd.innerHTML = matches.map(n =>
+    `<div onmousedown="ceSelectCliente(this)" data-name="${escapeAttr(n)}"
+       style="padding:9px 12px; cursor:pointer; font-size:14px; border-bottom:1px solid #232733;"
+       onmouseover="this.style.background='#232733'" onmouseout="this.style.background='transparent'">
+       ${escape(n)}</div>`
+  ).join('');
+  dd.style.display = 'block';
+}
+function ceSelectCliente(el) {
+  const inp = document.getElementById('m-c-name');
+  const dd = document.getElementById('ce-cli-dropdown');
+  if (inp) inp.value = el.getAttribute('data-name');
+  if (dd) dd.style.display = 'none';
+}
+// Cerrar el dropdown al hacer click afuera
+document.addEventListener('click', (e) => {
+  const dd = document.getElementById('ce-cli-dropdown');
+  const inp = document.getElementById('m-c-name');
+  if (dd && inp && e.target !== inp && !dd.contains(e.target)) {
+    dd.style.display = 'none';
+  }
+});
 
 async function deleteClientEmail(cliente) {
   if (!confirm(`¿Borrar el mail configurado para "${cliente}"?\n\nDejará de recibir mails de entregas. Sus tasks/datos NO se tocan.`)) return;
