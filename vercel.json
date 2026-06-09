@@ -75,6 +75,10 @@
       "memory": 256,
       "maxDuration": 10
     },
+    "api/trigger.py": {
+      "memory": 128,
+      "maxDuration": 10
+    },
     "api/client_videos.py": {
       "memory": 256,
       "maxDuration": 10
@@ -87,9 +91,25 @@
       "memory": 512,
       "maxDuration": 60
     },
-    "api/trigger.py": {
-      "memory": 128,
-      "maxDuration": 10
+    "api/admin_cleanup_raw_files.py": {
+      "memory": 512,
+      "maxDuration": 60
+    },
+    "api/admin_sync_edited_with_drive.py": {
+      "memory": 512,
+      "maxDuration": 60
+    },
+    "api/admin_drive_audit.py": {
+      "memory": 512,
+      "maxDuration": 60
+    },
+    "api/admin_merge_clientes.py": {
+      "memory": 512,
+      "maxDuration": 60
+    },
+    "api/admin_strict_sync_client.py": {
+      "memory": 1024,
+      "maxDuration": 60
     }
   },
   "crons": [
