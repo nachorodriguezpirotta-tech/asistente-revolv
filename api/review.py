@@ -219,15 +219,47 @@ class handler(BaseHTTPRequestHandler):
                     "status": "ready_to_respond",  # estado virtual, no en DB
                 })
 
-            # MODO approve: solo HTML "Gracias", NO guarda nada.
-            # Opcional: avisar al admin que el cliente lo aprobó (1 mail info,
-            # con dedupe para que si toca varias veces, llegue 1 sola vez).
+            # MODO approve: guarda la aprobación en DB (UPSERT por cliente+file_id)
+            # + manda mail info al admin.
             if action == "approve":
+                if file_id:
+                    def _upsert_approval(conn):
+                        existing = conn.execute(
+                            """SELECT id FROM client_reviews
+                               WHERE cliente=? AND COALESCE(video_file_id,'')=COALESCE(?,'')
+                               ORDER BY id DESC LIMIT 1""",
+                            (cliente, file_id),
+                        ).fetchone()
+                        if existing:
+                            conn.execute(
+                                """UPDATE client_reviews
+                                     SET status='approved',
+                                         responded_at=datetime('now'),
+                                         resolved_at=datetime('now')
+                                   WHERE id=?""",
+                                (existing[0],),
+                            )
+                        else:
+                            conn.execute(
+                                """INSERT INTO client_reviews
+                                       (cliente, video_file_id, video_file_name, editor,
+                                        status, notes, created_at, responded_at, resolved_at)
+                                   VALUES (?, ?, ?, ?, 'approved', '(aprobado por cliente)',
+                                           datetime('now'), datetime('now'), datetime('now'))""",
+                                (cliente, file_id, file_name or None, editor),
+                            )
+                    try:
+                        with_db(_upsert_approval, message=f"approve: {cliente} aprobó {file_id}")
+                    except Exception as e:
+                        print(f"approve upsert error: {e}")
                 try:
                     from notifier import notify_review_approved_lite
                     notify_review_approved_lite(cliente, file_name, editor)
                 except Exception as e:
                     print(f"notify_review_approved_lite error: {e}")
+                # Bridge auth (portal lo llamó) → JSON. Cliente directo del mail → HTML.
+                if _authorized_by_bridge:
+                    return json_response(self, {"ok": True, "status": "approved"})
                 return _html_response(self, _render_approve(cliente))
 
             return json_response(self, {"error": f"action inválida: {action}"}, status=400)
