@@ -31,6 +31,20 @@ _env_secret = os.environ.get("DASHBOARD_SECRET", "").strip()
 if _env_secret:
     DASHBOARD_SECRET = _env_secret
 else:
+    # CI (GitHub Actions) sin secret → ABORT ruidosamente.
+    # El cron firma tokens de cliente para los mails: sin el secret real esos
+    # tokens quedan muertos y los clientes ven "Link inválido" / 401. Es mejor
+    # romper el workflow y alertar que mandar mails con tokens fantasma.
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        raise RuntimeError(
+            "DASHBOARD_SECRET no está seteada en este workflow. "
+            "Agregá `DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}` "
+            "al bloque `env:` del job, sino los tokens de cliente que firme "
+            "este cron van a quedar muertos."
+        )
+    # En runtime serverless (Vercel) solo se VALIDAN tokens — un efímero acá
+    # rompe la validación de TODOS los tokens, lo cual es visible y recuperable
+    # seteando la env var. No causa el bug silencioso de tokens muertos.
     import secrets as _secrets
     DASHBOARD_SECRET = "ephemeral-" + _secrets.token_urlsafe(24)
     import sys
