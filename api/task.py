@@ -353,6 +353,74 @@ class handler(BaseHTTPRequestHandler):
         editor = (body.get("editor") or "").strip()
         is_admin = body.get("admin") == 1
 
+        # MODO BATCH: aplica VARIOS pending_count en UN solo with_db.
+        # Pedido Ignacio 09/jun: "corregir todo de una y que se corrija al toque".
+        # Antes era 1 PATCH por cliente → con_db concurrentes que chocaban en git
+        # (si tocabas 2 clientes a la vez, uno se perdía y "no cargaba"). Ahora
+        # todos los cambios van juntos en 1 fetch-modify-push, con `verify` que
+        # re-aplica si un scan pisó algún valor. Un solo guardado, atómico.
+        if isinstance(body.get("batch"), list):
+            if is_admin:
+                if not check_token("ADMIN", token):
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+            else:
+                if not editor or not check_token(editor, token):
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+            changes = []
+            for it in body["batch"]:
+                if not isinstance(it, dict):
+                    continue
+                c = (it.get("cliente") or "").strip()
+                e = (it.get("editor") or "").strip()
+                if not is_admin:
+                    e = editor  # un editor solo puede tocar sus propios pendientes
+                e = e or None
+                try:
+                    cnt = int(it.get("count"))
+                except (TypeError, ValueError):
+                    continue
+                if not c or cnt < 0:
+                    continue
+                changes.append((c, e, cnt))
+            if not changes:
+                return json_response(self, {"error": "batch vacío"}, status=400)
+
+            applied = {"n": 0}
+            def op_batch(conn):
+                total = 0
+                for (c, e, cnt) in changes:
+                    n = _set_pending_count_op(conn, c, e, cnt)
+                    if n == 0 and e:
+                        resolved = resolve_nickname(conn, c, e)
+                        if resolved != c:
+                            n = _set_pending_count_op(conn, resolved, e, cnt)
+                    total += n
+                applied["n"] = total
+
+            def verify_batch(conn):
+                # Confirma que cada count quedó realmente guardado. Si un scan
+                # pisó alguno (rebase), with_db re-ejecuta op_batch.
+                for (c, e, cnt) in changes:
+                    if e:
+                        row = conn.execute(
+                            "SELECT pending_count FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+                            "AND editor=? AND status='pending' LIMIT 1", (c, e)).fetchone()
+                    else:
+                        row = conn.execute(
+                            "SELECT pending_count FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+                            "AND status='pending' LIMIT 1", (c,)).fetchone()
+                    if row is not None and row["pending_count"] != cnt:
+                        return False
+                return True
+
+            try:
+                with_db(op_batch, message=f"manual: batch counts ({len(changes)} clientes)",
+                        verify=verify_batch)
+                return json_response(self, {"ok": True, "applied": applied["n"],
+                                            "clientes": len(changes)})
+            except Exception as e:
+                return json_response(self, {"error": str(e)[:200]}, status=500)
+
         # MODO PROGRESS: editar editor_progress (current/total del pack)
         if body.get("progress") == 1:
             if is_admin:
