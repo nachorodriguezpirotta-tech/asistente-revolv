@@ -129,6 +129,28 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
         dkey = _dedupe_key(to, subject)
 
     if dedupe_window_minutes > 0:
+        # ── CAPA 1 (ATÓMICA, Turso): a prueba de races de git ──────────────
+        # Reclamo atómico del derecho a mandar. Si dos procesos concurrentes
+        # intentan el mismo mail, solo UNO gana acá (Turso serializa). Es la
+        # barrera definitiva contra duplicados, independiente de tracker.db/git.
+        try:
+            from turso_dedupe import claim_mail
+            _verdict = claim_mail(dkey, kind, subject, to, dedupe_window_minutes)
+        except Exception:
+            _verdict = "unavailable"
+        if _verdict == "duplicate":
+            print(f"   🔄 dedupe Turso: ya se mandó '{subject[:60]}' a {to} (<{dedupe_window_minutes}min). SKIP")
+            try:
+                from tracker import log_mail
+                log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
+                         editor=editor, msg_id="turso-dedupe", success=True,
+                         error="dedupe-skip-turso", dedupe_key=dkey)
+            except Exception:
+                pass
+            return "turso-dedupe-skip"
+        # Si _verdict == 'send' (lo reclamamos) o 'unavailable' (Turso caído),
+        # seguimos a la CAPA 2 (mail_log) como segunda barrera / respaldo.
+        # ── CAPA 2 (mail_log en git): respaldo ─────────────────────────────
         # Sincronizar mail_log con el remote ANTES de chequear duplicado
         try:
             _sync_mail_log_from_remote()
@@ -141,6 +163,14 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
         except Exception:
             existing = None
         if existing:
+            # Si reclamamos en Turso pero el mail_log dice que ya existía,
+            # liberamos el claim para no dejar un registro huérfano inconsistente.
+            if _verdict == "send":
+                try:
+                    from turso_dedupe import release_mail
+                    release_mail(dkey)
+                except Exception:
+                    pass
             print(f"   🔄 dedupe: ya se mandó '{subject[:60]}' a {to} hace <{dedupe_window_minutes}min (msg_id={existing}). SKIP")
             try:
                 from tracker import log_mail
@@ -177,6 +207,13 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
             pass
         return msg_id
     except Exception as e:
+        # El envío falló: liberar el claim de Turso para que el reintento pueda
+        # mandar (si no, el claim queda y el reintento vería 'duplicate').
+        try:
+            from turso_dedupe import release_mail
+            release_mail(dkey)
+        except Exception:
+            pass
         try:
             from tracker import log_mail
             log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
