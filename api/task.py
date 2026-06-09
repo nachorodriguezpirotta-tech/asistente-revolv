@@ -300,8 +300,31 @@ class handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
+            def verify_delete(conn):
+                # Confirmar que el BLOQUEO persistió (es lo que mantiene al
+                # cliente fuera para siempre). Si un scan pisó el push y borró
+                # el block, with_db re-ejecuta op_cliente. Pedido Ignacio 09/jun:
+                # "borro un cliente y no se guarda nunca".
+                from datetime import datetime
+                for nombre in {deleted["cliente"], cliente}:
+                    row = conn.execute(
+                        "SELECT blocked_until FROM client_blocks "
+                        "WHERE TRIM(cliente)=TRIM(?) AND editor='' "
+                        "ORDER BY blocked_until DESC LIMIT 1", (nombre,)
+                    ).fetchone()
+                    if not row:
+                        return False
+                    try:
+                        if datetime.fromisoformat(row["blocked_until"]) <= datetime.now():
+                            return False
+                    except Exception:
+                        return False
+                return True
+
             try:
-                with_db(op_cliente, message=f"manual: borradas tasks de {cliente}" + (f" / {target_editor}" if target_editor else ""))
+                with_db(op_cliente,
+                        message=f"manual: borradas tasks de {cliente}" + (f" / {target_editor}" if target_editor else ""),
+                        verify=verify_delete)
                 return json_response(self, {"ok": True, **deleted})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
