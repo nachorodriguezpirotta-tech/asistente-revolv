@@ -86,6 +86,16 @@ def _dispatch_workflow():
         if minute % 6 in (0, 1):
             ok2, msg2 = _dispatch_one("audit-recover.yml")
             msg = f"{msg} + {msg2}"
+        # Scan COMPLETO 1×/hora (minuto 4-5): es la única red que recorre las
+        # carpetas DIRECTO (por parent), inmune al lag del índice de búsqueda
+        # de Drive. Bug 09/jun Lili pack mayo: los editados que subía Rami no
+        # aparecían ni en Changes API ni en files.list global por 30-60 min
+        # (indexación), así que ni el incremental ni el audit los veían. El
+        # cron de GHA del scan completo es errático (gaps de 1.5-2h) — esto
+        # lo hace confiable. Duplicados: cubiertos por lock + Turso dedupe.
+        if minute in (4, 5):
+            ok3, msg3 = _dispatch_one("scan.yml")
+            msg = f"{msg} + {msg3}"
     except Exception:
         pass
     return ok, msg
