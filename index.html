@@ -621,35 +621,6 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
     subtitle.textContent = IS_ADMIN
         ? 'Vista global — todos los editores'
         : 'Tus pendientes hoy';
-    // Link "📝 Revisiones" — visible para admin Y editores.
-    // Filtro automático en /api/reviews:
-    //  - admin → ve todas
-    //  - editor → ve solo las suyas (WHERE editor=?)
-    const revLink = document.getElementById('reviews-link');
-    if (revLink) {
-        const revQs = IS_ADMIN
-            ? `admin=1&t=${encodeURIComponent(TOKEN)}`
-            : `editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`;
-        revLink.href = `/reviews.html?${revQs}`;
-        revLink.style.display = 'inline-block';
-        // Badge con # de revisiones pedidas.
-        //  - admin: d.stats.revision_requested
-        //  - editor: d.open_count
-        fetch(`/api/reviews?${revQs}`)
-            .then(r => r.json())
-            .then(d => {
-                const active = IS_ADMIN
-                    ? (d.stats?.revision_requested || 0)
-                    : (d.open_count || 0);
-                if (active > 0) {
-                    const b = document.getElementById('reviews-badge');
-                    b.textContent = active;
-                    b.style.display = 'inline-block';
-                }
-            })
-            .catch(() => {});
-    }
-
     if (IS_ADMIN) {
         const statsLink = document.getElementById('stats-link');
         if (statsLink) {
@@ -660,6 +631,26 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
         if (calLink) {
             calLink.href = `/calendar.html?t=${encodeURIComponent(TOKEN)}`;
             calLink.style.display = 'inline-block';
+        }
+        const revLink = document.getElementById('reviews-link');
+        if (revLink) {
+            revLink.href = `/reviews.html?admin=1&t=${encodeURIComponent(TOKEN)}`;
+            revLink.style.display = 'inline-block';
+            // Badge con # de revisiones PEDIDAS (revision_requested).
+            // Ya no contamos 'pending' (eso era ruido — antes se creaba uno
+            // por cada video entregado). Solo aparece cuando el cliente
+            // realmente toca 'Quiero ajustar algo'.
+            fetch(`/api/reviews?admin=1&t=${encodeURIComponent(TOKEN)}`)
+                .then(r => r.json())
+                .then(d => {
+                    const active = d.stats?.revision_requested || 0;
+                    if (active > 0) {
+                        const b = document.getElementById('reviews-badge');
+                        b.textContent = active;
+                        b.style.display = 'inline-block';
+                    }
+                })
+                .catch(() => {});
         }
         const cfgLink = document.getElementById('config-link');
         if (cfgLink) {
@@ -1518,10 +1509,93 @@ function _showToast(msg, color = '#fbbf24') {
     t._h = setTimeout(() => { t.style.opacity = '0'; }, 3000);
 }
 
-// Queue de patches con coalescing: clicks rápidos del +/- no se pisan.
-// Si hay un PATCH in-flight, los siguientes clicks solo updatean el target
-// y se mandan en 1 sola request cuando el primero termina.
-window._patchQueue = window._patchQueue || new Map();
+// BATCH de cambios de count: TODOS los +/- (de cualquier cliente) se juntan y
+// se mandan en UN solo PATCH. Resuelve "si toco dos a la vez no carga" y "se
+// pierde al refrescar": un solo with_db atómico en el server, sin choques de
+// git. El render es optimista (instantáneo); el guardado se agrupa (debounce).
+window._countBatch = window._countBatch || new Map();   // key -> {cliente, editor, count}
+window._batchTimer = window._batchTimer || null;
+window._batchInFlight = window._batchInFlight || false;
+
+function _scheduleBatchFlush() {
+    if (window._batchTimer) clearTimeout(window._batchTimer);
+    window._batchTimer = setTimeout(_flushCountBatch, 600);
+}
+
+async function _flushCountBatch() {
+    if (window._batchInFlight) { _scheduleBatchFlush(); return; }
+    if (window._countBatch.size === 0) return;
+    const snapshot = Array.from(window._countBatch.values());
+    window._countBatch.clear();
+    window._batchInFlight = true;
+    const batchBody = {
+        batch: snapshot.map(x => {
+            const o = { cliente: x.cliente, count: x.count };
+            if (x.editor) o.editor = x.editor;
+            return o;
+        }),
+        t: TOKEN,
+    };
+    if (IS_ADMIN) batchBody.admin = 1; else batchBody.editor = EDITOR;
+    let ok = false;
+    for (let attempt = 0; attempt < 5 && !ok; attempt++) {
+        try {
+            const res = await fetch('/api/task', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(batchBody),
+            });
+            const text = await res.text();
+            let data;
+            try { data = JSON.parse(text); }
+            catch { throw new Error('server saturado'); }
+            if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+            ok = true;
+        } catch (err) {
+            if (attempt < 4) {
+                await new Promise(r => setTimeout(r, 600 * Math.pow(2, attempt)));
+                continue;
+            }
+            // falló del todo: re-encolar para el próximo flush (no perder el cambio)
+            console.error('batch count flush:', err);
+            snapshot.forEach(x => {
+                const k = `${x.cliente.replace(/&#39;/g, "'")}|${x.editor || ''}`;
+                if (!window._countBatch.has(k)) window._countBatch.set(k, x);
+            });
+            if (typeof _showToast === 'function')
+                _showToast('⚠️ Server saturado — reintentando guardar…');
+        }
+    }
+    window._batchInFlight = false;
+    if (window._countBatch.size > 0) _scheduleBatchFlush();  // llegaron clicks nuevos
+}
+
+// Red de seguridad: si el usuario REFRESCA o cierra con cambios sin guardar
+// (dentro de los 600ms del debounce), los mandamos YA con keepalive (sobrevive
+// al unload). Mata el "actualizo la página y no se guardó lo que cambié".
+function _flushBatchOnExit() {
+    if (window._countBatch.size === 0) return;
+    const snapshot = Array.from(window._countBatch.values());
+    const batchBody = {
+        batch: snapshot.map(x => { const o = { cliente: x.cliente, count: x.count }; if (x.editor) o.editor = x.editor; return o; }),
+        t: TOKEN,
+    };
+    if (IS_ADMIN) batchBody.admin = 1; else batchBody.editor = EDITOR;
+    try {
+        fetch('/api/task', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(batchBody),
+            keepalive: true,
+        });
+        window._countBatch.clear();
+    } catch (e) { /* noop */ }
+}
+window.addEventListener('pagehide', _flushBatchOnExit);
+window.addEventListener('beforeunload', _flushBatchOnExit);
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') _flushBatchOnExit();
+});
 
 async function adjustCount(cliente, editor, _ignoredCurrentValue, delta, btn) {
     const clienteName = cliente.replace(/&#39;/g, "'");
@@ -1569,68 +1643,11 @@ async function adjustCount(cliente, editor, _ignoredCurrentValue, delta, btn) {
     item.videos = newCount;
     render(LAST_DATA);
 
-    // Coalescing del PATCH al server
+    // Acumular en el batch global y agendar el flush. Tocar varios clientes
+    // (o el mismo varias veces) se junta en UN solo PATCH atómico.
     const key = `${clienteName}|${editorName || ''}`;
-    const existing = window._patchQueue.get(key);
-    if (existing) {
-        // Ya hay un patch in-flight. Solo actualizamos el target — cuando el
-        // current termine, el loop interno va a re-enviar con este valor.
-        existing.target = newCount;
-        return;
-    }
-
-    const entry = { target: newCount };
-    window._patchQueue.set(key, entry);
-
-    try {
-        // Loop: mandamos hasta que el target coincida con lo último enviado.
-        // Cada attempt tiene retry interno con backoff si el server devuelve
-        // HTML/500 (Vercel saturado por muchos PATCH simultáneos).
-        let lastSent = null;
-        while (entry.target !== lastSent) {
-            const sending = entry.target;
-            const body = { cliente, count: sending, t: TOKEN };
-            if (IS_ADMIN) { body.admin = 1; if (editor) body.editor = editor; }
-            else { body.editor = EDITOR; }
-            // Retry con backoff: si Vercel/DB devuelve HTML "An error o...",
-            // esperamos y reintentamos hasta 4 veces antes de dar por perdido.
-            let ok = false;
-            for (let attempt = 0; attempt < 4 && !ok; attempt++) {
-                try {
-                    const res = await fetch('/api/task', {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body),
-                    });
-                    const text = await res.text();
-                    let data;
-                    try { data = JSON.parse(text); }
-                    catch { throw new Error('server retornó HTML — saturado'); }
-                    if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
-                    ok = true;
-                } catch (err) {
-                    if (attempt < 3) {
-                        const wait = 500 * Math.pow(2, attempt);  // 500, 1000, 2000
-                        await new Promise(r => setTimeout(r, wait));
-                        continue;
-                    }
-                    throw err;
-                }
-            }
-            lastSent = sending;
-        }
-    } catch (e) {
-        // Mantenemos el optimistic update (lo que el user vió). El próximo
-        // refresh va a re-sincronizar con el server. NO mostramos alert para
-        // no interrumpir el flow — solo un toast silencioso en console.
-        console.error('adjustCount:', e);
-        // Toast pequeño (no alert que bloquea) si la cosa falló del todo
-        if (typeof _showToast === 'function') {
-            _showToast('⚠️ Server saturado — cambio aplicado local, se sincroniza al refrescar');
-        }
-    } finally {
-        window._patchQueue.delete(key);
-    }
+    window._countBatch.set(key, { cliente, editor: editorName, count: newCount });
+    _scheduleBatchFlush();
 }
 
 async function toggleUrgent(cliente, editor, urgent, btn) {
