@@ -58,6 +58,7 @@ jobs:
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+          DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}
         run: python audit_recover.py --hours 12
 
       - name: Commit DB if changed
