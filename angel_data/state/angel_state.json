@@ -100,7 +100,19 @@
       "processed_at": "2026-05-26T21:57:54.183981+00:00",
       "report": "/home/runner/work/asistente-revolv/asistente-revolv/angel_data/reports/20260526_215711_el_error_fatal.html",
       "mail_id": "19e664b57c14b971"
+    },
+    "1Zq6-HTmNiZVIeT6hYirX1Opqlgy5XxyS": {
+      "name": "reel1.mp4",
+      "processed_at": "2026-06-09T23:40:23.373050+00:00",
+      "report": "/home/runner/work/asistente-revolv/asistente-revolv/angel_data/reports/20260609_233926_reel1.html",
+      "mail_id": "19eaec232a96a85a"
+    },
+    "1t7p1xPg3fMR-fCVZGK7AJxNPzm7KZ6ab": {
+      "name": "reel2.mp4",
+      "processed_at": "2026-06-09T23:41:22.328298+00:00",
+      "report": "/home/runner/work/asistente-revolv/asistente-revolv/angel_data/reports/20260609_234023_reel2.html",
+      "mail_id": "19eaec319a7ac56f"
     }
   },
-  "last_run": "2026-06-09T21:58:01.376657+00:00"
+  "last_run": "2026-06-09T23:41:22.328315+00:00"
 }
