@@ -7,7 +7,6 @@ Uso:
 """
 
 import argparse
-import sys
 from collections import defaultdict
 from datetime import datetime
 from typing import Optional
@@ -255,7 +254,17 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
             s = _ud.normalize("NFD", s or "")
             s = "".join(c for c in s if _ud.category(c) != "Mn")
             return " ".join(s.lower().split())
-        notif_dedupe_key = f"notif-pending|{_norm_cli(cliente)}|{(editor or '').strip().lower()}"
+        # FIRMA DE MATERIAL: set ordenado de subcarpetas (= videos) presentes.
+        # Bug 08/jun Álvaro Gutiérrez: subió Video 2/3/4 el mismo día y NO se
+        # notificó porque el dedupe por cliente+editor (ventana 20h) tapaba todo.
+        # Incluyendo las subcarpetas en la clave: material re-detectado (mismas
+        # subcarpetas) sigue deduplicándose (bug Jennifer intacto), pero un VIDEO
+        # NUEVO (subcarpeta nueva) cambia la firma → se notifica aunque sea el
+        # mismo día. Es como lo piensa Ignacio: cada subcarpeta = un video.
+        _subs = sorted({(it.get("subfolder_name") or "").strip().lower()
+                        for it in items if (it.get("subfolder_name") or "").strip()})
+        _mat_sig = "+".join(_subs) if _subs else "root"
+        notif_dedupe_key = f"notif-pending|{_norm_cli(cliente)}|{(editor or '').strip().lower()}|{_mat_sig}"
 
         any_sent = False
         for dest in destinatarios:
