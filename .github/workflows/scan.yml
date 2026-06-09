@@ -6,11 +6,14 @@ on:
     # cierra tareas, etc). El scan-incremental.yml corre cada 2 min para
     # latencia inmediata, este queda como backup full sweep.
     - cron: '0 * * * *'
-  # workflow_dispatch DESHABILITADO 2026-05-20: cron externo (cron-job.org)
-  # disparaba este workflow cada 15 min, causando race conditions con el bot
-  # push de tracker.db → mismo mail llegaba 3-4 veces con counts distintos.
-  # Para re-habilitar: APAGAR cron externo + descomentar siguiente línea.
-  # workflow_dispatch: {}
+  # workflow_dispatch RE-HABILITADO 09/jun/2026: /api/trigger lo dispara 1×/hora
+  # (minuto 4-5). El cron de GHA es errático (gaps de 1.5-2h) y este scan es la
+  # ÚNICA red que recorre carpetas directo (inmune al lag del índice de búsqueda
+  # de Drive — bug Lili pack mayo: Changes API y files.list global no veían los
+  # editados de Rami por 30-60 min). El riesgo de duplicados que motivó
+  # deshabilitarlo (2026-05-20) ya no existe: lock scan-drive + dedupe atómico
+  # Turso + dedupe mail_log + Drive appProperties.
+  workflow_dispatch: {}
   push:
     branches: [main]
     # NO disparar si solo cambia la DB (los commits del bot no deben re-ejecutar)
@@ -62,7 +65,6 @@ jobs:
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
-          DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}
         # Reintento: hasta 3 intentos con backoff exponencial (10s, 30s)
         run: |
           for i in 1 2 3; do
