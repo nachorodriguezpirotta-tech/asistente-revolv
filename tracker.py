@@ -2128,31 +2128,38 @@ def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
     o variaciones. Bug 04/jun: clientes reaparecían por mismatch de nombre.
     """
     from datetime import datetime
+    now = datetime.now()
+    target = _normalize_client_name(cliente)
+    ed = editor or ""
     conn = get_conn()
-    # 1) Match exacto (rápido)
-    row = conn.execute("""
-        SELECT blocked_until FROM client_blocks
-        WHERE TRIM(cliente)=TRIM(?) AND (editor=? OR editor='' OR editor IS NULL)
-        ORDER BY blocked_until DESC LIMIT 1
-    """, (cliente, editor or "")).fetchone()
-    if not row:
-        # 2) Fallback normalizado
-        target = _normalize_client_name(cliente)
-        all_rows = conn.execute("SELECT cliente, editor, blocked_until FROM client_blocks").fetchall()
-        for r in all_rows:
-            if _normalize_client_name(r["cliente"]) == target:
-                # editor flexible: el block del cliente entero (editor='') aplica
-                if not r["editor"] or r["editor"] == (editor or ""):
-                    row = r
-                    break
+    rows = conn.execute(
+        "SELECT cliente, editor, blocked_until FROM client_blocks"
+    ).fetchall()
     conn.close()
-    if not row:
-        return False
-    try:
-        until = datetime.fromisoformat(row["blocked_until"])
-        return datetime.now() < until
-    except Exception:
-        return False
+    # Revisar TODOS los bloqueos: devolver True si CUALQUIERA está activo y
+    # matchea el cliente (exacto o normalizado por acentos/case) y el editor
+    # (wildcard editor='' = cliente entero, o editor igual).
+    # Bug 09/jun Alicia Ramírez: la versión vieja hacía un match exacto que
+    # encontraba un bloqueo VENCIDO (de 'Alicia Ramírez' con tilde) y se
+    # saltaba el fallback que tenía el bloqueo PERMANENTE de 'Alicia Ramirez'
+    # (sin tilde, editor='') → devolvía False → el scan re-creaba la task todos
+    # los días. Ahora juntamos todos y nos quedamos con cualquier activo.
+    for r in rows:
+        name_match = (
+            (r["cliente"] or "").strip() == (cliente or "").strip()
+            or _normalize_client_name(r["cliente"]) == target
+        )
+        if not name_match:
+            continue
+        # editor: wildcard (vacío/NULL) aplica a cualquiera; si no, debe coincidir
+        if r["editor"] and r["editor"] != ed:
+            continue
+        try:
+            if datetime.fromisoformat(r["blocked_until"]) > now:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def decrement_pending_count(cliente: str, completed_by_file_id: str) -> dict:
