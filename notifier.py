@@ -7,6 +7,7 @@ Uso:
 """
 
 import argparse
+import sys
 from collections import defaultdict
 from datetime import datetime
 from typing import Optional
@@ -575,6 +576,66 @@ def _build_vercel_url(path: str) -> str:
     return f"https://asistente-revolv.vercel.app{path}"
 
 
+_SECRET_VERIFIED_AT = 0  # epoch seconds del último check OK
+_SECRET_VERIFY_CACHE_SECONDS = 300  # 5 min: cubre un batch típico sin abusar del endpoint
+
+
+def _assert_client_secret_matches_endpoint():
+    """ABORT si el DASHBOARD_SECRET local (con el que firmamos tokens) no
+    matchea el del endpoint Vercel (con el que se validan).
+
+    Sin este check, el cron puede mandar mails con tokens muertos cuando el
+    secret de GitHub Actions != secret de Vercel (caso clásico: alguien rotó
+    uno y no el otro). Esto se ejecuta UNA vez por proceso (cacheado 5min)
+    antes de mandar mails al cliente.
+
+    Caso esperado:
+      - GHA y Vercel comparten DASHBOARD_SECRET → token firmado acá valida allá → OK
+      - GHA tiene DASHBOARD_SECRET pero Vercel no (o distinto) → 401 → ABORT
+      - GHA no tiene secret → _shared.py ya falla loud al import (capa anterior)
+    """
+    global _SECRET_VERIFIED_AT
+    import time, urllib.request, urllib.parse, urllib.error
+    if time.time() - _SECRET_VERIFIED_AT < _SECRET_VERIFY_CACHE_SECONDS:
+        return  # ya verificado hace poco, no hacer roundtrip
+    try:
+        from api._shared import make_client_token
+    except Exception as e:
+        raise RuntimeError(f"No pude importar make_client_token para preflight: {e}")
+
+    canary = "__PREFLIGHT__"
+    tok = make_client_token(canary)
+    url = (
+        "https://asistente-revolv.vercel.app/api/review"
+        f"?action=info&cliente={urllib.parse.quote(canary)}&file_id=preflight&t={tok}"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            status = r.status
+    except urllib.error.HTTPError as e:
+        status = e.code
+    except Exception as e:
+        # Network down → no falla loud, no aborta (probable transitorio).
+        # Si está realmente desincronizado lo va a detectar el próximo intento.
+        print(f"   ⚠️ preflight check no pudo contactar Vercel: {e}", file=sys.stderr)
+        return
+
+    if status == 200:
+        _SECRET_VERIFIED_AT = time.time()
+        return
+    if status == 401:
+        raise RuntimeError(
+            "🚨 PREFLIGHT FALLÓ: DASHBOARD_SECRET de este cron NO matchea el de "
+            "Vercel. Los tokens que firme van a quedar muertos (cliente recibe "
+            "'Link inválido'/401). ABORTO antes de mandar mails. "
+            "Arreglá: sincronizá DASHBOARD_SECRET en GitHub Secrets y Vercel env vars."
+        )
+    print(
+        f"   ⚠️ preflight check: status inesperado {status}, sigo igual",
+        file=sys.stderr,
+    )
+
+
 def send_client_delivery_mail(cliente: str, file_name: str,
                                 edited_folder_id: Optional[str],
                                 client_folder_id: Optional[str],
@@ -588,6 +649,11 @@ def send_client_delivery_mail(cliente: str, file_name: str,
 
     Retorna True si se mandó, False si el cliente no estaba activado o falló.
     """
+    # PREFLIGHT: verificar que el secret matchea el endpoint Vercel.
+    # Si no matchea, raise → cron falla loud, ningún mail con token muerto
+    # se envía a clientes.
+    _assert_client_secret_matches_endpoint()
+
     from tracker import cfg_client_should_be_notified
     target = cfg_client_should_be_notified(cliente)
     if not target:
