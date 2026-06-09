@@ -56,7 +56,7 @@ def _build(conn, cliente: str):
         FROM known_edited_files kef
         WHERE TRIM(LOWER(kef.cliente)) = TRIM(LOWER(?))
         ORDER BY kef.first_seen_at DESC
-        LIMIT 500
+        LIMIT 2000
         """,
         (cliente,),
     ).fetchall()
