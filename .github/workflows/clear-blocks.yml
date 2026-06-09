@@ -4,7 +4,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: scan-drive   # mismo lock que los scans: no corren a la vez
+  group: clear-blocks-oneoff
   cancel-in-progress: false
 
 permissions:
@@ -13,7 +13,7 @@ permissions:
 jobs:
   clear:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,25 +21,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Clear blocks
-        run: python _clear_blocks.py
-      - name: Commit DB
+      - name: Clear blocks (siempre sobre la última versión)
         run: |
           git config user.name "asistente-bot"
           git config user.email "bot@revolv.local"
-          if ! git status --porcelain tracker.db | grep -q .; then
-            echo "sin cambios en tracker.db"; exit 0
-          fi
-          git add tracker.db
-          git commit -m "manual: limpiar client_blocks (todos activos) [skip ci]"
-          for attempt in 1 2 3 4; do
-            if git pull --rebase -X ours && git push; then
-              echo "OK intento $attempt"; exit 0
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main && git reset --hard origin/main
+            python _clear_blocks.py
+            if git diff --quiet tracker.db; then
+              echo "client_blocks ya está vacío — nada que pushear"; exit 0
             fi
-            git rebase --abort || true
-            git fetch origin main && git reset --soft origin/main
             git add tracker.db
-            git commit -m "manual: limpiar client_blocks (todos activos) [skip ci]" || true
+            git commit -m "manual: limpiar client_blocks (todos activos) [skip ci]"
+            if git push; then echo "OK intento $attempt"; exit 0; fi
+            echo "push falló (intento $attempt), reintento sobre la última versión"
             sleep $((2 * attempt))
           done
-          echo "no se pudo pushear"; exit 1
+          echo "no se pudo pushear tras 6 intentos"; exit 1
