@@ -196,8 +196,14 @@ class handler(BaseHTTPRequestHandler):
                     return json_response(self, {"error": "cliente requerido"}, status=400)
                 return _html_response(self, _render_error("Link inválido", "Falta cliente"), 400)
 
-            # Auth: token tiene que matchear con el cliente
-            if not check_client_token(cliente, token):
+            # Auth — dos formas válidas (ver do_POST para más contexto):
+            #  (1) token de cliente firmado con DASHBOARD_SECRET (link del mail)
+            #  (2) header X-Portal-Bridge-Secret == PORTAL_BRIDGE_SECRET (portal→asistente)
+            import os as _os
+            _bridge = _os.environ.get("PORTAL_BRIDGE_SECRET", "").strip()
+            _req_bridge = (self.headers.get("X-Portal-Bridge-Secret") or "").strip()
+            _authorized_by_bridge = bool(_bridge) and _req_bridge == _bridge
+            if not _authorized_by_bridge and not check_client_token(cliente, token):
                 if action == "info":
                     return json_response(self, {"error": "unauthorized"}, status=401)
                 return _html_response(self, _render_error("Link inválido", "El link expiró o no es válido."), 401)
