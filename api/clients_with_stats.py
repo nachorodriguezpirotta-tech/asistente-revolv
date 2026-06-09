@@ -50,7 +50,6 @@ def _build(conn):
                 COUNT(*) AS videos,
                 MAX(kef.first_seen_at) AS last_seen
             FROM known_edited_files kef
-            WHERE kef.is_baseline = 0
             GROUP BY kef.cliente
             HAVING videos > 0
         ),

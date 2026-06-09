@@ -55,9 +55,8 @@ def _build(conn, cliente: str):
               ORDER BY cr.id DESC LIMIT 1) AS review_created_at
         FROM known_edited_files kef
         WHERE TRIM(LOWER(kef.cliente)) = TRIM(LOWER(?))
-          AND kef.is_baseline = 0
         ORDER BY kef.first_seen_at DESC
-        LIMIT 200
+        LIMIT 500
         """,
         (cliente,),
     ).fetchall()
