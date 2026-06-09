@@ -46,11 +46,11 @@ def _check_token(name: str, token: str) -> bool:
     return hmac.compare_digest(_make_token(name), token)
 
 
-def _dispatch_workflow():
+def _dispatch_one(workflow_file):
     if not GITHUB_PAT:
         return False, "GITHUB_PAT no configurado"
     url = (f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
-           f"/actions/workflows/{WORKFLOW_FILE}/dispatches")
+           f"/actions/workflows/{workflow_file}/dispatches")
     body = json.dumps({"ref": GITHUB_BRANCH}).encode()
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Accept", "application/vnd.github+json")
@@ -60,12 +60,35 @@ def _dispatch_workflow():
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             if resp.status in (200, 201, 204):
-                return True, f"triggered {WORKFLOW_FILE}"
+                return True, f"triggered {workflow_file}"
             return False, f"GitHub API status {resp.status}"
     except urllib.error.HTTPError as e:
         return False, f"HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}"
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:200]}"
+
+
+def _dispatch_workflow():
+    # Siempre disparar el scan incremental (rápido, Drive Changes API).
+    ok, msg = _dispatch_one(WORKFLOW_FILE)
+    # Cada ~6 min disparar TAMBIÉN el audit-recover (backup que NO depende de
+    # Drive Changes — usa files.list directo, detecta lo que el incremental
+    # pierde, ej. editados en subcarpetas profundas tipo pack mayo/Editados).
+    # El cron de GHA del audit es inconfiable (corre cada 1-2h), así que lo
+    # disparamos nosotros. Bug 09/jun: editados de Lili en pack mayo/Editados
+    # no se detectaban por días. Usamos el minuto del reloj para espaciar.
+    try:
+        from datetime import datetime, timezone
+        minute = datetime.now(timezone.utc).minute
+        # in (0,1) tolera que el ping caiga en minutos pares o impares:
+        # como cron-job.org pinguea siempre con la misma paridad, esto
+        # dispara el audit ~cada 6 min sin doble-disparo.
+        if minute % 6 in (0, 1):
+            ok2, msg2 = _dispatch_one("audit-recover.yml")
+            msg = f"{msg} + {msg2}"
+    except Exception:
+        pass
+    return ok, msg
 
 
 def _json(handler, payload, status=200):
