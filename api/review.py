@@ -238,7 +238,20 @@ class handler(BaseHTTPRequestHandler):
             token = (params.get("t", [""])[0] or "").strip()
             if not cliente:
                 return json_response(self, {"error": "cliente requerido"}, status=400)
-            if not check_client_token(cliente, token):
+
+            # Auth — dos formas válidas:
+            #  (1) token de cliente firmado con DASHBOARD_SECRET (link del mail)
+            #  (2) header X-Portal-Bridge-Secret == PORTAL_BRIDGE_SECRET (portal
+            #      a asistente: el portal ya sabe quién es el cliente porque
+            #      el cliente entró desde su panel /c/<cliente>?t=TOKEN, y el
+            #      portal valida ese token con make_client_token. Acá usamos
+            #      un secret aparte para que si DASHBOARD_SECRET se rota o
+            #      desincroniza, el sync portal→asistente siga andando.)
+            import os as _os
+            bridge = _os.environ.get("PORTAL_BRIDGE_SECRET", "").strip()
+            req_bridge = (self.headers.get("X-Portal-Bridge-Secret") or "").strip()
+            authorized_by_bridge = bool(bridge) and req_bridge == bridge
+            if not authorized_by_bridge and not check_client_token(cliente, token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
             length = int(self.headers.get("Content-Length", "0"))
