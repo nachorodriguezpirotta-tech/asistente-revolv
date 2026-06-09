@@ -1,0 +1,45 @@
+name: Clear client blocks (one-off)
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: scan-drive   # mismo lock que los scans: no corren a la vez
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Clear blocks
+        run: python _clear_blocks.py
+      - name: Commit DB
+        run: |
+          git config user.name "asistente-bot"
+          git config user.email "bot@revolv.local"
+          if ! git status --porcelain tracker.db | grep -q .; then
+            echo "sin cambios en tracker.db"; exit 0
+          fi
+          git add tracker.db
+          git commit -m "manual: limpiar client_blocks (todos activos) [skip ci]"
+          for attempt in 1 2 3 4; do
+            if git pull --rebase -X ours && git push; then
+              echo "OK intento $attempt"; exit 0
+            fi
+            git rebase --abort || true
+            git fetch origin main && git reset --soft origin/main
+            git add tracker.db
+            git commit -m "manual: limpiar client_blocks (todos activos) [skip ci]" || true
+            sleep $((2 * attempt))
+          done
+          echo "no se pudo pushear"; exit 1
