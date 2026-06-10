@@ -132,7 +132,15 @@ El más viejo lleva <strong>{days:.0f} días</strong> esperando.</p>
 </body></html>"""
 
         try:
-            msg_id = send_mail(to=r["email"], subject=subject, body_text=text, body_html=html)
+            # Dedupe ATÓMICO (Turso, 20h): máximo 1 reminder por editor por día,
+            # sin importar cuántas veces corra este script (cron GHA + trigger
+            # + dispatch manual). El throttle viejo por meta_set NO persistía
+            # (el workflow no commitea tracker.db) → mandaba en cada run.
+            # Bug encontrado 10/jun al separar reminders del daily summary.
+            msg_id = send_mail(to=r["email"], subject=subject, body_text=text, body_html=html,
+                               kind="reminder", editor=editor,
+                               dedupe_window_minutes=1200,
+                               dedupe_key_override=f"editor-reminder|{editor.strip().lower()}")
             print(f"     ✅ {editor} ({r['email']}): {msg_id}")
             meta_set(META_KEY_LAST_REMINDER + editor, now.isoformat(timespec="seconds"))
         except Exception as e:
