@@ -972,10 +972,19 @@ function renderEditor(data) {
         content.innerHTML = html + '<div class="empty">✅ No tenés pendientes.</div>';
         return;
     }
-    html += `<section class="editor-block"><h2>${escapeHtml(EDITOR)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length} ${items.length === 1 ? 'cliente' : 'clientes'}</span></h2>`;
-    for (const it of items) {
+    const orderModeE = window._orderModes && window._orderModes.has(EDITOR);
+    html += `<section class="editor-block"><h2><span>${escapeHtml(EDITOR)} <span style="color: var(--text-dim); font-weight: 400; font-size: 14px;">${items.length} ${items.length === 1 ? 'cliente' : 'clientes'}</span></span>
+      <button class="add-mini" onclick="toggleOrderMode('${escapeHtml(EDITOR).replace(/'/g, '&#39;')}')" title="Ordenar prioridad de entrega" style="${orderModeE ? 'background:#ff4747; color:white;' : ''}">${orderModeE ? '✓' : '↕'}</button></h2>`;
+    for (let _i = 0; _i < items.length; _i++) {
+        const it = items[_i];
         const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
         const videos = it.videos || 1;
+        const orderArrows = orderModeE
+            ? `<span style="display:inline-flex; gap:4px; margin-right:6px;">
+                <button class="count-btn" onclick="moveClientOrder(null, '${clienteEsc}', -1)" title="Subir" ${_i === 0 ? 'disabled style="opacity:.3;"' : ''}>▲</button>
+                <button class="count-btn" onclick="moveClientOrder(null, '${clienteEsc}', 1)" title="Bajar" ${_i === items.length - 1 ? 'disabled style="opacity:.3;"' : ''}>▼</button>
+               </span><span style="color:var(--text-dim); font-size:12px; margin-right:4px;">${_i + 1}.</span>`
+            : '';
         const driveBtn = it.drive_folder_id
             ? `<a href="https://drive.google.com/drive/folders/${it.drive_folder_id}" target="_blank" class="drive-btn" title="Abrir carpeta en Drive">📁</a>`
             : '';
@@ -983,7 +992,7 @@ function renderEditor(data) {
         const noteDisplay = it.note ? `<span class="cliente-note" title="${escapeHtml(it.note)}">📝 ${escapeHtml(it.note.length > 40 ? it.note.slice(0,40)+'…' : it.note)}</span>` : '';
         html += `<div class="cliente-card${it.urgent ? ' urgent' : ''}">
             <span class="cliente-meta">
-                ${driveBtn}
+                ${orderArrows}${driveBtn}
                 <span class="cliente-name">${urgentMark} ${escapeHtml(it.cliente)}</span>
                 ${daysBadge(it.detected_at)}
                 <span class="count-control">
@@ -1071,14 +1080,25 @@ function renderAdmin(data) {
             ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
             <h2>
                 <span>${escapeHtml(ed)} ${countLabel}${spkHtml}${vacationLabel}</span>
+                <span style="display:inline-flex; gap:6px;">
+                <button class="add-mini" onclick="toggleOrderMode('${edEsc}')" title="Ordenar prioridad de entrega" style="${window._orderModes && window._orderModes.has(ed) ? 'background:#ff4747; color:white;' : ''}">${window._orderModes && window._orderModes.has(ed) ? '✓' : '↕'}</button>
                 <button class="add-mini" onclick="addClientToEditor('${edEsc}')" title="Agregar cliente a ${escapeHtml(ed)}">+</button>
+                </span>
             </h2>
             ${progHtml}`;
-        for (const it of items) {
+        const orderMode = window._orderModes && window._orderModes.has(ed);
+        for (let _i = 0; _i < items.length; _i++) {
+            const it = items[_i];
             const clienteEsc = escapeHtml(it.cliente).replace(/'/g, '&#39;');
             const videos = it.videos || 1;
             const driveBtn = it.drive_folder_id
                 ? `<a href="https://drive.google.com/drive/folders/${it.drive_folder_id}" target="_blank" class="drive-btn" title="Abrir carpeta en Drive">📁</a>`
+                : '';
+            const orderArrows = orderMode
+                ? `<span style="display:inline-flex; gap:4px; margin-right:6px;">
+                    <button class="count-btn" onclick="moveClientOrder('${edEsc}', '${clienteEsc}', -1)" title="Subir" ${_i === 0 ? 'disabled style="opacity:.3;"' : ''}>▲</button>
+                    <button class="count-btn" onclick="moveClientOrder('${edEsc}', '${clienteEsc}', 1)" title="Bajar" ${_i === items.length - 1 ? 'disabled style="opacity:.3;"' : ''}>▼</button>
+                   </span><span style="color:var(--text-dim); font-size:12px; margin-right:4px;">${_i + 1}.</span>`
                 : '';
             const urgentMark = it.urgent ? '🚨' : '';
             const noteDisplay = it.note ? `<span class="cliente-note" title="${escapeHtml(it.note)}">📝 ${escapeHtml(it.note.length > 40 ? it.note.slice(0,40)+'…' : it.note)}</span>` : '';
@@ -1086,7 +1106,7 @@ function renderAdmin(data) {
                 data-cliente="${clienteEsc}" data-editor="${edEsc}"
                 ondragstart="onDragStart(event)" ondragend="onDragEnd(event)">
                 <span class="cliente-meta">
-                    ${driveBtn}
+                    ${orderArrows}${driveBtn}
                     <span class="cliente-name">${urgentMark} ${escapeHtml(it.cliente)}</span>
                     ${daysBadge(it.detected_at)}
                     <span class="count-control">
@@ -1649,6 +1669,80 @@ async function adjustCount(cliente, editor, _ignoredCurrentValue, delta, btn) {
     window._countBatch.set(key, { cliente, editor: editorName, count: newCount });
     _scheduleBatchFlush();
 }
+
+
+// ───── Orden de prioridad de entrega (opcional, por editor) ─────
+// Modo orden: botón ↕ en el header → flechas ▲▼ por cliente. El orden se
+// guarda solo (debounce 800ms + keepalive al salir) en cfg_delivery_priority.
+// Urgentes 🚨 siempre quedan arriba (el server los prioriza igual).
+window._orderModes = window._orderModes || new Set();
+window._orderSaveTimers = window._orderSaveTimers || {};
+window._orderDirty = window._orderDirty || new Set();
+
+function toggleOrderMode(editorEsc) {
+    const ed = editorEsc.replace(/&#39;/g, "'");
+    if (window._orderModes.has(ed)) {
+        window._orderModes.delete(ed);
+        _saveOrderNow(ed);  // al salir del modo, guardar ya
+    } else {
+        window._orderModes.add(ed);
+    }
+    render(LAST_DATA);
+}
+
+function _getOrderList(ed) {
+    if (IS_ADMIN && ed && LAST_DATA?.by_editor) return LAST_DATA.by_editor[ed];
+    return LAST_DATA?.pendientes;
+}
+
+function moveClientOrder(editorEsc, clienteEsc, dir) {
+    const ed = editorEsc ? editorEsc.replace(/&#39;/g, "'") : EDITOR;
+    const cliente = clienteEsc.replace(/&#39;/g, "'");
+    const list = _getOrderList(IS_ADMIN ? ed : null);
+    if (!list) return;
+    const i = list.findIndex(x => x.cliente === cliente);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    render(LAST_DATA);
+    window._orderDirty.add(ed);
+    clearTimeout(window._orderSaveTimers[ed]);
+    window._orderSaveTimers[ed] = setTimeout(() => _saveOrderNow(ed), 800);
+}
+
+async function _saveOrderNow(ed, useKeepalive) {
+    if (!window._orderDirty.has(ed)) return;
+    const list = _getOrderList(IS_ADMIN ? ed : null);
+    if (!list) return;
+    window._orderDirty.delete(ed);
+    const body = { action: 'set_priority', editor: ed, order: list.map(x => x.cliente), t: TOKEN };
+    if (IS_ADMIN) body.admin = 1;
+    try {
+        const res = await fetch('/api/task', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            keepalive: !!useKeepalive,
+        });
+        if (!useKeepalive) {
+            const d = await res.json();
+            if (!res.ok || !d.ok) throw new Error(d.error || 'HTTP ' + res.status);
+            if (typeof _showToast === 'function') _showToast('↕ Orden guardado');
+        }
+    } catch (e) {
+        console.error('saveOrder:', e);
+        window._orderDirty.add(ed);  // reintentar en próximo flush
+        if (typeof _showToast === 'function') _showToast('⚠️ No se guardó el orden — reintentando');
+        clearTimeout(window._orderSaveTimers[ed]);
+        window._orderSaveTimers[ed] = setTimeout(() => _saveOrderNow(ed), 2500);
+    }
+}
+
+function _flushOrdersOnExit() {
+    for (const ed of Array.from(window._orderDirty)) _saveOrderNow(ed, true);
+}
+window.addEventListener('pagehide', _flushOrdersOnExit);
+window.addEventListener('beforeunload', _flushOrdersOnExit);
 
 async function toggleUrgent(cliente, editor, urgent, btn) {
     const newUrgent = urgent === 1;
