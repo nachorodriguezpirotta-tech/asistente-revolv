@@ -101,14 +101,30 @@ class handler(BaseHTTPRequestHandler):
             if not folder_id:
                 all_root = list_root_folders()
                 folder = find_folder_by_name(cliente, all_root)
-                if not folder:
-                    return json_response(
-                        self,
-                        {"error": f"No encontré carpeta de '{cliente}' en Drive"},
-                        status=404,
-                    )
-                folder_id = folder["id"]
-                folder_name = folder.get("name")
+                if folder:
+                    folder_id = folder["id"]
+                    folder_name = folder.get("name")
+                else:
+                    # Fallback: el scan ya guardó el folder_id en la tabla clients
+                    # (cubre clientes cuyo nombre no matchea la carpeta por fuzzy).
+                    def _from_db(conn):
+                        row = conn.execute(
+                            """
+                            SELECT folder_id FROM clients
+                            WHERE TRIM(LOWER(cliente)) = TRIM(LOWER(?))
+                            ORDER BY last_scan_at DESC NULLS LAST LIMIT 1
+                            """,
+                            (cliente,),
+                        ).fetchone()
+                        return row["folder_id"] if row else None
+                    folder_id = read_db(_from_db)
+                    folder_name = cliente
+                    if not folder_id:
+                        return json_response(
+                            self,
+                            {"error": f"No encontré carpeta de '{cliente}' en Drive"},
+                            status=404,
+                        )
 
             subfolders = _list_subfolders(folder_id)
             files = _list_files(folder_id, only_videos=False)
