@@ -2120,6 +2120,38 @@ def block_client(cliente: str, editor: Optional[str], hours: int = 24):
     conn.close()
 
 
+def is_client_archived(cliente: str) -> bool:
+    """True si el cliente está ARCHIVADO (Ignacio ya no trabaja con él).
+    Archivado = el sistema lo ignora por completo: no se crean tasks, no se
+    mandan mails (ni material, ni completion, ni delivery), no aparece en el
+    dashboard. Match normalizado (acentos/case) contra cfg_archived_clients.
+    Pedido Ignacio 10/jun: "borrarlos y que no aparezcan más ni lleguen mails"."""
+    if not cliente:
+        return False
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT cliente FROM cfg_archived_clients").fetchall()
+    except Exception:
+        conn.close()
+        return False
+    conn.close()
+    target = _normalize_client_name(cliente)
+    return any(_normalize_client_name(r["cliente"]) == target for r in rows)
+
+
+def list_archived_clients() -> list:
+    """Lista de clientes archivados con fecha."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT cliente, archived_at FROM cfg_archived_clients ORDER BY archived_at DESC"
+        ).fetchall()
+    except Exception:
+        rows = []
+    conn.close()
+    return [{"cliente": r["cliente"], "archived_at": r["archived_at"]} for r in rows]
+
+
 def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
     """Devuelve True si el cliente tiene un bloqueo activo (no expirado).
 
@@ -2127,6 +2159,10 @@ def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
     un block de 'Ronny Matrix Painting' atrape también 'Ronny Matrix painting'
     o variaciones. Bug 04/jun: clientes reaparecían por mismatch de nombre.
     """
+    # Cliente ARCHIVADO = bloqueado para todo (cubre los 4 puntos de creación
+    # de tasks en scan/incremental/audit sin tocarlos).
+    if is_client_archived(cliente):
+        return True
     from datetime import datetime
     now = datetime.now()
     target = _normalize_client_name(cliente)
