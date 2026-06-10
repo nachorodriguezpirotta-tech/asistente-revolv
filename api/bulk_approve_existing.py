@@ -56,29 +56,32 @@ def _count(conn):
     return row[0] if row else 0
 
 
-def _apply(conn):
-    conn.execute("""
-        INSERT INTO client_reviews
-            (cliente, video_file_id, video_file_name, editor, status, notes,
-             created_at, responded_at, resolved_at)
-        SELECT
-            kef.cliente,
-            kef.file_id,
-            kef.name,
-            NULL,
-            'approved',
-            '(aprobado en migración inicial — todos los videos previos)',
-            datetime('now'),
-            datetime('now'),
-            datetime('now')
-        FROM known_edited_files kef
-        WHERE NOT EXISTS (
-            SELECT 1 FROM client_reviews cr
-            WHERE TRIM(LOWER(cr.cliente)) = TRIM(LOWER(kef.cliente))
-              AND COALESCE(cr.video_file_id,'') = COALESCE(kef.file_id,'')
-        )
-    """)
-    return None
+def _make_apply(limit: int):
+    def _apply(conn):
+        conn.execute("""
+            INSERT INTO client_reviews
+                (cliente, video_file_id, video_file_name, editor, status, notes,
+                 created_at, responded_at, resolved_at)
+            SELECT
+                kef.cliente,
+                kef.file_id,
+                kef.name,
+                NULL,
+                'approved',
+                '(aprobado en migración inicial — todos los videos previos)',
+                datetime('now'),
+                datetime('now'),
+                datetime('now')
+            FROM known_edited_files kef
+            WHERE NOT EXISTS (
+                SELECT 1 FROM client_reviews cr
+                WHERE TRIM(LOWER(cr.cliente)) = TRIM(LOWER(kef.cliente))
+                  AND COALESCE(cr.video_file_id,'') = COALESCE(kef.file_id,'')
+            )
+            LIMIT ?
+        """, (limit,))
+        return None
+    return _apply
 
 
 class handler(BaseHTTPRequestHandler):
@@ -90,6 +93,10 @@ class handler(BaseHTTPRequestHandler):
             admin = params.get("admin", [""])[0] == "1"
             token = (params.get("t", [""])[0] or "").strip()
             dry_run = params.get("dry_run", [""])[0] == "1"
+            try:
+                limit = int(params.get("limit", ["100000"])[0])
+            except ValueError:
+                limit = 100000
 
             if not admin or not check_token("ADMIN", token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
@@ -107,13 +114,18 @@ class handler(BaseHTTPRequestHandler):
                     },
                 )
 
-            with_db(_apply, message=f"bulk approve: {count} videos a estado approved")
+            applied = min(count, limit)
+            with_db(
+                _make_apply(limit),
+                message=f"bulk approve: {applied} videos a estado approved [skip ci]",
+            )
             return json_response(
                 self,
                 {
                     "ok": True,
                     "dry_run": False,
-                    "approved": count,
+                    "approved": applied,
+                    "remaining": max(0, count - applied),
                     "sample": sample,
                 },
             )
