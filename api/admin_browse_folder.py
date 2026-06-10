@@ -22,7 +22,7 @@ sys.path.insert(0, ROOT)
 
 _IMPORT_ERROR = None
 try:
-    from api._shared import check_token, json_response, read_db
+    from api._shared import check_token, json_response, read_db, make_client_token
     from drive_client import (
         find_folder_by_name,
         list_root_folders,
@@ -44,6 +44,22 @@ def _in_panel_ids(conn, file_ids):
         tuple(file_ids),
     ).fetchall()
     return {r["file_id"] for r in rows}
+
+
+def _review_status_map(conn, file_ids):
+    """Último status de client_reviews por file_id (id más alto gana)."""
+    if not file_ids:
+        return {}
+    placeholders = ",".join("?" for _ in file_ids)
+    rows = conn.execute(
+        f"""
+        SELECT video_file_id, status FROM client_reviews
+        WHERE video_file_id IN ({placeholders})
+        ORDER BY id ASC
+        """,
+        tuple(file_ids),
+    ).fetchall()
+    return {r["video_file_id"]: r["status"] for r in rows}
 
 
 def _overrides_for(conn, folder_ids):
@@ -104,8 +120,9 @@ class handler(BaseHTTPRequestHandler):
                 return (
                     _in_panel_ids(conn, file_ids),
                     _overrides_for(conn, all_folder_ids),
+                    _review_status_map(conn, file_ids),
                 )
-            in_panel, overrides = read_db(_read)
+            in_panel, overrides, review_status = read_db(_read)
 
             out_files = []
             for f in files:
@@ -136,6 +153,7 @@ class handler(BaseHTTPRequestHandler):
                     "editor": editor,
                     "owner": owners[0] if owners else None,
                     "in_panel": f.get("id") in in_panel,
+                    "review_status": review_status.get(f.get("id")),
                 })
 
             return json_response(self, {
@@ -143,6 +161,7 @@ class handler(BaseHTTPRequestHandler):
                 "folder_id": folder_id,
                 "folder_name": folder_name,
                 "folder_override": overrides.get(folder_id),
+                "client_token": make_client_token(cliente) if cliente else None,
                 "subfolders": [
                     {
                         "id": s.get("id"),
