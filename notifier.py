@@ -229,6 +229,13 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
     from aliases import get_editor_email_for_notification
 
     for (cliente, editor, folder_id), items in grouped.items():
+        try:
+            from tracker import is_client_archived
+            if is_client_archived(cliente):
+                print(f"   🗄️ {cliente} archivado — skip notificación de material")
+                continue
+        except Exception:
+            pass
         subject, body_text, body_html = _build_mail(cliente, editor, items, folder_id)
         task_ids = [it["task_id"] for it in items]
         editor_email = get_editor_email_for_notification(editor)
@@ -341,6 +348,15 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
 
     for c in items_to_send:
         cliente = c["cliente"]
+        # Cliente ARCHIVADO → no mandar NADA (ni completion ni delivery).
+        # El item ya fue claimado, así que no se reintenta — muere acá.
+        try:
+            from tracker import is_client_archived
+            if is_client_archived(cliente):
+                print(f"   🗄️ {cliente} archivado — skip completion mail de {c.get('file_name','?')[:40]}")
+                continue
+        except Exception:
+            pass
         editor = c.get("editor") or "—"
         file_name = c["file_name"]
         file_id = c.get("file_id")
@@ -598,7 +614,9 @@ def send_client_delivery_mail(cliente: str, file_name: str,
 
     Retorna True si se mandó, False si el cliente no estaba activado o falló.
     """
-    from tracker import cfg_client_should_be_notified
+    from tracker import cfg_client_should_be_notified, is_client_archived
+    if is_client_archived(cliente):
+        return False
     target = cfg_client_should_be_notified(cliente)
     if not target:
         return False
