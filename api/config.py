@@ -111,6 +111,7 @@ def _get_all_config(conn):
     # Filtramos client_editors después del grouping — si el canonical O
     # cualquier alias está archivado, todo el grupo se oculta.
     archived_clients = set()
+    archived_list = []
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cfg_archived_clients (
@@ -120,6 +121,12 @@ def _get_all_config(conn):
         """)
         for r in conn.execute("SELECT cliente FROM cfg_archived_clients").fetchall():
             archived_clients.add(r["cliente"])
+        archived_list = [
+            {"cliente": r["cliente"], "archived_at": r["archived_at"]}
+            for r in conn.execute(
+                "SELECT cliente, archived_at FROM cfg_archived_clients ORDER BY archived_at DESC"
+            ).fetchall()
+        ]
     except Exception:
         pass
     # Editor por cliente — desde tabla cfg_excel_clients (sincronizada desde
@@ -310,6 +317,7 @@ def _get_all_config(conn):
         "client_emails": client_emails,
         "available_clients": available_clients,
         "client_editors": client_editors,
+        "archived_clients": archived_list,
     }
 
 
@@ -645,7 +653,22 @@ class handler(BaseHTTPRequestHandler):
                     VALUES (?, ?)
                     ON CONFLICT(cliente) DO UPDATE SET archived_at=excluded.archived_at
                 """, (n, now))
+            # Borrar las tasks PENDING del cliente (match normalizado por
+            # acentos/case) para que desaparezca del dashboard al instante.
+            # Las 'done' se conservan (historial de stats).
+            import unicodedata
+            def _normx(s):
+                s = unicodedata.normalize("NFD", s or "")
+                s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+                return " ".join(s.lower().split())
+            targets = {_normx(n) for n in names}
+            killed = 0
+            for row in conn.execute("SELECT id, cliente FROM tasks WHERE status='pending'").fetchall():
+                if _normx(row["cliente"]) in targets:
+                    conn.execute("DELETE FROM tasks WHERE id=?", (row["id"],))
+                    killed += 1
             result["archived"] = names
+            result["tasks_borradas"] = killed
 
     def _op_client_editor(self, conn, action, data, result):
         """Maneja override de editor por cliente (cfg_client_editor).
