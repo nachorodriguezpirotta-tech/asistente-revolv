@@ -31,6 +31,11 @@ GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 GITHUB_PAT = os.environ.get("GITHUB_PAT", "")
 WORKFLOW_FILE = os.environ.get("TRIGGER_WORKFLOW", "scan-incremental.yml")
 
+# View de la Mesa (Win Securities) — repo aparte, token propio
+WINVIEW_REPO = os.environ.get("WINVIEW_REPO", "win-view-mesa")
+WINVIEW_WORKFLOW = os.environ.get("WINVIEW_WORKFLOW", "win-view.yml")
+WINVIEW_GH_PAT = os.environ.get("WINVIEW_GH_PAT", "")
+
 
 def _make_token(name: str) -> str:
     return hmac.new(
@@ -46,15 +51,16 @@ def _check_token(name: str, token: str) -> bool:
     return hmac.compare_digest(_make_token(name), token)
 
 
-def _dispatch_one(workflow_file):
-    if not GITHUB_PAT:
+def _dispatch_one(workflow_file, repo=None, pat=None):
+    pat = pat or GITHUB_PAT
+    if not pat:
         return False, "GITHUB_PAT no configurado"
-    url = (f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
+    url = (f"https://api.github.com/repos/{GITHUB_OWNER}/{repo or GITHUB_REPO}"
            f"/actions/workflows/{workflow_file}/dispatches")
     body = json.dumps({"ref": GITHUB_BRANCH}).encode()
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("Authorization", f"Bearer {GITHUB_PAT}")
+    req.add_header("Authorization", f"Bearer {pat}")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
     req.add_header("Content-Type", "application/json")
     try:
@@ -68,7 +74,7 @@ def _dispatch_one(workflow_file):
         return False, f"{type(e).__name__}: {str(e)[:200]}"
 
 
-def _dispatch_workflow():
+def _dispatch_workflow(force_winview=False):
     # Siempre disparar el scan incremental (rápido, Drive Changes API).
     ok, msg = _dispatch_one(WORKFLOW_FILE)
     # Cada ~6 min disparar TAMBIÉN el audit-recover (backup que NO depende de
@@ -96,6 +102,20 @@ def _dispatch_workflow():
         if minute in (4, 5):
             ok3, msg3 = _dispatch_one("scan.yml")
             msg = f"{msg} + {msg3}"
+        # View de la Mesa (Win Securities): mail L/M/V ~12:00 ART. Disparo
+        # puntual 11:59 ART (14:59 UTC) — el cron de GHA en repos privados se
+        # atrasa horas; este endpoint pinguea cada minuto y es puntual.
+        # Ventana 14:59-15:01 por si el ping saltea un minuto: los duplicados
+        # los mata el guard anti-duplicado del workflow win-view (skip si ya
+        # hubo corrida exitosa/en curso hoy).
+        now = datetime.now(timezone.utc)
+        in_window = (now.weekday() in (0, 2, 4)
+                     and ((now.hour == 14 and now.minute == 59)
+                          or (now.hour == 15 and now.minute <= 1)))
+        if force_winview or in_window:
+            ok4, msg4 = _dispatch_one(WINVIEW_WORKFLOW, repo=WINVIEW_REPO,
+                                      pat=WINVIEW_GH_PAT or GITHUB_PAT)
+            msg = f"{msg} + winview:{msg4}"
         # Reminders de editores atrasados: 1×/día PUNTUAL a las 18:00 UTC
         # (15:00 ART). El cron de GHA atrasa horas; esto los hace salir a
         # horario y SEPARADOS del daily summary de la mañana (pedido 10/jun).
@@ -126,12 +146,14 @@ class handler(BaseHTTPRequestHandler):
             # Vercel Cron envía header x-vercel-cron automáticamente.
             # Si viene de Vercel Cron, no necesita token externo.
             is_vercel_cron = self.headers.get("x-vercel-cron") is not None
+            params = parse_qs(urlparse(self.path).query)
             if not is_vercel_cron:
-                params = parse_qs(urlparse(self.path).query)
                 token = (params.get("t", [""])[0] or "").strip()
                 if not _check_token("TRIGGER", token):
                     return _json(self, {"error": "unauthorized"}, status=401)
-            ok, msg = _dispatch_workflow()
+            # ?winview=1 fuerza el disparo del View de la Mesa (para tests)
+            force_winview = (params.get("winview", ["0"])[0] or "0") == "1"
+            ok, msg = _dispatch_workflow(force_winview=force_winview)
             if ok:
                 return _json(self, {"ok": True, "msg": msg})
             return _json(self, {"ok": False, "error": msg}, status=502)
