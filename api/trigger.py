@@ -96,6 +96,14 @@ def _dispatch_workflow():
         if minute in (4, 5):
             ok3, msg3 = _dispatch_one("scan.yml")
             msg = f"{msg} + {msg3}"
+        # Reminders de editores atrasados: 1×/día PUNTUAL a las 18:00 UTC
+        # (15:00 ART). El cron de GHA atrasa horas; esto los hace salir a
+        # horario y SEPARADOS del daily summary de la mañana (pedido 10/jun).
+        # reminders.py tiene throttle por editor → no duplica con el cron.
+        hour = datetime.now(timezone.utc).hour
+        if hour == 18 and minute in (0, 1):
+            ok4, msg4 = _dispatch_one("reminders.yml")
+            msg = f"{msg} + {msg4}"
     except Exception:
         pass
     return ok, msg
