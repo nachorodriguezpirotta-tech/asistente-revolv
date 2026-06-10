@@ -136,8 +136,11 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
             stats["crudos_recovered"] += 1
             print(f"  📥 CRUDO recovered: {cliente} / {f['name'][:50]}")
 
-            # Crear/renotificar task
-            editor = get_editor_for_client(cliente, packs) or "—"
+            # Crear/renotificar task — reglas por subcarpeta/nombre primero
+            # (ej. Egdylu: 'reel'→Fran, 'yt'→Rami), después Sheet.
+            from tracker import get_editor_for_subfolder as _gefs
+            editor = (_gefs(cliente, subfolder or f["name"])
+                      or get_editor_for_client(cliente, packs) or "—")
             if has_manual_pending_for_client(cliente, editor):
                 continue
             if is_client_blocked(cliente, editor):
@@ -162,7 +165,9 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
                        is_baseline=False)
             stats["crudos_recovered"] += 1
             print(f"  📥 CRUDO fuera-mat recovered: {cliente} / {f['name'][:50]}")
-            editor = get_editor_for_client(cliente, packs) or "—"
+            from tracker import get_editor_for_subfolder as _gefs3
+            editor = (_gefs3(cliente, f["name"])
+                      or get_editor_for_client(cliente, packs) or "—")
             if has_pending_for_client_editor(cliente, editor):
                 mark_pending_task_for_renotification(cliente, editor, f["id"], f["name"])
             else:
