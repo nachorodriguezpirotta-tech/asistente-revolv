@@ -35,9 +35,25 @@ except Exception as e:
     _IMPORT_ERROR = f"{type(e).__name__}: {e}"
 
 
+def _has_overrides_table(conn) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_overrides'"
+    ).fetchone()
+    return row is not None
+
+
 def _build(conn, cliente: str):
-    rows = conn.execute(
+    # Carpetas marcadas manualmente como "crudos" desde el explorador del
+    # admin → sus videos NO aparecen en el panel del cliente.
+    raw_filter = ""
+    if _has_overrides_table(conn):
+        raw_filter = """
+          AND kef.folder_id NOT IN (
+              SELECT folder_id FROM folder_overrides WHERE kind = 'raw'
+          )
         """
+    rows = conn.execute(
+        f"""
         SELECT
             kef.file_id, kef.cliente, kef.name AS file_name,
             kef.created_time, kef.first_seen_at, kef.subfolder_name,
@@ -55,6 +71,7 @@ def _build(conn, cliente: str):
               ORDER BY cr.id DESC LIMIT 1) AS review_created_at
         FROM known_edited_files kef
         WHERE TRIM(LOWER(kef.cliente)) = TRIM(LOWER(?))
+        {raw_filter}
         ORDER BY kef.first_seen_at DESC
         LIMIT 2000
         """,

@@ -46,6 +46,23 @@ def _in_panel_ids(conn, file_ids):
     return {r["file_id"] for r in rows}
 
 
+def _overrides_for(conn, folder_ids):
+    """Devuelve {folder_id: kind} de folder_overrides para los ids dados."""
+    if not folder_ids:
+        return {}
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_overrides'"
+    ).fetchone()
+    if not row:
+        return {}
+    placeholders = ",".join("?" for _ in folder_ids)
+    rows = conn.execute(
+        f"SELECT folder_id, kind FROM folder_overrides WHERE folder_id IN ({placeholders})",
+        tuple(folder_ids),
+    ).fetchall()
+    return {r["folder_id"]: r["kind"] for r in rows}
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
@@ -81,7 +98,14 @@ class handler(BaseHTTPRequestHandler):
             files = _list_files(folder_id, only_videos=False)
 
             file_ids = [f.get("id") for f in files if f.get("id")]
-            in_panel = read_db(lambda c: _in_panel_ids(c, file_ids))
+            all_folder_ids = [folder_id] + [s.get("id") for s in subfolders if s.get("id")]
+
+            def _read(conn):
+                return (
+                    _in_panel_ids(conn, file_ids),
+                    _overrides_for(conn, all_folder_ids),
+                )
+            in_panel, overrides = read_db(_read)
 
             out_files = []
             for f in files:
@@ -118,8 +142,14 @@ class handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "folder_id": folder_id,
                 "folder_name": folder_name,
+                "folder_override": overrides.get(folder_id),
                 "subfolders": [
-                    {"id": s.get("id"), "name": s.get("name")} for s in subfolders
+                    {
+                        "id": s.get("id"),
+                        "name": s.get("name"),
+                        "override": overrides.get(s.get("id")),
+                    }
+                    for s in subfolders
                 ],
                 "files": out_files,
             })

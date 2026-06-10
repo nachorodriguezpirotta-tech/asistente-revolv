@@ -114,6 +114,10 @@
     "api/admin_browse_folder.py": {
       "memory": 512,
       "maxDuration": 30
+    },
+    "api/admin_folder_action.py": {
+      "memory": 512,
+      "maxDuration": 60
     }
   },
   "crons": [
