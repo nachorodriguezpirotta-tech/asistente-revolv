@@ -1442,6 +1442,10 @@ def _correction_stem(name: str) -> str:
     # quitar sufijos comunes de corrección/re-entrega
     suffix_patterns = [
         r'\s*[-_]?\s*v\d+\s*$',
+        # 'ver 3' / 'version 2' / 'versión 2' / 'v. 3' — caso Ismafeten 10/jun:
+        # 'Video 6 ver 3.mp4' era corrección de 'Video 6.mp4' pero el sufijo
+        # 'ver N' no se reconocía → se mandó como entrega nueva.
+        r'\s*[-_]?\s*(ver|versi[oó]n|v\.)\s*\d+\s*$',
         r'\s*[-_]?\s*(final|corregido|corregida|correcci[oó]n|corr|fix|nuevo|nueva|edit|editado|editada)\s*$',
         r'\s*\(\d+\)\s*$',  # "video 10 (2)"
     ]
