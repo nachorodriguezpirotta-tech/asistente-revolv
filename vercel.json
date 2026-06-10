@@ -110,6 +110,10 @@
     "api/admin_strict_sync_client.py": {
       "memory": 1024,
       "maxDuration": 60
+    },
+    "api/admin_browse_folder.py": {
+      "memory": 512,
+      "maxDuration": 30
     }
   },
   "crons": [
