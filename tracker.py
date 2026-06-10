@@ -1454,46 +1454,93 @@ def _correction_stem(name: str) -> str:
 
 
 def is_correction_for_client(cliente: str, file_name: str, current_file_id: Optional[str] = None,
-                              max_age_days: int = 7) -> bool:
+                              max_age_days: int = 45) -> bool:
     """¿Este archivo es corrección de un editado previo del MISMO cliente?
 
-    Estrategia (estricta):
-      1. Calcular key del nombre (Video N / Reel N). Si no hay key → False.
-      2. Calcular stem (key + texto descriptivo, sin sufijos de re-entrega).
-      3. Buscar en known_edited_files del cliente entries con:
-         - first_seen_at >= ahora - max_age_days (default 7 días)
-         - Misma key Y mismo stem
-      4. Si match → True (corrección).
-      5. Si solo coincide la key (ej 'video 10' vs 'video 10 jalon') →
-         False (son entregas distintas con mismo número).
+    Flujo real de Revolv (Ignacio, 10/jun): video ya entregado → lo BORRAN de
+    Drive → resuben la corrección con el MISMO nombre. Mismo nombre que algo
+    ya entregado = corrección, tenga o no número.
 
-    Antes era muy laxa: solo comparaba la key, daba falsos positivos cuando
-    el cliente tenía múltiples 'video 10' de distintas tandas (caso Ely
-    Fitness)."""
-    key = _video_key(file_name)
-    if not key:
+    Estrategia (3 redes, de más a menos directa):
+      A. NOMBRE EXACTO normalizado (lower, sin extensión, espacios colapsados)
+         vs known_edited_files del cliente, 60 días. Cubre el flujo
+         borrar-y-resubir-igual-nombre aunque el nombre NO tenga patrón
+         'Video N' (bug 10/jun: esos se contaban como video nuevo).
+      B. key + stem (lógica estricta anti-falsos-positivos): 'Video 10 v2' ==
+         'Video 10', pero 'Video 10 JALON' != 'Video 10' (caso Ely Fitness:
+         mismo número, contenido distinto). Ventana 45 días (antes 7 — las
+         correcciones suelen llegar semanas después de la entrega).
+      C. mail_log: ya se mandó un completion mail de este cliente cuyo subject
+         contiene este nombre exacto (60 días) → ya avisamos de este video →
+         es corrección. Red para cuando known_edited_files perdió la entrada
+         (merges/syncs/pushes pisados).
+
+    Si ninguna matchea → False (entrega nueva).
+    """
+    if not file_name:
         return False
-    stem = _correction_stem(file_name)
-    if not stem:
-        return False
+    import re
     from datetime import datetime, timedelta
-    cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat(timespec="seconds")
+
+    def _norm_name(n):
+        s = (n or "").lower().strip()
+        s = re.sub(r"\.[a-z0-9]+$", "", s)      # sin extensión
+        return " ".join(s.split())                # espacios colapsados
+
+    target_name = _norm_name(file_name)
+    cutoff_60 = (datetime.now() - timedelta(days=60)).isoformat(timespec="seconds")
+    cutoff_window = (datetime.now() - timedelta(days=max_age_days)).isoformat(timespec="seconds")
+
     conn = get_conn()
     rows = conn.execute(
         "SELECT file_id, name FROM known_edited_files "
         "WHERE TRIM(cliente) = TRIM(?) AND first_seen_at >= ?",
-        (cliente, cutoff)
+        (cliente, cutoff_60)
     ).fetchall()
+
+    # ── RED A: nombre exacto normalizado ──
+    if target_name:
+        for r in rows:
+            if current_file_id and r["file_id"] == current_file_id:
+                continue
+            if _norm_name(r["name"]) == target_name:
+                conn.close()
+                return True
+
+    # ── RED B: key + stem (estricta), ventana max_age_days ──
+    key = _video_key(file_name)
+    stem = _correction_stem(file_name)
+    if key and stem:
+        rows_w = conn.execute(
+            "SELECT file_id, name FROM known_edited_files "
+            "WHERE TRIM(cliente) = TRIM(?) AND first_seen_at >= ?",
+            (cliente, cutoff_window)
+        ).fetchall()
+        for r in rows_w:
+            if current_file_id and r["file_id"] == current_file_id:
+                continue
+            if _video_key(r["name"]) == key and _correction_stem(r["name"]) == stem:
+                conn.close()
+                return True
+
+    # ── RED C: ya hubo completion mail con este nombre exacto (60 días) ──
+    if target_name:
+        try:
+            mrows = conn.execute(
+                "SELECT subject FROM mail_log "
+                "WHERE kind='completion' AND success=1 "
+                "AND TRIM(LOWER(cliente)) = TRIM(LOWER(?)) AND sent_at >= ?",
+                (cliente, cutoff_60)
+            ).fetchall()
+            base = re.sub(r"\.[a-z0-9]+$", "", (file_name or "").lower().strip())
+            for m in mrows:
+                if base and base in (m["subject"] or "").lower():
+                    conn.close()
+                    return True
+        except Exception:
+            pass
+
     conn.close()
-    for r in rows:
-        if current_file_id and r["file_id"] == current_file_id:
-            continue
-        prev_key = _video_key(r["name"])
-        if prev_key != key:
-            continue
-        prev_stem = _correction_stem(r["name"])
-        if prev_stem == stem:
-            return True
     return False
 
 
