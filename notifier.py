@@ -405,14 +405,39 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
 
         if is_correction:
             # Corrección: NO decuenta del pending. Solo informa.
+            # Buscar cuándo se entregó el ORIGINAL (mail_log) para mostrarlo —
+            # confirma de un vistazo que es el video correcto. Pedido 10/jun.
+            original_line_text = ""
+            original_line_html = ""
+            try:
+                import re as _re
+                from tracker import get_conn as _gc
+                _base = _re.sub(r"\.[a-z0-9]+$", "", (file_name or "").lower().strip())
+                _conn = _gc()
+                for _m in _conn.execute(
+                    "SELECT subject, sent_at FROM mail_log WHERE kind='completion' "
+                    "AND success=1 AND TRIM(LOWER(cliente))=TRIM(LOWER(?)) "
+                    "ORDER BY sent_at DESC LIMIT 200", (cliente,)):
+                    if _base and _base in (_m["subject"] or "").lower() and "🔧" not in (_m["subject"] or ""):
+                        _f = _m["sent_at"][:10]
+                        _f = f"{_f[8:10]}/{_f[5:7]}"
+                        original_line_text = f"\nEntrega original: {_f}."
+                        original_line_html = (f"<p style='color:#666;font-size:13px;'>"
+                                              f"📅 Entrega original: <strong>{_f}</strong>.</p>")
+                        break
+                _conn.close()
+            except Exception:
+                pass
             subject = f"🔧 Corrección: {editor} subió de nuevo {file_name} de {cliente}"
             estado_text = (
                 f"{editor} subió una CORRECCIÓN del video {file_name} de {cliente}.\n"
                 f"El pending count NO cambia (la corrección no cuenta como entrega nueva)."
+                f"{original_line_text}"
             )
             estado_html = (
                 f"<p>{editor} subió una <strong>corrección</strong> de "
                 f"<code>{file_name}</code> de <strong>{cliente}</strong>.</p>"
+                f"{original_line_html}"
                 f"<p style='color:#666;font-size:13px;'>El pending count NO cambia. "
                 f"La corrección reemplaza el editado previo del mismo video.</p>"
             )
