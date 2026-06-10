@@ -1675,7 +1675,20 @@ def cfg_get_client(cliente: str) -> Optional[dict]:
             if len(cfg_tokens) > best_overlap:
                 best_overlap = len(cfg_tokens)
                 best = r
-    return dict(best) if best else None
+    if best:
+        return dict(best)
+    # 4) Token subset INVERSO: el nombre buscado (carpeta, corto) está contenido
+    # en la config (larga). Bug Gaetan 10/jun: carpeta 'Gaetan' vs config
+    # 'Gaetan Jsph' → el subset directo fallaba → el cliente no recibía su mail.
+    # SOLO si hay UN candidato único: con 2+ posibles es ambiguo y devolvemos
+    # None (jamás arriesgar mandarle el video al cliente equivocado).
+    candidates = [
+        r for r in all_rows
+        if _tokens(r["cliente"]) and target_tokens.issubset(_tokens(r["cliente"]))
+    ]
+    if len(candidates) == 1:
+        return dict(candidates[0])
+    return None
 
 
 def cfg_upsert_client(cliente: str, email: str, display_name: Optional[str] = None,
