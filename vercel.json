@@ -125,5 +125,8 @@
       "path": "/api/trigger",
       "schedule": "* * * * *"
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": false
+  }
 }
