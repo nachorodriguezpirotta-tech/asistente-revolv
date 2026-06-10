@@ -47,6 +47,28 @@ def _archived_norm_set(conn) -> set:
     return {norm(r["cliente"]) for r in rows}, norm
 
 
+def _priority_sort(conn, editor, items, norm):
+    """Aplica el orden de entrega manual (cfg_delivery_priority) si existe.
+    Urgentes SIEMPRE primero; dentro de cada grupo: prioridad asignada
+    (menor = primero), después los sin prioridad alfabético. Opcional:
+    sin prioridades guardadas, el orden queda como estaba."""
+    try:
+        rows = conn.execute(
+            "SELECT cliente, priority FROM cfg_delivery_priority WHERE editor=?",
+            (editor,)).fetchall()
+    except Exception:
+        rows = []
+    if not rows:
+        return items
+    prio = {norm(r["cliente"]): r["priority"] for r in rows}
+    BIG = 10 ** 9
+    return sorted(items, key=lambda it: (
+        0 if it.get("urgent") else 1,
+        prio.get(norm(it.get("cliente") or ""), BIG),
+        norm(it.get("cliente") or ""),
+    ))
+
+
 def get_all_clients(conn) -> dict:
     """Devuelve lista de TODOS los clientes conocidos del sistema con su folder_id.
     Fuente: tabla clients + tasks + known_files + known_edited_files.
@@ -131,6 +153,7 @@ def get_editor_data(conn, editor: str) -> dict:
         }
         for r in rows
     ]
+    pendientes_list = _priority_sort(conn, editor, pendientes_list, _norm)
     return {
         "editor": editor,
         "pendientes": pendientes_list,
@@ -171,6 +194,10 @@ def get_all_data(conn) -> dict:
             "urgent": bool(r["urgent"]) if "urgent" in r.keys() else False,
             "note": r["note"] if "note" in r.keys() else None,
         })
+
+    # Orden de entrega manual por editor (opcional)
+    for ed in list(by_editor.keys()):
+        by_editor[ed] = _priority_sort(conn, ed, by_editor[ed], _norm)
 
     # Conteo de carpetas Drive pendientes de aprobación (para badge en dashboard)
     pending_folders_count = 0
