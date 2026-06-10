@@ -109,6 +109,7 @@
       <button class="tab active" data-tab="editors">👤 Editores</button>
       <button class="tab" data-tab="assign">🔗 Asignaciones</button>
       <button class="tab" data-tab="clients">📧 Clientes</button>
+      <button class="tab" data-tab="archived">🗄️ Archivados</button>
       <button class="tab" data-tab="detected">🆕 Detectadas <span id="detected-badge" style="background:#f87171;color:white;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px;display:none;">0</span></button>
       <button class="tab" data-tab="nicknames">🏷️ Apodos</button>
       <button class="tab" data-tab="aliases">📂 Aliases</button>
@@ -195,6 +196,7 @@ function render() {
   if (ACTIVE_TAB === 'editors') renderEditors();
   else if (ACTIVE_TAB === 'assign') renderClientEditors();
   else if (ACTIVE_TAB === 'clients') renderClientEmails();
+  else if (ACTIVE_TAB === 'archived') renderArchived();
   else if (ACTIVE_TAB === 'detected') renderDetected();
   else if (ACTIVE_TAB === 'nicknames') renderNicknames();
   else if (ACTIVE_TAB === 'aliases') renderAliases();
@@ -329,9 +331,61 @@ function _renderCERows(groups) {
   tbody.innerHTML = html;
 }
 
+
+// ──────────── ARCHIVADOS (clientes con los que ya no se trabaja) ────────────
+function renderArchived() {
+  const list = DATA.archived_clients || [];
+  let html = `<div class="section-header"><h2>🗄️ Clientes archivados</h2></div>
+    <p style="color:#9aa3b2; font-size:13px; margin:0 0 14px; line-height:1.5;">
+      Un cliente archivado <strong>no aparece en el dashboard ni genera mails</strong>
+      (ni avisos de material, ni entregas, ni nada). Para archivar uno, usá el botón
+      🗑 en la pestaña <strong>🔗 Asignaciones</strong>. Acá lo podés restaurar.
+    </p>`;
+  if (!list.length) {
+    html += '<div class="empty" style="color:#9aa3b2; padding:24px; text-align:center;">No hay clientes archivados.</div>';
+    content.innerHTML = html;
+    return;
+  }
+  html += `<div class="table-wrap"><table><thead><tr>
+    <th>Cliente</th><th>Archivado</th><th></th>
+  </tr></thead><tbody>`;
+  for (const a of list) {
+    const cAttr = (a.cliente || '').replace(/'/g, '&#39;');
+    const fecha = (a.archived_at || '').slice(0, 10);
+    html += `<tr>
+      <td>${a.cliente}</td>
+      <td style="color:#9aa3b2; font-size:12px;">${fecha}</td>
+      <td><button onclick="unarchiveClient('${cAttr}', this)" class="btn-add" style="font-size:11px; padding:4px 10px;">↩ Restaurar</button></td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  content.innerHTML = html;
+}
+
+async function unarchiveClient(cliente, btn) {
+  const name = cliente.replace(/&#39;/g, "'");
+  if (!confirm(`¿Restaurar "${name}"?\n\nVuelve a aparecer en el dashboard y se reanudan los mails de material nuevo y entregas.`)) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({admin: 1, t: TOKEN, section: 'archive_client', action: 'delete', data: {cliente: name}}),
+    });
+    const d = await res.json();
+    if (!res.ok || d.error) throw new Error(d.error || ('HTTP ' + res.status));
+    DATA.archived_clients = (DATA.archived_clients || []).filter(x => x.cliente !== name);
+    renderArchived();
+    _showToast('↩ Restaurado');
+  } catch (e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false;
+  }
+}
+
 async function archiveClientGroup(allClientes, btn) {
   const canonical = allClientes[0];
-  if (!confirm(`¿Borrar "${canonical}" del dashboard?\n\nNo aparece más en Asignaciones. Esto NO borra nada del Excel ni Drive.`)) return;
+  if (!confirm(`¿Borrar "${canonical}"?\n\n• No aparece más en el dashboard\n• NO llegan más mails de este cliente (ni avisos ni entregas)\n• Sus archivos en Drive NO se tocan\n\nLo podés restaurar desde la pestaña 🗄️ Archivados.`)) return;
   btn.disabled = true;
   // OPTIMISTIC: sacar la fila YA del DOM sin esperar respuesta
   const tr = btn.closest('tr');
