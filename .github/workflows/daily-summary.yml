@@ -39,12 +39,5 @@ jobs:
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
         run: python daily_summary.py
 
-      - name: Send editor reminders (atraso > 5d)
-        env:
-          OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
-          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
-          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
-          MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
-          SHEET_ID: ${{ secrets.SHEET_ID }}
-          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
-        run: python reminders.py
+      # Los reminders de editores atrasados se MOVIERON a reminders.yml
+      # (15:00 ART) — pedido Ignacio 10/jun: separados del resumen del día.
