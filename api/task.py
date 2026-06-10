@@ -479,6 +479,60 @@ class handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
+        # MODO SET_PRIORITY: guardar el ORDEN de entrega de los clientes de un
+        # editor. Pedido Ignacio 10/jun: "ordenar en prioridad de entrega a los
+        # clientes que tiene pendientes un editor" (opcional). El orden vive en
+        # cfg_delivery_priority (editor, cliente) → priority = índice. Sobrevive
+        # a re-creaciones de tasks (keyed por nombre, no por task_id). Clientes
+        # sin prioridad van después, alfabético (como siempre).
+        if body.get("action") == "set_priority":
+            target_editor_p = (body.get("editor") or "").strip()
+            order = body.get("order")
+            if not target_editor_p or not isinstance(order, list):
+                return json_response(self, {"error": "falta editor u order (lista)"}, status=400)
+            # Auth: admin, o el propio editor ordenando su lista
+            if is_admin:
+                if not check_token("ADMIN", token):
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+            else:
+                if not check_token(target_editor_p, token):
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+            clean = [str(c).strip() for c in order if str(c).strip()][:200]
+
+            def op_prio(conn):
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS cfg_delivery_priority (
+                        editor TEXT NOT NULL,
+                        cliente TEXT NOT NULL,
+                        priority INTEGER NOT NULL,
+                        updated_at TEXT,
+                        PRIMARY KEY (editor, cliente)
+                    )
+                """)
+                conn.execute("DELETE FROM cfg_delivery_priority WHERE editor=?", (target_editor_p,))
+                for i, cli in enumerate(clean):
+                    conn.execute(
+                        "INSERT INTO cfg_delivery_priority (editor, cliente, priority, updated_at) VALUES (?,?,?,?)",
+                        (target_editor_p, cli, i, now_iso()),
+                    )
+
+            def verify_prio(conn):
+                try:
+                    n = conn.execute(
+                        "SELECT COUNT(*) FROM cfg_delivery_priority WHERE editor=?",
+                        (target_editor_p,)).fetchone()[0]
+                    return n == len(clean)
+                except Exception:
+                    return False
+
+            try:
+                with_db(op_prio,
+                        message=f"manual: orden de entrega {target_editor_p} ({len(clean)} clientes) [skip ci]",
+                        verify=verify_prio)
+                return json_response(self, {"ok": True, "editor": target_editor_p, "orden": len(clean)})
+            except Exception as e:
+                return json_response(self, {"error": str(e)[:200]}, status=500)
+
         # MODO SET_NOTE: agregar/editar nota de una task pending
         if body.get("action") == "set_note":
             if not is_admin or not check_token("ADMIN", token):
