@@ -33,6 +33,20 @@ def _get_client_folder_map(conn) -> dict:
     return {r["cliente"].strip().lower(): r["folder_id"] for r in rows}
 
 
+def _archived_norm_set(conn) -> set:
+    """Set normalizado de clientes archivados — sus tasks no se muestran."""
+    import unicodedata
+    def norm(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return " ".join(s.lower().split())
+    try:
+        rows = conn.execute("SELECT cliente FROM cfg_archived_clients").fetchall()
+    except Exception:
+        return set()
+    return {norm(r["cliente"]) for r in rows}, norm
+
+
 def get_all_clients(conn) -> dict:
     """Devuelve lista de TODOS los clientes conocidos del sistema con su folder_id.
     Fuente: tabla clients + tasks + known_files + known_edited_files.
@@ -103,6 +117,8 @@ def get_editor_data(conn, editor: str) -> dict:
         "SELECT COUNT(*) FROM tasks WHERE editor=? AND status='pending' AND COALESCE(urgent, 0) = 1",
         (editor,),
     ).fetchone()[0]
+    _arch, _norm = _archived_norm_set(conn)
+    rows = [r for r in rows if _norm(r["cliente"]) not in _arch]
     pendientes_list = [
         {
             "id": r["id"],
@@ -140,8 +156,11 @@ def get_all_data(conn) -> dict:
            ORDER BY editor, MAX(COALESCE(urgent, 0)) DESC, cliente"""
     ).fetchall()
     folder_map = _get_client_folder_map(conn)
+    _arch, _norm = _archived_norm_set(conn)
     by_editor = {}
     for r in rows:
+        if _norm(r["cliente"]) in _arch:
+            continue
         ed = r["editor"] or "— sin editor —"
         by_editor.setdefault(ed, []).append({
             "id": r["id"],
