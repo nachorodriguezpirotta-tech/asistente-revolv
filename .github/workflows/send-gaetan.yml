@@ -1,0 +1,23 @@
+name: Send Gaetan V17 (one-off)
+on:
+  workflow_dispatch: {}
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: 'pip'}
+      - run: pip install -r requirements.txt
+      - env:
+          OAUTH_REFRESH_TOKEN: ${{ secrets.OAUTH_REFRESH_TOKEN }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          MAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.MAIL_OAUTH_REFRESH_TOKEN }}
+          DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python _send_gaetan.py
