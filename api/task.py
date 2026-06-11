@@ -188,6 +188,7 @@ class handler(BaseHTTPRequestHandler):
             if not check_token(editor, token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
+        cliente_resuelto_holder = {}
         def op(conn):
             # Resolver apodo: si el usuario escribió 'delfi', buscar el cliente real
             cliente_resuelto = resolve_nickname(conn, cliente, editor)
@@ -197,6 +198,7 @@ class handler(BaseHTTPRequestHandler):
             ).fetchone()
             if existing:
                 raise ValueError("duplicado")
+            cliente_resuelto_holder["v"] = cliente_resuelto
             pseudo_id = f"manual:{editor.lower()}:{cliente_resuelto.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
             # count_locked=1 desde el principio: significa "esto es manual, el scan
             # automático NO debe sobreescribir count NI crear duplicado para otro editor".
@@ -206,8 +208,14 @@ class handler(BaseHTTPRequestHandler):
                 (cliente_resuelto, editor, pseudo_id, "(pendiente cargado manualmente)", now_iso(), now_iso()),
             )
 
+        def verify_add(conn):
+            return conn.execute(
+                "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? "
+                "AND status='pending' AND count_locked=1",
+                (cliente_resuelto_holder.get("v", cliente), editor)).fetchone() is not None
+
         try:
-            with_db(op, message=f"manual: agregada {cliente} / {editor}")
+            with_db(op, message=f"manual: agregada {cliente} / {editor}", verify=verify_add)
             return json_response(self, {"ok": True, "cliente": cliente, "editor": editor})
         except ValueError as e:
             if "duplicado" in str(e):
@@ -347,8 +355,11 @@ class handler(BaseHTTPRequestHandler):
             captured["editor"] = row["editor"]
             conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
+        def verify_del_id(conn):
+            return conn.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone() is None
+
         try:
-            with_db(op_id, message=f"manual: borrada task #{task_id}")
+            with_db(op_id, message=f"manual: borrada task #{task_id}", verify=verify_del_id)
             return json_response(self, {"ok": True, "task_id": task_id, **captured})
         except ValueError as e:
             err = str(e)
@@ -473,8 +484,14 @@ class handler(BaseHTTPRequestHandler):
                         updated_at=excluded.updated_at
                 """, (editor, label, current, total, now_iso()))
 
+            def verify_prog(conn):
+                r = conn.execute("SELECT current, total FROM editor_progress WHERE editor=? AND label=?",
+                                 (editor, label)).fetchone()
+                return r is not None and r["current"] == current and r["total"] == total
+
             try:
-                with_db(op_prog, message=f"manual: progress {editor}/{label} = {current}/{total}")
+                with_db(op_prog, message=f"manual: progress {editor}/{label} = {current}/{total}",
+                        verify=verify_prog)
                 return json_response(self, {"ok": True, "editor": editor, "label": label, "current": current, "total": total})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
@@ -556,8 +573,16 @@ class handler(BaseHTTPRequestHandler):
                         (note, cliente_n),
                     )
 
+            def verify_note(conn):
+                q = ("SELECT note FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1"
+                     if editor_n else
+                     "SELECT note FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1")
+                args = (cliente_n, editor_n) if editor_n else (cliente_n,)
+                r = conn.execute(q, args).fetchone()
+                return r is None or (r["note"] or None) == note
+
             try:
-                with_db(op_note, message=f"manual: note {cliente_n}")
+                with_db(op_note, message=f"manual: note {cliente_n}", verify=verify_note)
                 return json_response(self, {"ok": True, "cliente": cliente_n, "note": note})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
@@ -584,8 +609,16 @@ class handler(BaseHTTPRequestHandler):
                         (urgent, cliente_u),
                     )
 
+            def verify_urgent(conn):
+                q = ("SELECT COALESCE(urgent,0) u FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1"
+                     if editor_u else
+                     "SELECT COALESCE(urgent,0) u FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1")
+                args = (cliente_u, editor_u) if editor_u else (cliente_u,)
+                r = conn.execute(q, args).fetchone()
+                return r is None or r["u"] == urgent
+
             try:
-                with_db(op_urgent, message=f"manual: urgent={urgent} {cliente_u}")
+                with_db(op_urgent, message=f"manual: urgent={urgent} {cliente_u}", verify=verify_urgent)
                 return json_response(self, {"ok": True, "cliente": cliente_u, "urgent": bool(urgent)})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
@@ -658,8 +691,19 @@ class handler(BaseHTTPRequestHandler):
                     ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at
                 """, (cliente_r, new_editor, _dt.now().isoformat(timespec='seconds')))
 
+            def verify_reassign(conn):
+                t = conn.execute(
+                    "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                    (cliente_r, new_editor)).fetchone()
+                o = conn.execute(
+                    "SELECT 1 FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?) AND editor=?",
+                    (cliente_r, new_editor)).fetchone()
+                return t is not None and o is not None
+
             try:
-                with_db(op_reassign, message=f"manual: reasignar {cliente_r}: {current_editor} → {new_editor}")
+                with_db(op_reassign,
+                        message=f"manual: reasignar {cliente_r}: {current_editor} → {new_editor}",
+                        verify=verify_reassign)
                 return json_response(self, {"ok": True, "cliente": cliente_r, "from": current_editor, "to": new_editor, "affected": updated_count["n"]})
             except ValueError as e:
                 if "ya_existe" in str(e):
@@ -701,8 +745,17 @@ class handler(BaseHTTPRequestHandler):
                     n = _set_pending_count_op(conn, resolved, target_editor, count)
             updated["count"] = n
 
+        def verify_count(conn):
+            q = ("SELECT pending_count FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1"
+                 if target_editor else
+                 "SELECT pending_count FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1")
+            args = (cliente, target_editor) if target_editor else (cliente,)
+            r = conn.execute(q, args).fetchone()
+            return r is None or r["pending_count"] == count
+
         try:
-            with_db(op, message=f"manual: count={count} para {cliente}" + (f" / {target_editor}" if target_editor else ""))
+            with_db(op, message=f"manual: count={count} para {cliente}" + (f" / {target_editor}" if target_editor else ""),
+                    verify=verify_count)
             return json_response(self, {"ok": True, "cliente": cliente, "editor": target_editor, "count": count, "affected": updated["count"]})
         except Exception as e:
             return json_response(self, {"error": str(e)[:200]}, status=500)
