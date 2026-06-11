@@ -69,15 +69,66 @@ def _build_admin(conn):
     }
 
 
+def _cliente_editor_map(conn):
+    """Mapa cliente_normalizado -> editor para resolver reviews con editor
+    vacío. Las reviews del portal suelen llegar SIN editor (el mail al cliente
+    no siempre lo lleva) → bug 11/jun: Rafa no veía las correcciones de Daniel.
+    Prioridad: cfg_client_editor (override manual) > cfg_excel_clients (Sheet)
+    > último completion del mail_log."""
+    import unicodedata
+    def norm(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+        return " ".join(s.lower().split())
+    m = {}
+    # menor prioridad primero (las siguientes pisan)
+    try:
+        for r in conn.execute(
+            "SELECT cliente, editor, MAX(sent_at) FROM mail_log "
+            "WHERE kind='completion' AND COALESCE(editor,'') NOT IN ('', '—') "
+            "GROUP BY cliente"):
+            m[norm(r["cliente"])] = r["editor"]
+    except Exception:
+        pass
+    try:
+        for r in conn.execute("SELECT cliente, editor FROM cfg_excel_clients"):
+            if (r["editor"] or "").strip():
+                m[norm(r["cliente"])] = r["editor"]
+    except Exception:
+        pass
+    try:
+        for r in conn.execute("SELECT cliente, editor FROM cfg_client_editor"):
+            if (r["editor"] or "").strip():
+                m[norm(r["cliente"])] = r["editor"]
+    except Exception:
+        pass
+    return m, norm
+
+
 def _build_editor(conn, editor: str):
     rows = conn.execute("""
-        SELECT id, cliente, video_file_id, video_file_name, status,
+        SELECT id, cliente, video_file_id, video_file_name, editor, status,
                notes, created_at, responded_at, resolved_at
         FROM client_reviews
-        WHERE editor=?
-        ORDER BY id DESC LIMIT 100
+        WHERE editor=? OR COALESCE(editor,'')=''
+        ORDER BY id DESC LIMIT 300
     """, (editor,)).fetchall()
-    items = [dict(r) for r in rows]
+    cmap, norm = _cliente_editor_map(conn)
+    ed_lower = editor.strip().lower()
+    items = []
+    for r in rows:
+        d = dict(r)
+        rev_editor = (d.get("editor") or "").strip()
+        if rev_editor:
+            if rev_editor.lower() != ed_lower:
+                continue
+        else:
+            # review sin editor → resolver por cliente
+            resolved = cmap.get(norm(d.get("cliente") or ""))
+            if not resolved or resolved.strip().lower() != ed_lower:
+                continue
+        items.append(d)
+    items = items[:100]
     open_count = sum(1 for r in items if r["status"] == "revision_requested")
     return {
         "ok": True,
