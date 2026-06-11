@@ -1133,6 +1133,43 @@ def cfg_list_client_editors() -> dict:
     return {r["cliente"]: r["editor"] for r in rows}
 
 
+def resolve_editor_for_cliente(cliente: str) -> Optional[str]:
+    """Editor asignado de un cliente, para cuando un dato (ej. una review del
+    portal) llega sin editor. Prioridad: cfg_client_editor (override manual del
+    dashboard) > cfg_excel_clients (Sheet) > último completion del mail_log.
+    Match normalizado acentos/case. Bug 11/jun: el mail de 'revisión pedida'
+    solo le llegaba al admin porque review.editor venía vacío."""
+    if not cliente:
+        return None
+    target = _normalize_client_name(cliente)
+    conn = get_conn()
+    result = None
+    # menor prioridad primero, las siguientes pisan
+    try:
+        for r in conn.execute(
+            "SELECT cliente, editor, MAX(sent_at) FROM mail_log "
+            "WHERE kind='completion' AND COALESCE(editor,'') NOT IN ('', '—') "
+            "GROUP BY cliente"):
+            if _normalize_client_name(r["cliente"]) == target:
+                result = r["editor"]
+    except Exception:
+        pass
+    try:
+        for r in conn.execute("SELECT cliente, editor FROM cfg_excel_clients"):
+            if (r["editor"] or "").strip() and _normalize_client_name(r["cliente"]) == target:
+                result = r["editor"]
+    except Exception:
+        pass
+    try:
+        for r in conn.execute("SELECT cliente, editor FROM cfg_client_editor"):
+            if (r["editor"] or "").strip() and _normalize_client_name(r["cliente"]) == target:
+                result = r["editor"]
+    except Exception:
+        pass
+    conn.close()
+    return result
+
+
 def resolve_editor_rules(cliente: str, subfolder_name: Optional[str] = None,
                          file_name: Optional[str] = None,
                          duration_millis=None) -> Optional[str]:
