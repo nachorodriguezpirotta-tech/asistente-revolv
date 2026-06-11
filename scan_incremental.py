@@ -306,7 +306,9 @@ def run(notify: bool = False):
             #      tiene >=2 entregas todas del mismo editor → usar ese editor
             #      y auto-poblar cfg_subfolder_editors para próxima vez)
             #   3. Sheet (get_editor_for_client) como default
-            editor = get_editor_for_subfolder(cliente_real, subfolder_name or f["name"])
+            from tracker import resolve_editor_rules
+            editor = resolve_editor_rules(cliente_real, subfolder_name, f["name"],
+                                          (f.get("videoMediaMetadata") or {}).get("durationMillis"))
             if not editor and subfolder_name:
                 inferred = infer_subfolder_editor_from_history(cliente_real, subfolder_name)
                 if inferred:
