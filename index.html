@@ -960,16 +960,35 @@ function renderAllProgresses(progresses, editorName) {
     return progresses.map(p => renderProgressWidget(p, editorName)).join('');
 }
 
+
+// Badge de correcciones abiertas en la vista del editor. Bug 11/jun: las
+// correcciones de clientes (portal) solo se veían en el admin — Rafa no veía
+// las de Daniel. El endpoint /api/reviews?editor=X ya resuelve también las
+// reviews que llegaron sin editor (por cliente).
+async function _loadEditorReviewsBadge() {
+    if (IS_ADMIN || !EDITOR) return;
+    try {
+        const res = await fetch(`/api/reviews?editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`);
+        const d = await res.json();
+        const n = d.open_count || 0;
+        const b = document.getElementById('editor-reviews-badge');
+        if (b && n > 0) { b.textContent = n; b.style.display = 'inline-block'; }
+    } catch (e) { /* noop */ }
+}
+
 function renderEditor(data) {
     const items = data.pendientes || [];
     let html = renderSummaryBanner(data.stats);
-    html += `<div style="margin-bottom:14px;">
+    html += `<div style="margin-bottom:14px; display:flex; gap:8px; flex-wrap:wrap;">
       <a href="/mistats.html?editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}"
          style="display:inline-block; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">📊 Mis stats</a>
+      <a id="editor-reviews-link" href="/reviews.html?editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}"
+         style="display:inline-block; padding:10px 16px; background:#2d3445; color:#e8eaed; border-radius:8px; text-decoration:none; font-size:14px; font-weight:500;">🔧 Correcciones<span id="editor-reviews-badge" style="display:none; background:#f87171; color:white; padding:1px 7px; border-radius:8px; font-size:11px; margin-left:6px; font-weight:700;">0</span></a>
     </div>`;
     html += renderAllProgresses(data.progresses, EDITOR);
     if (items.length === 0) {
         content.innerHTML = html + '<div class="empty">✅ No tenés pendientes.</div>';
+        _loadEditorReviewsBadge();
         return;
     }
     const orderModeE = window._orderModes && window._orderModes.has(EDITOR);
@@ -1007,6 +1026,7 @@ function renderEditor(data) {
     }
     html += '</section>';
     content.innerHTML = html;
+    _loadEditorReviewsBadge();
 }
 
 function renderAdmin(data) {
