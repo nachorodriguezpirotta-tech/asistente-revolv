@@ -1133,6 +1133,74 @@ def cfg_list_client_editors() -> dict:
     return {r["cliente"]: r["editor"] for r in rows}
 
 
+def resolve_editor_rules(cliente: str, subfolder_name: Optional[str] = None,
+                         file_name: Optional[str] = None,
+                         duration_millis=None) -> Optional[str]:
+    """Resuelve el editor de un CRUDO por reglas configuradas del cliente.
+
+    Orden de prioridad (pedido Ignacio 10-11/jun, casos Egdylu y Roger Marti):
+      1. Substring EXPLÍCITO de cfg_subfolder_editors contra el nombre de la
+         subcarpeta, y si no matchea, contra el nombre del archivo.
+         (Egdylu/'reel'→Fran; Roger/'yt'→Jere)
+      2. DURACIÓN: cfg_duration_editors(cliente, min_minutes, editor) — si el
+         video dura >= min_minutes → ese editor. (Roger: >5 min → Jere.)
+         Nota: Drive tarda unos minutos en calcular videoMediaMetadata para
+         uploads frescos; si aún no está, esta regla no aplica (best effort).
+      3. DEFAULT del cliente: fila con subfolder='' (Roger: ''→Valen, pisa
+         al Sheet para todo lo que no matchee arriba).
+      4. None → el caller cae al Sheet.
+    """
+    import unicodedata
+    def _n(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+        return " ".join(s.lower().split())
+
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT subfolder, editor FROM cfg_subfolder_editors WHERE TRIM(cliente)=TRIM(?)",
+        (cliente,)).fetchall()
+    try:
+        drows = conn.execute(
+            "SELECT min_minutes, editor FROM cfg_duration_editors WHERE TRIM(cliente)=TRIM(?)",
+            (cliente,)).fetchall()
+    except Exception:
+        drows = []
+    conn.close()
+    if not rows and not drows:
+        return None
+
+    # 1) substring explícito (subcarpeta primero, después nombre de archivo)
+    for target in (subfolder_name, file_name):
+        t = _n(target) if target else ""
+        if not t:
+            continue
+        for r in rows:
+            cfg = _n(r["subfolder"] or "")
+            if cfg and cfg in t:
+                return r["editor"]
+
+    # 2) duración (la regla con mayor umbral que aplique gana)
+    if duration_millis:
+        try:
+            mins = float(duration_millis) / 60000.0
+            best = None
+            for d in drows:
+                if mins >= float(d["min_minutes"]):
+                    if best is None or float(d["min_minutes"]) > best[0]:
+                        best = (float(d["min_minutes"]), d["editor"])
+            if best:
+                return best[1]
+        except (TypeError, ValueError):
+            pass
+
+    # 3) default del cliente (subfolder='')
+    for r in rows:
+        if not (r["subfolder"] or "").strip():
+            return r["editor"]
+    return None
+
+
 def get_editor_for_subfolder(cliente: str, subfolder_name: Optional[str]) -> Optional[str]:
     """Resuelve editor según subfolder dentro de /Material/.
 
