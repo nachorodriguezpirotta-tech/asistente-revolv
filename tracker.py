@@ -13,7 +13,18 @@ import sqlite3
 from datetime import datetime
 from typing import Optional
 
-from config import DB_PATH
+try:
+    from config import DB_PATH
+except ImportError:
+    # En Vercel, los endpoints insertan api/ primero en sys.path y 'config'
+    # resuelve a api/config.py (el ENDPOINT) → ImportError. Cargar el config.py
+    # de la RAÍZ por ruta absoluta. (Bug 11/jun: mails de revisión no salían.)
+    import os as _os, importlib.util as _ilu
+    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "config.py")
+    _s = _ilu.spec_from_file_location("_root_config", _p)
+    _m = _ilu.module_from_spec(_s)
+    _s.loader.exec_module(_m)
+    DB_PATH = _m.DB_PATH
 
 
 def get_conn():
