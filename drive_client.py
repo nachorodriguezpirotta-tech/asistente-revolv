@@ -158,7 +158,7 @@ def _list_files(parent_id: str, only_videos: bool = False) -> list[dict]:
     while True:
         res = service.files().list(
             q=f"'{parent_id}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'",
-            fields="nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, md5Checksum, owners(emailAddress), lastModifyingUser(emailAddress))",
+            fields="nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, md5Checksum, owners(emailAddress), lastModifyingUser(emailAddress), videoMediaMetadata(durationMillis))",
             pageSize=200,
             pageToken=page_token,
         ).execute()
@@ -403,7 +403,7 @@ def list_material_files(raw_folder_id: str) -> list[dict]:
         elif target_id and (target_mime or "").startswith("video/"):
             try:
                 f = service.files().get(fileId=target_id,
-                                        fields="id, name, mimeType, size, createdTime, modifiedTime, owners(emailAddress), lastModifyingUser(emailAddress)").execute()
+                                        fields="id, name, mimeType, size, createdTime, modifiedTime, owners(emailAddress), lastModifyingUser(emailAddress), videoMediaMetadata(durationMillis)").execute()
                 f["_subfolder_name"] = ""
                 files.append(f)
             except Exception:
@@ -677,7 +677,7 @@ def list_changes_since(page_token: str, max_pages: int = 20) -> tuple[list[dict]
             pageSize=1000,
             fields="nextPageToken, newStartPageToken, changes(fileId, removed, time, "
                    "file(id, name, mimeType, size, createdTime, modifiedTime, "
-                   "parents, owners(emailAddress), lastModifyingUser(emailAddress), trashed))",
+                   "parents, owners(emailAddress), lastModifyingUser(emailAddress), trashed, videoMediaMetadata(durationMillis)))",
             spaces="drive",
             includeRemoved=True,
         ).execute()
