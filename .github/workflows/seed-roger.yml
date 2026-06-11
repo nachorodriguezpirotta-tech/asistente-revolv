@@ -1,0 +1,29 @@
+name: Seed Roger rules (one-off)
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Seed and commit
+        run: |
+          git config user.name "asistente-bot"
+          git config user.email "bot@revolv.local"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main && git reset --hard origin/main
+            python _seed_roger.py
+            if git diff --quiet tracker.db; then echo "ya sembrado"; exit 0; fi
+            git add tracker.db
+            git commit -m "manual: reglas Roger Marti (yt/>5min→Jere, default→Valen) [skip ci]"
+            if git push; then echo "OK"; exit 0; fi
+            sleep $((2 * attempt))
+          done
+          exit 1
