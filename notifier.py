@@ -812,6 +812,15 @@ def notify_revision_requested(review_id: int, review: dict, notes: str) -> None:
     en el mail."""
     cliente = review.get("cliente", "?")
     editor = review.get("editor")
+    # Las reviews del portal suelen llegar SIN editor → resolverlo por cliente
+    # para que el aviso le llegue TAMBIÉN al editor asignado (pedido 11/jun:
+    # "cada correc tiene que llegarme a mí y al editor asignado").
+    if not (editor or "").strip():
+        try:
+            from tracker import resolve_editor_for_cliente
+            editor = resolve_editor_for_cliente(cliente) or editor
+        except Exception:
+            pass
     video = review.get("video_file_name", "(video)")
 
     # Listar attachments si hay
