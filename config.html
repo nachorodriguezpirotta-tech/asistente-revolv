@@ -171,6 +171,54 @@ document.querySelectorAll('.tab').forEach(t => {
   });
 });
 
+
+// ───── Indicador GLOBAL de guardado (igual que el dashboard) ─────
+window._savesInFlight = 0;
+window._saveUITimer = null;
+function _ensureSavePill() {
+    let el = document.getElementById('save-pill');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'save-pill';
+        el.style.cssText = 'position:fixed; bottom:18px; right:18px; z-index:9999;'
+            + 'padding:10px 18px; border-radius:24px; font-size:13px; font-weight:600;'
+            + 'box-shadow:0 4px 14px rgba(0,0,0,0.35); transition:opacity .25s;'
+            + 'pointer-events:none; opacity:0; color:white; font-family:inherit;';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+function _saveUI(state) {
+    const el = _ensureSavePill();
+    clearTimeout(window._saveUITimer);
+    if (state === 'saving') {
+        el.style.background = '#2d3445'; el.textContent = '💾 Guardando…'; el.style.opacity = '1';
+    } else if (state === 'saved') {
+        el.style.background = '#16a34a'; el.textContent = '✓ Guardado'; el.style.opacity = '1';
+        window._saveUITimer = setTimeout(() => { el.style.opacity = '0'; }, 2200);
+    } else {
+        el.style.background = '#dc2626';
+        el.textContent = '⚠️ NO se guardó — tocá de nuevo lo que cambiaste';
+        el.style.opacity = '1';
+        window._saveUITimer = setTimeout(() => { el.style.opacity = '0'; }, 8000);
+    }
+}
+async function _mutFetch(url, opts) {
+    window._savesInFlight++;
+    _saveUI('saving');
+    try {
+        const res = await fetch(url, opts);
+        window._savesInFlight = Math.max(0, window._savesInFlight - 1);
+        if (window._savesInFlight === 0) _saveUI(res.ok ? 'saved' : 'error');
+        else if (!res.ok) _saveUI('error');
+        return res;
+    } catch (e) {
+        window._savesInFlight = Math.max(0, window._savesInFlight - 1);
+        _saveUI('error');
+        throw e;
+    }
+}
+
 async function loadConfig() {
   content.innerHTML = '<div class="loading">Cargando…</div>';
   try {
@@ -367,7 +415,7 @@ async function unarchiveClient(cliente, btn) {
   if (!confirm(`¿Restaurar "${name}"?\n\nVuelve a aparecer en el dashboard y se reanudan los mails de material nuevo y entregas.`)) return;
   btn.disabled = true;
   try {
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({admin: 1, t: TOKEN, section: 'archive_client', action: 'delete', data: {cliente: name}}),
@@ -394,7 +442,7 @@ async function archiveClientGroup(allClientes, btn) {
     tr.style.opacity = '0.3';
   }
   try {
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({admin: 1, t: TOKEN, section: 'archive_client', action: 'create', data: {clientes: allClientes}}),
@@ -444,14 +492,14 @@ async function saveClientEditor(cliente, editor, sel) {
   sel.disabled = true;
   try {
     if (!editor) {
-      const res = await fetch('/api/config', {
+      const res = await _mutFetch('/api/config', {
         method: 'DELETE',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'delete', data: {cliente}}),
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
     } else {
-      const res = await fetch('/api/config', {
+      const res = await _mutFetch('/api/config', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'update', data: {cliente, editor}}),
@@ -470,7 +518,7 @@ async function saveClientEditor(cliente, editor, sel) {
 async function clearClientEditor(cliente, btn) {
   btn.disabled = true;
   try {
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method: 'DELETE',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({admin: 1, t: TOKEN, section: 'client_editor', action: 'delete', data: {cliente}}),
@@ -648,7 +696,7 @@ document.addEventListener('click', (e) => {
 async function deleteClientEmail(cliente) {
   if (!confirm(`¿Borrar el mail configurado para "${cliente}"?\n\nDejará de recibir mails de entregas. Sus tasks/datos NO se tocan.`)) return;
   try {
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ admin: 1, t: TOKEN, section: 'client_email', action: 'delete', data: { cliente } }),
@@ -740,7 +788,7 @@ async function approveFolder(folder_id) {
   const sel = document.getElementById('ed-' + folder_id);
   const editor = sel ? sel.value : '';
   try {
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -757,7 +805,7 @@ async function approveFolder(folder_id) {
 async function rejectFolder(folder_id) {
   if (!confirm('¿Marcar esta carpeta como NO-cliente? No volverá a aparecer.')) return;
   try {
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -845,7 +893,7 @@ function openEditorModal(ed) {
 async function deleteEditor(name) {
   if (!confirm(`¿Borrar editor "${name}"?\n\nLas tasks que tenga seguirán existiendo pero quedarán huérfanas. Mejor reasignalas antes.`)) return;
   try {
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ admin: 1, t: TOKEN, section: 'editor', action: 'delete', data: { name } }),
@@ -1087,7 +1135,7 @@ async function submitModal() {
 
     const action = isNew ? 'create' : 'update';
     const method = isNew ? 'POST' : 'PATCH';
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ admin: 1, t: TOKEN, section, action, data: payload }),
@@ -1104,7 +1152,7 @@ async function submitModal() {
 async function deleteRow(section, id) {
   if (!confirm('¿Borrar?')) return;
   try {
-    const res = await fetch('/api/config', {
+    const res = await _mutFetch('/api/config', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ admin: 1, t: TOKEN, section, action: 'delete', data: { id } }),
