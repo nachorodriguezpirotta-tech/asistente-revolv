@@ -62,7 +62,7 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
         kwargs = dict(
             q=f"trashed=false and modifiedTime > '{time_filter}'",
             fields='nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, '
-                   'parents, owners(emailAddress), lastModifyingUser(emailAddress))',
+                   'parents, owners(emailAddress), lastModifyingUser(emailAddress), videoMediaMetadata(durationMillis))',
             pageSize=500,
             orderBy='modifiedTime desc',
         )
@@ -138,8 +138,9 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
 
             # Crear/renotificar task — reglas por subcarpeta/nombre primero
             # (ej. Egdylu: 'reel'→Fran, 'yt'→Rami), después Sheet.
-            from tracker import get_editor_for_subfolder as _gefs
-            editor = (_gefs(cliente, subfolder or f["name"])
+            from tracker import resolve_editor_rules as _rer
+            editor = (_rer(cliente, subfolder, f["name"],
+                           (f.get("videoMediaMetadata") or {}).get("durationMillis"))
                       or get_editor_for_client(cliente, packs) or "—")
             if has_manual_pending_for_client(cliente, editor):
                 continue
@@ -165,8 +166,9 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
                        is_baseline=False)
             stats["crudos_recovered"] += 1
             print(f"  📥 CRUDO fuera-mat recovered: {cliente} / {f['name'][:50]}")
-            from tracker import get_editor_for_subfolder as _gefs3
-            editor = (_gefs3(cliente, f["name"])
+            from tracker import resolve_editor_rules as _rer3
+            editor = (_rer3(cliente, None, f["name"],
+                            (f.get("videoMediaMetadata") or {}).get("durationMillis"))
                       or get_editor_for_client(cliente, packs) or "—")
             if has_pending_for_client_editor(cliente, editor):
                 mark_pending_task_for_renotification(cliente, editor, f["id"], f["name"])
