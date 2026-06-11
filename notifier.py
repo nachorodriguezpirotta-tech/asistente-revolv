@@ -11,7 +11,19 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 
-from config import TEST_EMAIL
+try:
+    from config import TEST_EMAIL
+except ImportError:
+    # En Vercel, los endpoints (api/review.py etc.) insertan api/ primero en
+    # sys.path y 'config' resuelve a api/config.py (el ENDPOINT de config) →
+    # ImportError. Bug 11/jun: el aviso de "revisión pedida" NUNCA salía desde
+    # Vercel por esto. Cargar el config.py de la RAÍZ por ruta absoluta.
+    import os as _os, importlib.util as _ilu
+    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "config.py")
+    _s = _ilu.spec_from_file_location("_root_config", _p)
+    _m = _ilu.module_from_spec(_s)
+    _s.loader.exec_module(_m)
+    TEST_EMAIL = _m.TEST_EMAIL
 from tracker import get_conn, now_iso
 from mail_client import send_mail
 
