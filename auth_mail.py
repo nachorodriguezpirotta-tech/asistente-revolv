@@ -16,7 +16,17 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from config import CLIENT_SECRETS_FILE, BASE_DIR
+try:
+    from config import CLIENT_SECRETS_FILE, BASE_DIR
+except ImportError:
+    # Vercel: 'config' resuelve a api/config.py (endpoint) → cargar raíz por ruta.
+    import os as _os, importlib.util as _ilu
+    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "config.py")
+    _s = _ilu.spec_from_file_location("_root_config", _p)
+    _m = _ilu.module_from_spec(_s)
+    _s.loader.exec_module(_m)
+    CLIENT_SECRETS_FILE = _m.CLIENT_SECRETS_FILE
+    BASE_DIR = _m.BASE_DIR
 
 MAIL_TOKEN_FILE = os.path.join(BASE_DIR, "token_mail.json")
 MAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
