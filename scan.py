@@ -130,8 +130,9 @@ def _process_standard_client(c, packs):
             continue
         # Reglas por subcarpeta/nombre (ej. Egdylu: 'reel'→Fran, 'yt'→Rami)
         # antes del default del Sheet. Pedido Ignacio 10/jun.
-        from tracker import get_editor_for_subfolder as _gefs
-        editor = (_gefs(cliente_real, f.get("_subfolder_name") or f["name"])
+        from tracker import resolve_editor_rules as _rer
+        editor = (_rer(cliente_real, f.get("_subfolder_name"), f["name"],
+                       (f.get("videoMediaMetadata") or {}).get("durationMillis"))
                   or get_editor_for_client(cliente_real, packs))
         # NO duplicar si ya hay manual pending para ESTE editor específico
         # (clientes multi-editor como Roger Marti: Fran/Youtube + Valen/Reels).
@@ -306,8 +307,9 @@ def run(notify: bool = False):
                 # Detectar duplicado por apodo/nombre similar
                 if find_similar_pending_client(cliente_name):
                     continue
-                from tracker import get_editor_for_subfolder as _gefs2
-                editor = (_gefs2(cliente_name, f["name"])
+                from tracker import resolve_editor_rules as _rer2
+                editor = (_rer2(cliente_name, None, f["name"],
+                                (f.get("videoMediaMetadata") or {}).get("durationMillis"))
                           or get_editor_for_client(cliente_name, packs))
                 # NO duplicar si ya hay manual pending para ESTE editor
                 if has_manual_pending_for_client(cliente_name, editor):
