@@ -17,7 +17,18 @@ from typing import Optional
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 
-from config import CLIENT_SECRETS_FILE, TOKEN_FILE, SCOPES
+try:
+    from config import CLIENT_SECRETS_FILE, TOKEN_FILE, SCOPES
+except ImportError:
+    # Vercel: 'config' resuelve a api/config.py (endpoint) → cargar raíz por ruta.
+    import os as _os, importlib.util as _ilu
+    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "config.py")
+    _s = _ilu.spec_from_file_location("_root_config", _p)
+    _m = _ilu.module_from_spec(_s)
+    _s.loader.exec_module(_m)
+    CLIENT_SECRETS_FILE = _m.CLIENT_SECRETS_FILE
+    TOKEN_FILE = _m.TOKEN_FILE
+    SCOPES = _m.SCOPES
 
 log = logging.getLogger(__name__)
 
