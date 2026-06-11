@@ -661,6 +661,62 @@ if (!TOKEN || (!EDITOR && !IS_ADMIN)) {
     loadData();
 }
 
+
+// ───── Indicador GLOBAL de guardado (pedido Ignacio 11/jun) ─────
+// Cada mutación muestra "💾 Guardando…" y pasa a "✓ Guardado" SOLO cuando el
+// server respondió OK (y el server a su vez verifica que el cambio persistió
+// en la DB — with_db verify). Si falla: rojo persistente. Nunca más la duda
+// de "¿se guardó o no?".
+window._savesInFlight = 0;
+window._saveUITimer = null;
+function _ensureSavePill() {
+    let el = document.getElementById('save-pill');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'save-pill';
+        el.style.cssText = 'position:fixed; bottom:18px; right:18px; z-index:9999;'
+            + 'padding:10px 18px; border-radius:24px; font-size:13px; font-weight:600;'
+            + 'box-shadow:0 4px 14px rgba(0,0,0,0.35); transition:opacity .25s;'
+            + 'pointer-events:none; opacity:0; color:white; font-family:inherit;';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+function _saveUI(state) {
+    const el = _ensureSavePill();
+    clearTimeout(window._saveUITimer);
+    if (state === 'saving') {
+        el.style.background = '#2d3445';
+        el.textContent = '💾 Guardando…';
+        el.style.opacity = '1';
+    } else if (state === 'saved') {
+        el.style.background = '#16a34a';
+        el.textContent = '✓ Guardado';
+        el.style.opacity = '1';
+        window._saveUITimer = setTimeout(() => { el.style.opacity = '0'; }, 2200);
+    } else {
+        el.style.background = '#dc2626';
+        el.textContent = '⚠️ NO se guardó — tocá de nuevo lo que cambiaste';
+        el.style.opacity = '1';
+        window._saveUITimer = setTimeout(() => { el.style.opacity = '0'; }, 8000);
+    }
+}
+async function _mutFetch(url, opts) {
+    window._savesInFlight++;
+    _saveUI('saving');
+    try {
+        const res = await fetch(url, opts);
+        window._savesInFlight = Math.max(0, window._savesInFlight - 1);
+        if (window._savesInFlight === 0) _saveUI(res.ok ? 'saved' : 'error');
+        else if (!res.ok) _saveUI('error');
+        return res;
+    } catch (e) {
+        window._savesInFlight = Math.max(0, window._savesInFlight - 1);
+        _saveUI('error');
+        throw e;
+    }
+}
+
 async function loadData() {
     content.innerHTML = '<div class="loading">Cargando…</div>';
     const url = IS_ADMIN
@@ -1183,7 +1239,7 @@ function editProgress(editorName, label, currentCurrent, currentTotal, spanEl, f
         };
         if (IS_ADMIN) body.admin = 1;
         try {
-            const res = await fetch('/api/task', {
+            const res = await _mutFetch('/api/task', {
                 method: 'PATCH',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(body),
@@ -1249,7 +1305,7 @@ function editCount(cliente, editor, currentValue, spanEl) {
                     if (IS_ADMIN) { params.set('admin', '1'); if (editor) params.set('editor', editor); }
                     else { params.set('editor', EDITOR); }
                     try {
-                        const res = await fetch('/api/task?' + params, { method: 'DELETE' });
+                        const res = await _mutFetch('/api/task?' + params, { method: 'DELETE' });
                         const data = await res.json();
                         if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
                     } catch (e) {
@@ -1268,7 +1324,7 @@ function editCount(cliente, editor, currentValue, spanEl) {
         if (IS_ADMIN) { body.admin = 1; if (editor) body.editor = editor; }
         else { body.editor = EDITOR; }
         try {
-            const res = await fetch('/api/task', {
+            const res = await _mutFetch('/api/task', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
@@ -1440,7 +1496,7 @@ function showAddClientDialog(presetEditor) {
             const body = IS_ADMIN
                 ? { admin: 1, t: TOKEN, target_editor: editor, cliente }
                 : { editor: EDITOR, t: TOKEN, cliente };
-            const res = await fetch('/api/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const res = await _mutFetch('/api/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             const data = await res.json();
             if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
             close();
@@ -1507,7 +1563,7 @@ async function onDrop(e) {
         }
     }
     try {
-        const res = await fetch('/api/task', {
+        const res = await _mutFetch('/api/task', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1580,7 +1636,7 @@ async function _flushCountBatch() {
     let ok = false;
     for (let attempt = 0; attempt < 5 && !ok; attempt++) {
         try {
-            const res = await fetch('/api/task', {
+            const res = await _mutFetch('/api/task', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(batchBody),
@@ -1667,7 +1723,7 @@ async function adjustCount(cliente, editor, _ignoredCurrentValue, delta, btn) {
                 if (IS_ADMIN) { params.set('admin','1'); if (editor) params.set('editor', editor); }
                 else { params.set('editor', EDITOR); }
                 try {
-                    const res = await fetch('/api/task?' + params, { method: 'DELETE' });
+                    const res = await _mutFetch('/api/task?' + params, { method: 'DELETE' });
                     const data = await res.json();
                     if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
                 } catch (e) {
@@ -1738,7 +1794,7 @@ async function _saveOrderNow(ed, useKeepalive) {
     const body = { action: 'set_priority', editor: ed, order: list.map(x => x.cliente), t: TOKEN };
     if (IS_ADMIN) body.admin = 1;
     try {
-        const res = await fetch('/api/task', {
+        const res = await _mutFetch('/api/task', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -1777,7 +1833,7 @@ async function toggleUrgent(cliente, editor, urgent, btn) {
     }
     // Background server call
     try {
-        const res = await fetch('/api/task', {
+        const res = await _mutFetch('/api/task', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1864,7 +1920,7 @@ async function editNote(cliente, editor, btn) {
         render(LAST_DATA);
     }
     try {
-        const res = await fetch('/api/task', {
+        const res = await _mutFetch('/api/task', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1930,7 +1986,7 @@ function reassignClient(cliente, currentEditor, btn) {
             }
             overlay.remove();
             try {
-                const res = await fetch('/api/task', {
+                const res = await _mutFetch('/api/task', {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1984,7 +2040,7 @@ function deleteCliente(cliente, editor, btn) {
             if (IS_ADMIN) { params.set('admin','1'); if (editor) params.set('editor', editor); }
             else { params.set('editor', EDITOR); }
             try {
-                const res = await fetch('/api/task?' + params.toString(), { method: 'DELETE' });
+                const res = await _mutFetch('/api/task?' + params.toString(), { method: 'DELETE' });
                 const data = await res.json();
                 if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
             } catch (e) {
