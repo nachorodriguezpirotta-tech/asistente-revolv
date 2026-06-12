@@ -46,15 +46,34 @@ def run(dry_run: bool = False):
     editors_active = {r["name"]: r["email"] for r in eds}
 
     # Pending por editor con tiempo desde el más viejo + flag urgente
-    rows = conn.execute("""
-        SELECT editor, MIN(detected_at) as oldest, COUNT(*) as count_clientes,
+    raw = conn.execute("""
+        SELECT editor, cliente, MIN(detected_at) as oldest,
                SUM(COALESCE(pending_count, 1)) as total_videos,
-               MAX(COALESCE(urgent, 0)) as has_urgent,
-               SUM(CASE WHEN COALESCE(urgent,0)=1 THEN 1 ELSE 0 END) as urgent_count
+               MAX(COALESCE(urgent, 0)) as has_urgent
         FROM tasks WHERE status='pending' AND editor IS NOT NULL
-        GROUP BY editor
+        GROUP BY editor, cliente
     """).fetchall()
     conn.close()
+    # Excluir clientes ARCHIVADOS antes de agregar por editor (bug 12/jun:
+    # Alicia archivada seguía sumando en el recordatorio de Benja).
+    try:
+        from tracker import is_client_archived
+        raw = [r for r in raw if not is_client_archived(r["cliente"])]
+    except Exception:
+        pass
+    _agg = {}
+    for r in raw:
+        a = _agg.setdefault(r["editor"], {"editor": r["editor"], "oldest": r["oldest"],
+                                          "count_clientes": 0, "total_videos": 0,
+                                          "has_urgent": 0, "urgent_count": 0})
+        a["count_clientes"] += 1
+        a["total_videos"] += r["total_videos"] or 0
+        if r["oldest"] and (not a["oldest"] or r["oldest"] < a["oldest"]):
+            a["oldest"] = r["oldest"]
+        if r["has_urgent"]:
+            a["has_urgent"] = 1
+            a["urgent_count"] += 1
+    rows = list(_agg.values())
 
     to_remind = []
     for r in rows:
