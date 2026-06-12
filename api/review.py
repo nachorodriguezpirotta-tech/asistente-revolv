@@ -110,6 +110,42 @@ def _render_error(msg: str, detail: str) -> str:
             .replace("{detail}", _escape_html(detail)))
 
 
+def _resolve_editor_with_conn(conn, cliente):
+    """Editor de un cliente usando la conn FRESCA del endpoint (with_db/read_db).
+    En Vercel, tracker.get_conn() abre la copia bundleada del deploy (stale/local)
+    → resolve_editor_for_cliente devolvía None y el aviso de revisión solo le
+    llegaba al admin (bug 12/jun, caso Álvaro #11228). Prioridad: override
+    manual > Sheet > último completion."""
+    import unicodedata
+    def norm(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+        return " ".join(s.lower().split())
+    target = norm(cliente)
+    result = None
+    try:
+        for r in conn.execute(
+            "SELECT cliente, editor, MAX(sent_at) FROM mail_log "
+            "WHERE kind='completion' AND COALESCE(editor,'') NOT IN ('', '—') GROUP BY cliente"):
+            if norm(r["cliente"]) == target:
+                result = r["editor"]
+    except Exception:
+        pass
+    try:
+        for r in conn.execute("SELECT cliente, editor FROM cfg_excel_clients"):
+            if (r["editor"] or "").strip() and norm(r["cliente"]) == target:
+                result = r["editor"]
+    except Exception:
+        pass
+    try:
+        for r in conn.execute("SELECT cliente, editor FROM cfg_client_editor"):
+            if (r["editor"] or "").strip() and norm(r["cliente"]) == target:
+                result = r["editor"]
+    except Exception:
+        pass
+    return result
+
+
 class handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
@@ -169,7 +205,12 @@ class handler(BaseHTTPRequestHandler):
                         "SELECT id, cliente, video_file_id, video_file_name, editor, notes FROM client_reviews WHERE id=?",
                         (int(review_id_param),),
                     ).fetchone()
-                    return dict(row) if row else None
+                    if not row:
+                        return None
+                    d = dict(row)
+                    if not (d.get("editor") or "").strip():
+                        d["editor"] = _resolve_editor_with_conn(conn, d["cliente"])
+                    return d
 
                 row = read_db(_fetch)
                 if not row:
@@ -401,6 +442,7 @@ class handler(BaseHTTPRequestHandler):
             # Así el portal puede "Reenviar feedback" sin generar múltiples
             # entries en el dashboard del editor.
             review_id_holder = {}
+            resolved_editor_holder = {}
             def _op(conn):
                 existing = conn.execute("""
                     SELECT id FROM client_reviews
@@ -440,7 +482,21 @@ class handler(BaseHTTPRequestHandler):
                             (review_id, filename, mime_type, blob, size_bytes, created_at)
                         VALUES (?, ?, ?, ?, ?, datetime('now'))
                     """, (rid, fname, mime, blob, len(blob)))
-            with_db(_op, message=f"review: nueva revisión pedida por {cliente}" + (f" (+{len(attachments)} imgs)" if attachments else ""))
+            def _op_con_editor(conn):
+                _op(conn)
+                # Resolver el editor con la conn FRESCA y persistirlo en la review
+                # (las reviews del portal llegan sin editor). Así el aviso le llega
+                # al editor Y la review queda bien asignada para el dashboard.
+                if not (editor or "").strip():
+                    rid = review_id_holder.get("id")
+                    resolved = _resolve_editor_with_conn(conn, cliente)
+                    if resolved:
+                        resolved_editor_holder["v"] = resolved
+                        if rid:
+                            conn.execute("UPDATE client_reviews SET editor=? WHERE id=? AND COALESCE(editor,'')=''",
+                                         (resolved, rid))
+
+            with_db(_op_con_editor, message=f"review: nueva revisión pedida por {cliente}" + (f" (+{len(attachments)} imgs)" if attachments else ""))
             review_id = review_id_holder.get("id")
 
             # Notificar editor + admin (mail + push) con links a las imágenes
@@ -449,7 +505,7 @@ class handler(BaseHTTPRequestHandler):
                 "cliente": cliente,
                 "video_file_id": file_id,
                 "video_file_name": file_name or "(video)",
-                "editor": editor,
+                "editor": (editor or "").strip() or resolved_editor_holder.get("v"),
                 "attachments_count": len(attachments),
             }
             try:
