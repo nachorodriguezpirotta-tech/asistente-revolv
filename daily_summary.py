@@ -42,6 +42,13 @@ def get_pending_grouped():
     """).fetchall()
     conn.close()
 
+    # Excluir clientes ARCHIVADOS (no aparecen en dashboard ni deben
+    # aparecer en el resumen del día — bug Alicia/Benja 12/jun).
+    try:
+        from tracker import is_client_archived
+        rows = [r for r in rows if not is_client_archived(r["cliente"])]
+    except Exception:
+        pass
     grouped = defaultdict(list)
     for r in rows:
         editor = r["editor"] or "— sin editor en Sheet —"
