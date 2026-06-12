@@ -161,6 +161,15 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
             # Owner = cliente → crudo fuera de Material
             if is_file_known(f['id']):
                 continue
+            # Cliente bloqueado o ARCHIVADO → claimear (no reprocesar) pero NO
+            # crear task ni avisar. Bug 12/jun: este path no chequeaba y
+            # re-creó la task de Alicia Ramirez (archivada) → aparecía en el
+            # daily summary de Benja aunque no estaba en el dashboard.
+            if is_client_blocked(cliente, None):
+                claim_file(file_id=f["id"], cliente=cliente, folder_id="(audit-fuera-mat)",
+                           name=f["name"], size=size, created_time=f.get("createdTime"),
+                           is_baseline=True)
+                continue
             claim_file(file_id=f["id"], cliente=cliente, folder_id="(audit-fuera-mat)",
                        name=f["name"], size=size, created_time=f.get("createdTime"),
                        is_baseline=False)
