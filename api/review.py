@@ -146,6 +146,41 @@ def _resolve_editor_with_conn(conn, cliente):
     return result
 
 
+def _client_mail_with_conn(conn, cliente):
+    """{email, display_name} del cliente con la conn FRESCA (cfg_clients,
+    match exacto → normalizado → token subset en ambas direcciones, como
+    tracker.cfg_get_client). Solo si notifications_enabled=1."""
+    import unicodedata
+    def norm(s):
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+        return " ".join(s.lower().split())
+    STOP = {"de","del","la","el","los","las","y","e","o","u","a","con","sin","para","por"}
+    def toks(s):
+        return {t for t in norm(s).split() if len(t) >= 3 and t not in STOP}
+    try:
+        rows = conn.execute(
+            "SELECT cliente, email, display_name, notifications_enabled FROM cfg_clients"
+        ).fetchall()
+    except Exception:
+        return None
+    target = norm(cliente)
+    ttoks = toks(cliente)
+    hit = None
+    for r in rows:
+        if norm(r["cliente"]) == target:
+            hit = r; break
+    if not hit and ttoks:
+        subset = [r for r in rows if len(toks(r["cliente"])) >= 2 and toks(r["cliente"]).issubset(ttoks)]
+        if len(subset) == 1: hit = subset[0]
+    if not hit and ttoks:
+        inv = [r for r in rows if toks(r["cliente"]) and ttoks.issubset(toks(r["cliente"]))]
+        if len(inv) == 1: hit = inv[0]
+    if not hit or not hit["notifications_enabled"] or not hit["email"]:
+        return None
+    return {"email": hit["email"], "display_name": hit["display_name"] or cliente.split()[0]}
+
+
 class handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
@@ -182,13 +217,39 @@ class handler(BaseHTTPRequestHandler):
                 if not authorized:
                     return json_response(self, {"error": "unauthorized"}, status=401)
 
+                info_holder = {}
                 def _do(conn):
+                    row = conn.execute(
+                        "SELECT cliente, video_file_name, video_file_id, status FROM client_reviews WHERE id=?",
+                        (int(review_id),)).fetchone()
+                    if row:
+                        info_holder.update(dict(row))
+                        # mail del cliente con la conn FRESCA (la DB local de
+                        # Vercel es stale — gotcha 12/jun)
+                        info_holder["target"] = _client_mail_with_conn(conn, row["cliente"])
                     conn.execute(
                         "UPDATE client_reviews SET status='resolved', resolved_at=datetime('now') WHERE id=?",
                         (int(review_id),),
                     )
                 with_db(_do, message=f"review {review_id} marcada resuelta manualmente")
-                return json_response(self, {"ok": True, "id": int(review_id), "status": "resolved"})
+                # Avisar al CLIENTE que su corrección está lista (pedido Ignacio
+                # 12/jun: el aviso debe salir tanto al subir la corrección como
+                # al marcarla corregida a mano). Solo si estaba abierta (no
+                # re-avisar al re-marcar una ya resuelta) y tiene mail.
+                notified_client = False
+                try:
+                    if info_holder.get("cliente") and info_holder.get("status") == "revision_requested"                             and info_holder.get("target"):
+                        from notifier import notify_revision_resolved
+                        notify_revision_resolved(int(review_id), {
+                            "cliente": info_holder["cliente"],
+                            "video_file_name": info_holder.get("video_file_name") or "(video)",
+                            "video_file_id": info_holder.get("video_file_id"),
+                        }, target=info_holder["target"])
+                        notified_client = True
+                except Exception as e:
+                    print(f"[RESOLVE NOTIFY ERROR] review={review_id}: {e}", flush=True)
+                return json_response(self, {"ok": True, "id": int(review_id), "status": "resolved",
+                                            "cliente_notificado": notified_client})
 
             # MODO renotify: admin re-dispara la notificación de una review existente.
             # Útil cuando notify_revision_requested falló silenciosamente.
