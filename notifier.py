@@ -1085,13 +1085,17 @@ Un abrazo,<br><strong style="color:#222;">Nacho</strong><br>
         print(f"   ⚠️ falló mail corrección lista a {cliente}: {e}")
 
 
-def notify_revision_resolved(review_id: int, review: dict) -> None:
-    """El editor subió la corrección → mail al cliente con la nueva versión."""
+def notify_revision_resolved(review_id: int, review: dict, target: dict = None) -> None:
+    """El editor subió la corrección (o el admin la marcó resuelta) → mail al
+    cliente con la nueva versión. `target` ({email, display_name}) puede venir
+    pre-resuelto por el caller (Vercel: la DB local es stale, el endpoint lo
+    resuelve con su conn fresca)."""
     cliente = review.get("cliente", "?")
     video = review.get("video_file_name", "(video)")
     video_file_id = review.get("video_file_id")
     from tracker import cfg_client_should_be_notified, _correction_stem
-    target = cfg_client_should_be_notified(cliente)
+    if target is None:
+        target = cfg_client_should_be_notified(cliente)
     if not target:
         return  # cliente sin mail registrado, no avisamos
     to_email = target["email"]
