@@ -112,7 +112,13 @@
       "processed_at": "2026-06-09T23:41:22.328298+00:00",
       "report": "/home/runner/work/asistente-revolv/asistente-revolv/angel_data/reports/20260609_234023_reel2.html",
       "mail_id": "19eaec319a7ac56f"
+    },
+    "16UjjMvZOfqyURSbsIAvmX45WfU54MxNS": {
+      "name": "reel3.mp4",
+      "processed_at": "2026-06-13T10:08:07.681282+00:00",
+      "report": "/home/runner/work/asistente-revolv/asistente-revolv/angel_data/reports/20260613_100713_reel3.html",
+      "mail_id": "19ec073fc721238a"
     }
   },
-  "last_run": "2026-06-13T06:31:12.571780+00:00"
+  "last_run": "2026-06-13T10:08:07.681306+00:00"
 }
