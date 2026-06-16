@@ -40,7 +40,11 @@ def _parse_iso(s):
         return None
 
 
-def get_editor_stats(conn, editor: str, now: datetime) -> dict:
+
+from delivered_count import _norm_cli, _stem, _cliente_editor_map, _delivered_by_editor
+
+
+def get_editor_stats(conn, editor: str, now: datetime, delivered_w=None, delivered_m=None) -> dict:
     week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
     month_ago = (now - timedelta(days=30)).isoformat(timespec="seconds")
 
@@ -65,21 +69,14 @@ def get_editor_stats(conn, editor: str, now: datetime) -> dict:
     # y los nombres con "correc" (correcciones que entraron como entrega normal
     # pero el archivo se llama "video 5 correccion"). FIX 05/jun: Duna daba 28
     # con correcciones, pero Santi entregó 20 videos reales.
-    _exclude_corr = "AND subject NOT LIKE '%🔧%' AND LOWER(subject) NOT LIKE '%correc%'"
-    delivered_week = conn.execute(
-        f"""SELECT COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject))
-           FROM mail_log
-           WHERE editor = ? AND kind = 'completion'
-             AND sent_at >= ? AND COALESCE(success,1) = 1 {_exclude_corr}""",
-        (editor, week_ago),
-    ).fetchone()[0]
-    delivered_month = conn.execute(
-        f"""SELECT COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject))
-           FROM mail_log
-           WHERE editor = ? AND kind = 'completion'
-             AND sent_at >= ? AND COALESCE(success,1) = 1 {_exclude_corr}""",
-        (editor, month_ago),
-    ).fetchone()[0]
+    # Entregas REALES (known_edited_files, todos incl. baseline, dedup
+    # correcciones, por created_time). Si no vienen precomputados, calcular.
+    if delivered_w is None:
+        delivered_w = _delivered_by_editor(conn, week_ago).get(editor, 0)
+    if delivered_m is None:
+        delivered_m = _delivered_by_editor(conn, month_ago).get(editor, 0)
+    delivered_week = delivered_w
+    delivered_month = delivered_m
 
     # Tiempo promedio detected_at → completed_at (últimos 30 días)
     rows = conn.execute(
@@ -426,7 +423,10 @@ def _build_stats(conn):
             editors_active = EDITORS  # fallback
     except Exception:
         editors_active = EDITORS
-    stats_per_editor = [get_editor_stats(conn, editor, now) for editor in editors_active]
+    _ce = _cliente_editor_map(conn)
+    _dw = _delivered_by_editor(conn, (now - timedelta(days=7)).isoformat(timespec="seconds"), _ce)
+    _dm = _delivered_by_editor(conn, (now - timedelta(days=30)).isoformat(timespec="seconds"), _ce)
+    stats_per_editor = [get_editor_stats(conn, editor, now, _dw.get(editor, 0), _dm.get(editor, 0)) for editor in editors_active]
     pending_detail = {ed: get_editor_pending_detail(conn, ed) for ed in editors_active}
 
     total_pending_videos = sum(s["pending_videos"] for s in stats_per_editor)
@@ -492,11 +492,9 @@ def _build_editor_self_stats(conn, editor: str):
 
     # Ranking semanal: comparar contra otros editores activos
     week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
-    leaderboard = [dict(r) for r in conn.execute("""
-        SELECT editor, COUNT(*) as delivered
-        FROM tasks WHERE status='done' AND completed_at >= ? AND editor IS NOT NULL
-        GROUP BY editor ORDER BY delivered DESC
-    """, (week_ago,)).fetchall()]
+    _dw_all = _delivered_by_editor(conn, week_ago)
+    leaderboard = [{"editor": e, "delivered": n} for e, n in
+                   sorted(_dw_all.items(), key=lambda x: -x[1]) if n > 0]
     rank = None
     for i, ed in enumerate(leaderboard, 1):
         if ed["editor"] == editor:
