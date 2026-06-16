@@ -131,10 +131,16 @@ def get_editor_data(conn, editor: str) -> dict:
     from datetime import datetime, timedelta
     now = datetime.now()
     week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
-    delivered_week = conn.execute(
-        "SELECT COUNT(*) FROM tasks WHERE editor=? AND status='done' AND completed_at >= ?",
-        (editor, week_ago),
-    ).fetchone()[0]
+    # Entregas REALES de la semana (known_edited_files, no tasks-done que
+    # contaba clientes). Unificado con /api/stats vía delivered_count.
+    try:
+        from delivered_count import _delivered_by_editor
+        delivered_week = _delivered_by_editor(conn, week_ago).get(editor, 0)
+    except Exception:
+        delivered_week = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE editor=? AND status='done' AND completed_at >= ?",
+            (editor, week_ago),
+        ).fetchone()[0]
     urgent_count = conn.execute(
         "SELECT COUNT(*) FROM tasks WHERE editor=? AND status='pending' AND COALESCE(urgent, 0) = 1",
         (editor,),
@@ -251,7 +257,12 @@ def get_all_data(conn) -> dict:
     now = datetime.now()
     week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
     closed_total = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='done'").fetchone()[0]
-    delivered_week = conn.execute(
+    try:
+        from delivered_count import _delivered_by_editor as _dbe
+        from datetime import datetime as _dt, timedelta as _td
+        delivered_week = sum(_dbe(conn, (_dt.now()-_td(days=7)).isoformat(timespec="seconds")).values())
+    except Exception:
+        delivered_week = conn.execute(
         "SELECT COUNT(*) FROM tasks WHERE status='done' AND completed_at >= ?",
         (week_ago,)
     ).fetchone()[0]
