@@ -1674,6 +1674,25 @@ def cfg_get_daily_summary_editors() -> set:
     return {r["name"] for r in rows}
 
 
+def canonical_editor(name, editors):
+    """Mapea un nombre/apodo de editor a su forma CANÓNICA de cfg_editors.
+    `editors`: lista de nombres canónicos (cfg_editors active). El Sheet a veces
+    usa apodos ('Adri') que no matchean el nombre del dashboard ('Adrian') →
+    una review/task con 'Adri' no le aparecía al editor 'Adrian'. Match: exacto
+    normalizado > prefijo ÚNICO (apodo↔nombre largo). Bug Luis/Adri 17/jun."""
+    if not name:
+        return name
+    n = (name or "").strip().lower()
+    for e in editors:
+        if (e or "").strip().lower() == n:
+            return e
+    cands = [e for e in editors
+             if (e or "").strip().lower().startswith(n) or n.startswith((e or "").strip().lower())]
+    if len(cands) == 1:
+        return cands[0]
+    return name
+
+
 def cfg_get_editors_list() -> list[str]:
     """Lista de editores activos (canónica para dashboard)."""
     conn = get_conn()
