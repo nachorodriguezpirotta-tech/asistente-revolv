@@ -101,18 +101,31 @@ def get_all_clients(conn) -> dict:
 
 
 def get_editor_data(conn, editor: str) -> dict:
+    # Incluir variantes/apodos del editor (Sheet usa 'Adri', dashboard 'Adrian').
+    # Bug Luis/Adri 17/jun: pendientes con apodo no le aparecían al editor.
+    try:
+        from tracker import canonical_editor
+        _eds = [r["name"] for r in conn.execute("SELECT name FROM cfg_editors WHERE active=1").fetchall()]
+        _target = canonical_editor(editor, _eds).strip().lower()
+        _distinct = [r["editor"] for r in conn.execute(
+            "SELECT DISTINCT editor FROM tasks WHERE status='pending' AND editor IS NOT NULL").fetchall()]
+        _variants = [e for e in _distinct if canonical_editor(e, _eds).strip().lower() == _target]
+        if editor not in _variants:
+            _variants.append(editor)
+    except Exception:
+        _variants = [editor]
+    _ph = ",".join("?" * len(_variants))
     # 1 entry por cliente con la suma de pending_count (videos pendientes)
-    # Urgentes primero (MAX(urgent)=1)
     rows = conn.execute(
-        """SELECT cliente, MIN(id) as id, SUM(COALESCE(pending_count, 1)) as videos,
+        f"""SELECT cliente, MIN(id) as id, SUM(COALESCE(pending_count, 1)) as videos,
                   MIN(detected_at) as oldest,
                   MAX(COALESCE(urgent, 0)) as urgent,
                   MAX(COALESCE(note, '')) as note
            FROM tasks
-           WHERE editor = ? AND status = 'pending'
+           WHERE editor IN ({_ph}) AND status = 'pending'
            GROUP BY TRIM(cliente)
            ORDER BY MAX(COALESCE(urgent, 0)) DESC, TRIM(cliente)""",
-        (editor,),
+        _variants,
     ).fetchall()
 
     folder_map = _get_client_folder_map(conn)
