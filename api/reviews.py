@@ -106,26 +106,36 @@ def _cliente_editor_map(conn):
 
 
 def _build_editor(conn, editor: str):
+    # Traer TODAS las reviews recientes y filtrar por editor CANÓNICO en Python:
+    # el Sheet usa apodos ('Adri') que no matchean el nombre del dashboard
+    # ('Adrian') en un WHERE editor=? exacto. Bug Luis/Adri 17/jun.
     rows = conn.execute("""
         SELECT id, cliente, video_file_id, video_file_name, editor, status,
                notes, created_at, responded_at, resolved_at
         FROM client_reviews
-        WHERE editor=? OR COALESCE(editor,'')=''
-        ORDER BY id DESC LIMIT 300
-    """, (editor,)).fetchall()
+        ORDER BY id DESC LIMIT 400
+    """).fetchall()
     cmap, norm = _cliente_editor_map(conn)
-    ed_lower = editor.strip().lower()
+    try:
+        from tracker import canonical_editor
+        editors = [r["name"] for r in conn.execute("SELECT name FROM cfg_editors WHERE active=1").fetchall()]
+    except Exception:
+        canonical_editor = lambda n, e: n
+        editors = []
+    def _canon(n):
+        return canonical_editor(n, editors).strip().lower() if n else ""
+    ed_canon = _canon(editor)
     items = []
     for r in rows:
         d = dict(r)
         rev_editor = (d.get("editor") or "").strip()
         if rev_editor:
-            if rev_editor.lower() != ed_lower:
+            if _canon(rev_editor) != ed_canon:
                 continue
         else:
-            # review sin editor → resolver por cliente
+            # review sin editor → resolver por cliente (también canónico)
             resolved = cmap.get(norm(d.get("cliente") or ""))
-            if not resolved or resolved.strip().lower() != ed_lower:
+            if not resolved or _canon(resolved) != ed_canon:
                 continue
         items.append(d)
     items = items[:100]
