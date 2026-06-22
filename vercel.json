@@ -32,20 +32,20 @@
   ],
   "functions": {
     "api/data.py": {
-      "memory": 256,
-      "maxDuration": 10
+      "memory": 512,
+      "maxDuration": 30
     },
     "api/task.py": {
-      "memory": 256,
-      "maxDuration": 10
+      "memory": 512,
+      "maxDuration": 60
     },
     "api/stats.py": {
-      "memory": 256,
-      "maxDuration": 10
+      "memory": 512,
+      "maxDuration": 30
     },
     "api/config.py": {
-      "memory": 256,
-      "maxDuration": 10
+      "memory": 512,
+      "maxDuration": 60
     },
     "api/push.py": {
       "memory": 256,
@@ -57,11 +57,11 @@
     },
     "api/review.py": {
       "memory": 512,
-      "maxDuration": 30
+      "maxDuration": 60
     },
     "api/reviews.py": {
-      "memory": 256,
-      "maxDuration": 10
+      "memory": 512,
+      "maxDuration": 30
     },
     "api/voice_note.py": {
       "memory": 256,
