@@ -265,6 +265,16 @@
         .urgent-btn:hover { background: rgba(248, 113, 113, 0.15); }
         .note-btn:hover { background: rgba(251, 191, 36, 0.15); }
         .voice-btn:hover { background: rgba(167, 139, 250, 0.18); }
+        /* En celulares (sin hover) los botones de acción quedaban al 40% y chicos.
+           En touch: siempre visibles y con área tocable más grande (~44px Apple). */
+        @media (hover: none) {
+            .delete-btn, .reassign-btn,
+            .urgent-btn, .note-btn, .voice-btn {
+                opacity: 0.85;
+                padding: 9px 11px;
+                font-size: 17px;
+            }
+        }
         /* Voice notes modal */
         .voice-modal-bg {
             position: fixed; inset: 0; background: rgba(0,0,0,0.6);
