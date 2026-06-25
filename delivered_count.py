@@ -1,78 +1,57 @@
-"""Conteo de entregas REALES por editor — fuente única para stats y dashboard.
+"""Conteo de entregas por editor — fuente: los COMPLETION MAILS (mail_log).
 
-Cuenta known_edited_files (TODOS, baseline incluidos: un baseline es un editado
-real que entró sin mail), por fecha real de subida (created_time), deduplicando
-correcciones (cliente+subfolder+stem), atribuido al editor del cliente.
-Reemplaza el conteo viejo por completion-mails (perdía baseline) y por tasks-done
-(contaba clientes, no videos). Bug Benja/Electro 16/jun: 77 entregados, contaba 6.
+Cada mail "📹 X entregó Video Y de Z" = 1 video subido por el editor X. El editor
+del mail es el REAL (identify_editor_by_owner), no adivinado por cliente. Pedido
+Ignacio 18/jun: "arrancá a cargar las stats desde los mails — cada mail de que
+subimos un video = +1 video de ese editor". Ventaja: coincide con lo que Ignacio
+ve en su inbox + atribución correcta (antes, contar known_edited_files atribuía
+por cliente→editor y fallaba: Rafa perdía 16 videos, aparecían editores fantasma).
+Excluye correcciones (🔧 / 'correc'). Editor canonicalizado ('Adri'→'Adrian').
 """
-
-def _norm_cli(s):
-    import unicodedata
-    s = unicodedata.normalize("NFD", s or "")
-    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-    return " ".join(s.lower().split())
+_EXCLUDE_CORR = "AND subject NOT LIKE '%🔧%' AND LOWER(subject) NOT LIKE '%correc%'"
 
 
-def _stem(name):
-    """Nombre sin extensión ni sufijos de re-entrega — para que una corrección
-    (mismo video resubido) NO cuente como entrega nueva."""
-    import re
-    s = (name or "").lower().strip()
-    s = re.sub(r"\.[a-z0-9]+$", "", s)
-    for p in [r"\s*[-_]?\s*v\d+\s*$",
-              r"\s*[-_]?\s*(ver|versi[oó]n|v\.)\s*\d+\s*$",
-              r"\s*[-_]?\s*(final|corregido|corregida|correcci[oó]n|corr|fix|nuevo|nueva|edit|editado|editada)\s*$",
-              r"\s*\(\d+\)\s*$"]:
-        s = re.sub(p, "", s).strip()
-    return " ".join(s.split())
-
-
-def _cliente_editor_map(conn):
-    """cliente_norm -> editor. Prioridad: cfg_client_editor (override manual) >
-    cfg_excel_clients (Sheet) > último completion del mail_log. Con la conn
-    FRESCA del endpoint (en Vercel tracker.get_conn es stale)."""
-    m = {}
+def _editors_active(conn):
     try:
-        for r in conn.execute("SELECT cliente, editor, MAX(sent_at) FROM mail_log "
-                              "WHERE kind='completion' AND COALESCE(editor,'') NOT IN ('','—') GROUP BY cliente"):
-            m[_norm_cli(r["cliente"])] = r["editor"]
-    except Exception: pass
-    try:
-        for r in conn.execute("SELECT cliente, editor FROM cfg_excel_clients"):
-            if (r["editor"] or "").strip(): m[_norm_cli(r["cliente"])] = r["editor"]
-    except Exception: pass
-    try:
-        for r in conn.execute("SELECT cliente, editor FROM cfg_client_editor"):
-            if (r["editor"] or "").strip(): m[_norm_cli(r["cliente"])] = r["editor"]
-    except Exception: pass
-    return m
+        return [r["name"] for r in conn.execute("SELECT name FROM cfg_editors WHERE active=1").fetchall()]
+    except Exception:
+        return []
 
 
 def _delivered_by_editor(conn, since_iso, ce_map=None):
-    """{editor: N} videos editados REALES entregados desde `since_iso`.
-    Cuenta known_edited_files (TODOS, baseline incluidos — un baseline es un
-    editado real, solo que entró sin mail), por fecha REAL de subida a Drive
-    (created_time, fallback first_seen_at). Deduplica correcciones: agrupa por
-    (cliente, subfolder, stem) → cada grupo = 1 entrega. Atribuye al editor del
-    cliente. FIX 16/jun: antes contaba completion mails y se perdía todo lo que
-    entró baseline (caso Benja/Electro: 77 entregados, contaba 6)."""
-    if ce_map is None:
-        ce_map = _cliente_editor_map(conn)
-    rows = conn.execute("""
-        SELECT cliente, name, subfolder_name,
-               COALESCE(created_time, first_seen_at) as ts
-        FROM known_edited_files
-        WHERE COALESCE(created_time, first_seen_at) >= ?
-    """, (since_iso,)).fetchall()
-    seen = {}   # editor -> set de claves (cliente, subfolder, stem)
+    """{editor_canonico: N videos entregados desde since_iso} contando completion
+    mails únicos (DISTINCT dedupe_key/msg_id/subject)."""
+    try:
+        from tracker import canonical_editor
+    except Exception:
+        canonical_editor = lambda n, e: n
+    editors = _editors_active(conn)
+    rows = conn.execute(
+        f"""SELECT editor, COUNT(DISTINCT COALESCE(NULLIF(dedupe_key,''), msg_id, subject)) n
+            FROM mail_log
+            WHERE kind='completion' AND COALESCE(success,1)=1 AND sent_at >= ?
+              AND COALESCE(editor,'') NOT IN ('','—') {_EXCLUDE_CORR}
+            GROUP BY editor""", (since_iso,)).fetchall()
+    out = {}
     for r in rows:
-        cn = _norm_cli(r["cliente"])
-        editor = ce_map.get(cn)
-        if not editor:
-            continue
-        key = (cn, (r["subfolder_name"] or "").lower().strip(), _stem(r["name"]))
-        seen.setdefault(editor, set()).add(key)
-    return {ed: len(s) for ed, s in seen.items()}
+        e = canonical_editor(r["editor"], editors)
+        out[e] = out.get(e, 0) + (r["n"] or 0)
+    return out
 
 
+def _delivery_events(conn, since_iso):
+    """Lista de (editor_canonico, sent_at) de cada entrega — para horarios.
+    Un row por mail completion único."""
+    try:
+        from tracker import canonical_editor
+    except Exception:
+        canonical_editor = lambda n, e: n
+    editors = _editors_active(conn)
+    rows = conn.execute(
+        f"""SELECT editor, MIN(sent_at) sent_at
+            FROM mail_log
+            WHERE kind='completion' AND COALESCE(success,1)=1 AND sent_at >= ?
+              AND COALESCE(editor,'') NOT IN ('','—') {_EXCLUDE_CORR}
+            GROUP BY COALESCE(NULLIF(dedupe_key,''), msg_id, subject), editor""",
+        (since_iso,)).fetchall()
+    return [(canonical_editor(r["editor"], editors), r["sent_at"]) for r in rows if r["sent_at"]]
