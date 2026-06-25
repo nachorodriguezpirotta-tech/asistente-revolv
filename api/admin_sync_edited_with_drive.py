@@ -101,17 +101,29 @@ class handler(BaseHTTPRequestHandler):
             # 1) Encontrar la carpeta del cliente en Drive
             all_root = list_root_folders()
             folder = find_folder_by_name(cliente, all_root)
-            if not folder:
-                return json_response(
-                    self,
-                    {
-                        "error": f"No encontré carpeta de '{cliente}' en Drive root",
-                        "hint": "verificá que el nombre matchee (incluyendo tildes/espacios)",
-                    },
-                    status=404,
-                )
-            client_folder_id = folder["id"]
-            client_folder_name = folder.get("name") or cliente
+            if folder:
+                client_folder_id = folder["id"]
+                client_folder_name = folder.get("name") or cliente
+            else:
+                # Fallback: el folder_id ya guardado por el scan (tabla clients)
+                def _from_db(conn):
+                    row = conn.execute(
+                        """
+                        SELECT folder_id FROM clients
+                        WHERE TRIM(LOWER(cliente)) = TRIM(LOWER(?))
+                        ORDER BY last_scan_at DESC NULLS LAST LIMIT 1
+                        """,
+                        (cliente,),
+                    ).fetchone()
+                    return row["folder_id"] if row else None
+                client_folder_id = read_db(_from_db)
+                client_folder_name = cliente
+                if not client_folder_id:
+                    return json_response(
+                        self,
+                        {"error": f"No encontré carpeta de '{cliente}' en Drive"},
+                        status=404,
+                    )
 
             # 2) Detectar /Material/ (si tiene)
             raw_folder = find_raw_subfolder(client_folder_id)
