@@ -41,7 +41,7 @@ def _parse_iso(s):
 
 
 
-from delivered_count import _norm_cli, _stem, _cliente_editor_map, _delivered_by_editor
+from delivered_count import _delivered_by_editor, _delivery_events
 
 
 def get_editor_stats(conn, editor: str, now: datetime, delivered_w=None, delivered_m=None) -> dict:
@@ -237,18 +237,13 @@ def get_daily_aggregates(conn, days: int = 14) -> dict:
     days_list = [(now - timedelta(days=i)).date().isoformat() for i in range(days-1, -1, -1)]
     days_set = set(days_list)
 
-    # Entregas por día por editor
-    rows = conn.execute("""
-        SELECT substr(completed_at, 1, 10) as day, editor, COUNT(*) as n
-        FROM tasks WHERE status='done' AND completed_at >= ?
-        GROUP BY day, editor
-    """, ((now - timedelta(days=days)).isoformat(timespec="seconds"),)).fetchall()
+    # Entregas por día por editor — desde los completion mails (1 mail = 1 video).
     deliveries_by_day = {d: {} for d in days_list}
     editors_set = set()
-    for r in rows:
-        if r["day"] in deliveries_by_day:
-            ed = r["editor"] or "—"
-            deliveries_by_day[r["day"]][ed] = r["n"]
+    for (ed, ts) in _delivery_events(conn, (now - timedelta(days=days)).isoformat(timespec="seconds")):
+        day = (ts or "")[:10]
+        if day in deliveries_by_day:
+            deliveries_by_day[day][ed] = deliveries_by_day[day].get(ed, 0) + 1
             editors_set.add(ed)
 
     # Crudos recibidos por día
@@ -355,16 +350,12 @@ def _build_productivity_hours(conn):
     """Distribución de entregas por hora del día (0-23h), por editor.
     Identifica si un editor labura de día/noche/fin de semana.
 
-    Usa completed_at de tasks done. Asume timezone local (UTC-3) — los
-    completed_at se guardan con now_iso() que usa local time naive."""
-    rows = conn.execute("""
-        SELECT editor, completed_at
-        FROM tasks
-        WHERE status='done'
-          AND completed_at IS NOT NULL
-          AND editor IS NOT NULL
-          AND TRIM(editor) != ''
-    """).fetchall()
+    Fuente: hora (sent_at) de los COMPLETION MAILS de los últimos 60 días —
+    cada mail = una entrega del editor. Hora real del aviso. Pedido Ignacio
+    18/jun (antes usaba completed_at de tasks done, menos fiel)."""
+    since = (datetime.now() - timedelta(days=60)).isoformat(timespec="seconds")
+    events = _delivery_events(conn, since)
+    rows = [{"editor": e, "completed_at": ts} for (e, ts) in events]
 
     from collections import Counter
     by_editor_hour = {}  # {editor: [0]*24}
@@ -423,9 +414,8 @@ def _build_stats(conn):
             editors_active = EDITORS  # fallback
     except Exception:
         editors_active = EDITORS
-    _ce = _cliente_editor_map(conn)
-    _dw = _delivered_by_editor(conn, (now - timedelta(days=7)).isoformat(timespec="seconds"), _ce)
-    _dm = _delivered_by_editor(conn, (now - timedelta(days=30)).isoformat(timespec="seconds"), _ce)
+    _dw = _delivered_by_editor(conn, (now - timedelta(days=7)).isoformat(timespec="seconds"))
+    _dm = _delivered_by_editor(conn, (now - timedelta(days=30)).isoformat(timespec="seconds"))
     stats_per_editor = [get_editor_stats(conn, editor, now, _dw.get(editor, 0), _dm.get(editor, 0)) for editor in editors_active]
     pending_detail = {ed: get_editor_pending_detail(conn, ed) for ed in editors_active}
 
