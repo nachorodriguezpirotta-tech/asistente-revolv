@@ -27,6 +27,30 @@ except Exception as _e:
     _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
 
 
+def _manual_adjust_map(conn) -> dict:
+    """{(editor_lower, cliente_lower): videos_a_restar} para tasks pending MANUALES
+    (count_locked=1) cuyas entregas reales (mails) ya descontaron parte/todo el
+    count. Reconciliación EN MEMORIA (no muta DB) para que el display sea correcto
+    al instante y robusto: aunque el cierre en DB se haya perdido por un push
+    concurrente de tracker.db, el restante se re-deriva de mail_log (durable)."""
+    out = {}
+    try:
+        from tracker import delivered_against_task
+        tasks = conn.execute(
+            "SELECT TRIM(cliente) AS c, TRIM(COALESCE(editor,'')) AS e, "
+            "COALESCE(pending_count,1) AS pc, detected_at "
+            "FROM tasks WHERE status='pending' AND COALESCE(count_locked,0)=1"
+        ).fetchall()
+        for t in tasks:
+            d = delivered_against_task(conn, t["c"], t["e"], t["detected_at"])
+            if d > 0:
+                k = (t["e"].lower(), t["c"].lower())
+                out[k] = out.get(k, 0) + min(t["pc"] or 1, d)
+    except Exception:
+        pass
+    return out
+
+
 def _get_client_folder_map(conn) -> dict:
     """Devuelve {cliente_normalizado: folder_id} de la tabla clients."""
     rows = conn.execute("SELECT cliente, folder_id FROM clients").fetchall()
@@ -160,18 +184,25 @@ def get_editor_data(conn, editor: str) -> dict:
     ).fetchone()[0]
     _arch, _norm = _archived_norm_set(conn)
     rows = [r for r in rows if _norm(r["cliente"]) not in _arch]
-    pendientes_list = [
-        {
+    # Reconciliación manual: restar entregas reales (mails) de las tasks manual ya
+    # cubiertas. Suma el ajuste de todas las variantes de apodo del editor.
+    _adj = _manual_adjust_map(conn)
+    pendientes_list = []
+    for r in rows:
+        cli = r["cliente"].strip()
+        restar = sum(_adj.get((v.strip().lower(), cli.lower()), 0) for v in _variants)
+        videos = max(0, (r["videos"] or 1) - restar)
+        if videos <= 0:
+            continue  # ya entregado → no mostrar
+        pendientes_list.append({
             "id": r["id"],
-            "cliente": r["cliente"].strip(),
-            "videos": r["videos"] or 1,
+            "cliente": cli,
+            "videos": videos,
             "detected_at": r["oldest"],
-            "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
+            "drive_folder_id": folder_map.get(cli.lower()),
             "urgent": bool(r["urgent"]) if "urgent" in r.keys() else False,
             "note": r["note"] if "note" in r.keys() else None,
-        }
-        for r in rows
-    ]
+        })
     pendientes_list = _priority_sort(conn, editor, pendientes_list, _norm)
     return {
         "editor": editor,
@@ -199,17 +230,23 @@ def get_all_data(conn) -> dict:
     ).fetchall()
     folder_map = _get_client_folder_map(conn)
     _arch, _norm = _archived_norm_set(conn)
+    _adj = _manual_adjust_map(conn)
     by_editor = {}
     for r in rows:
         if _norm(r["cliente"]) in _arch:
             continue
         ed = r["editor"] or "— sin editor —"
+        cli = r["cliente"]
+        restar = _adj.get(((r["editor"] or "").strip().lower(), cli.strip().lower()), 0)
+        videos = max(0, (r["videos"] or 1) - restar)
+        if videos <= 0:
+            continue  # ya entregado → no mostrar
         by_editor.setdefault(ed, []).append({
             "id": r["id"],
-            "cliente": r["cliente"],
-            "videos": r["videos"] or 1,
+            "cliente": cli,
+            "videos": videos,
             "detected_at": r["oldest"],
-            "drive_folder_id": folder_map.get(r["cliente"].strip().lower()),
+            "drive_folder_id": folder_map.get(cli.strip().lower()),
             "urgent": bool(r["urgent"]) if "urgent" in r.keys() else False,
             "note": r["note"] if "note" in r.keys() else None,
         })
@@ -279,12 +316,11 @@ def get_all_data(conn) -> dict:
         "SELECT COUNT(*) FROM tasks WHERE status='done' AND completed_at >= ?",
         (week_ago,)
     ).fetchone()[0]
-    pending_total = conn.execute(
-        "SELECT COALESCE(SUM(COALESCE(pending_count, 1)), 0) FROM tasks WHERE status='pending'"
-    ).fetchone()[0]
-    pending_clientes = conn.execute(
-        "SELECT COUNT(DISTINCT TRIM(cliente)) FROM tasks WHERE status='pending'"
-    ).fetchone()[0]
+    # Totales derivados de by_editor (ya reconciliado con entregas reales), para
+    # que el banner coincida con lo que se ve en las tarjetas.
+    _items = [it for lst in by_editor.values() for it in lst]
+    pending_total = sum(it["videos"] for it in _items)
+    pending_clientes = len({it["cliente"].strip().lower() for it in _items})
     urgent_count = conn.execute(
         "SELECT COUNT(*) FROM tasks WHERE status='pending' AND COALESCE(urgent, 0) = 1"
     ).fetchone()[0]
