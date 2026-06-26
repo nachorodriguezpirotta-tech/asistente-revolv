@@ -2388,15 +2388,84 @@ def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
     return False
 
 
+def delivered_against_task(conn, cliente: str, editor: Optional[str], since_iso: str) -> int:
+    """Cuántos editados de ENTREGA (mails kind='completion' NO corrección) entregó
+    este editor para este cliente desde `since_iso`. Fuente DURABLE: mail_log
+    (respaldado por dedupe Turso), que no se pierde aunque un push de tracker.db
+    pise el descuento. Match de editor tolerante a apodos (Adri/Adrian) vía
+    canonical_editor; cuenta también mails sin editor (resueltos por cliente)."""
+    try:
+        eds = [r["name"] for r in conn.execute(
+            "SELECT name FROM cfg_editors WHERE active=1").fetchall()]
+    except Exception:
+        eds = []
+    tgt = canonical_editor(editor or "", eds).strip().lower()
+    try:
+        rows = conn.execute(
+            "SELECT editor FROM mail_log WHERE kind='completion' AND COALESCE(success,1)=1 "
+            "AND TRIM(cliente)=TRIM(?) AND subject NOT LIKE '%🔧%' "
+            "AND LOWER(subject) NOT LIKE '%correc%' AND sent_at >= ?",
+            (cliente or "", since_iso or "")
+        ).fetchall()
+    except Exception:
+        return 0
+    n = 0
+    for r in rows:
+        me = (r["editor"] or "").strip()
+        if not me or canonical_editor(me, eds).strip().lower() == tgt:
+            n += 1
+    return n
+
+
+def reconcile_locked_tasks(conn=None) -> int:
+    """Cierra las tasks pending MANUALES (count_locked=1) cuyas entregas reales
+    (mails de completion) ya cubren el count asignado. IDEMPOTENTE y DURABLE: el
+    restante se re-deriva de mail_log, así si un push perdió el decrement, el
+    próximo scan re-cierra. Devuelve cuántas cerró. Las tasks auto NO se tocan
+    (esas las cierra decrement + el closer contando crudos vs editados)."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    n = 0
+    try:
+        tasks = conn.execute(
+            "SELECT id, TRIM(cliente) AS c, TRIM(COALESCE(editor,'')) AS e, "
+            "COALESCE(pending_count,1) AS pc, detected_at "
+            "FROM tasks WHERE status='pending' AND COALESCE(count_locked,0)=1"
+        ).fetchall()
+        for t in tasks:
+            d = delivered_against_task(conn, t["c"], t["e"], t["detected_at"])
+            if d >= (t["pc"] or 1):
+                conn.execute(
+                    "UPDATE tasks SET status='done', completed_at=?, pending_count=0 WHERE id=?",
+                    (now_iso(), t["id"]))
+                n += 1
+        if n:
+            conn.commit()
+    except Exception as e:
+        print(f"reconcile_locked_tasks error: {e}")
+    finally:
+        if own:
+            conn.close()
+    return n
+
+
 def decrement_pending_count(cliente: str, completed_by_file_id: str) -> dict:
     """
     Decrementa pending_count en 1. Si llega a 0, marca la task como done.
     Retorna: {'task_id', 'new_count', 'closed': bool}
     Si NO había task pending, retorna {'task_id': None, ...}
+
+    Tasks MANUALES (count_locked=1): NO se muta el pending_count (= lo que fijó el
+    admin, estable). El restante se DERIVA de los mails de entrega ya enviados
+    (durable, no se pierde con un push). Solo se marca done cuando las entregas
+    cubren el count. Esto evita el bug de manual-no-descontada: el descuento ya no
+    depende de que el UPDATE perdure en tracker.db.
     """
     conn = get_conn()
     row = conn.execute("""
-        SELECT id, COALESCE(pending_count, 1) as cnt, editor FROM tasks
+        SELECT id, COALESCE(pending_count, 1) as cnt, editor,
+               COALESCE(count_locked, 0) as lk, detected_at FROM tasks
         WHERE TRIM(cliente)=TRIM(?) AND status='pending'
         ORDER BY detected_at ASC LIMIT 1
     """, (cliente,)).fetchone()
@@ -2406,8 +2475,25 @@ def decrement_pending_count(cliente: str, completed_by_file_id: str) -> dict:
 
     task_id = row["id"]
     editor = row["editor"]
-    new_count = (row["cnt"] or 1) - 1
 
+    if row["lk"]:
+        # MANUAL: restante = count_asignado - entregas (mails) ya hechas. Este
+        # editado todavía NO está en mail_log (el mail se encola después), por eso
+        # sumamos 1 a las entregas previas.
+        delivered_prev = delivered_against_task(conn, cliente, editor, row["detected_at"])
+        new_count = max(0, (row["cnt"] or 1) - (delivered_prev + 1))
+        closed = new_count <= 0
+        if closed:
+            conn.execute("""
+                UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?, pending_count=0
+                WHERE id=?
+            """, (now_iso(), completed_by_file_id, task_id))
+            conn.commit()
+        conn.close()
+        return {"task_id": task_id, "new_count": new_count, "closed": closed, "editor": editor}
+
+    # AUTO: descuento clásico (mutando pending_count)
+    new_count = (row["cnt"] or 1) - 1
     if new_count <= 0:
         conn.execute("""
             UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?, pending_count=0
