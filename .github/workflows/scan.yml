@@ -78,35 +78,13 @@ jobs:
             fi
           done
 
-      - name: Commit DB if changed
+      - name: Commit DB (Contents API, rapido)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "asistente-bot"
-          git config user.email "bot@revolv.local"
           if ! git status --porcelain tracker.db | grep -q .; then
-            echo "ℹ️  DB sin cambios, no commit necesario"
-            exit 0
+            echo "DB sin cambios"; exit 0
           fi
-          git add tracker.db
-          git commit -m "[bot] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]"
-          # Push robusto con retry (igual que scan-incremental). CRÍTICO: si el
-          # push falla por conflicto, el mail_log con los registros de mails YA
-          # enviados se perdía → el próximo scan re-detectaba y re-mandaba (bug
-          # 02/jun Jennifer/Agus). Retry con rebase asegura que persista.
-          for attempt in 1 2 3; do
-            if git pull --rebase -X ours 2>&1; then
-              if git push 2>&1; then
-                echo "✅ DB actualizada (intento $attempt)"
-                exit 0
-              fi
-            else
-              echo "⚠️ Conflicto rebase (intento $attempt), abort y retry"
-              git rebase --abort || true
-              git fetch origin main
-              git reset --soft origin/main
-              git add tracker.db
-              git commit -m "[bot] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]" || true
-            fi
-            sleep $((3 * attempt))
-          done
-          echo "❌ No se pudo pushear tracker.db tras 3 intentos"
-          exit 1
+          python push_db_api.py
