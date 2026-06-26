@@ -70,38 +70,13 @@ jobs:
             if [ $i -lt 3 ]; then sleep $((5 * i)); else exit $ec; fi
           done
 
-      - name: Commit DB if changed
+      - name: Commit DB (Contents API, rapido)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "asistente-bot"
-          git config user.email "bot@revolv.local"
           if ! git status --porcelain tracker.db | grep -q .; then
-            echo "DB sin cambios"
-            exit 0
+            echo "DB sin cambios"; exit 0
           fi
-          git add tracker.db
-          git commit -m "[bot-inc] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]"
-          # Reintentar push hasta 3 veces. tracker.db es binario y git no
-          # puede 3-way merge, así que en caso de conflicto tomamos NUESTRA
-          # versión (theirs en jerga de rebase = nuestro commit). Es seguro
-          # porque el scan ya mandó los mails antes de este step; la DB es
-          # solo el log de "ya procesado", y la próxima iteración recupera
-          # cualquier estado faltante via Drive Changes page_token.
-          for attempt in 1 2 3; do
-            if git pull --rebase -X ours; then
-              if git push; then
-                echo "DB actualizada (intento $attempt)"
-                exit 0
-              fi
-            else
-              echo "⚠️ Conflicto en rebase (intento $attempt), abort y retry"
-              git rebase --abort || true
-              # Si rebase abortó, recommiteamos sobre HEAD actualizado
-              git fetch origin main
-              git reset --soft origin/main
-              git add tracker.db
-              git commit -m "[bot-inc] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]" || true
-            fi
-            sleep $((2 * attempt))
-          done
-          echo "❌ No se pudo pushear tracker.db después de 3 intentos"
-          exit 1
+          python push_db_api.py
