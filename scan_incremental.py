@@ -531,6 +531,17 @@ def run(notify: bool = False):
         sent = send_completion_mails(cierres)
         if sent:
             print(f"📧 {sent} mails de cierre enviados.")
+        # Avisos de revisión pedida que el endpoint del portal no logró mandar
+        # (notified_at NULL). DURABLE: el scan tiene creds de mail y no muere por
+        # timeout HTTP como el endpoint. Cubre el bug de "el editor no se entera
+        # cuando el cliente pide una corrección".
+        try:
+            from notifier import notify_pending_reviews
+            nrev = notify_pending_reviews()
+            if nrev:
+                print(f"📝 {nrev} aviso(s) de revisión pedida enviados (durable).")
+        except Exception as _e:
+            print(f"notify_pending_reviews: {_e}")
 
 
 if __name__ == "__main__":
