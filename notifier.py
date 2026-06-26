@@ -938,6 +938,45 @@ a llegar al cliente un mail nuevo con la versión corregida.
         print(f"   ⚠️ push revisión: {e}")
 
 
+def notify_pending_reviews(max_age_hours: int = 72) -> int:
+    """Manda los avisos de 'revisión pedida' que el endpoint del portal no logró
+    enviar (notified_at NULL). DURABLE: corre en el scan (con creds de mail y sin
+    timeout HTTP), reintenta hasta lograrlo. Marca notified_at para no duplicar.
+    El dedupe de send_mail evita re-mandar si el endpoint sí llegó a enviar.
+    Devuelve cuántas notificó."""
+    try:
+        from tracker import (list_unnotified_reviews, mark_review_notified,
+                             resolve_editor_for_cliente)
+    except Exception as e:
+        print(f"notify_pending_reviews import: {e}")
+        return 0
+    revs = list_unnotified_reviews(max_age_hours)
+    n = 0
+    for r in revs:
+        editor = (r.get("editor") or "").strip()
+        if not editor:
+            try:
+                editor = resolve_editor_for_cliente(r["cliente"]) or ""
+            except Exception:
+                editor = ""
+        review = {
+            "id": r["id"],
+            "cliente": r["cliente"],
+            "video_file_id": r.get("video_file_id"),
+            "video_file_name": r.get("video_file_name") or "(video)",
+            "editor": editor or None,
+            "attachments_count": 0,
+        }
+        try:
+            notify_revision_requested(r["id"], review, r.get("notes") or "(sin notas)")
+            mark_review_notified(r["id"])
+            n += 1
+            print(f"   📝 aviso de revisión (durable): {r['cliente']} → {editor or 'admin'}")
+        except Exception as e:
+            print(f"   ⚠️ notify_pending_reviews review {r['id']}: {e}")
+    return n
+
+
 def notify_review_approved_lite(cliente: str, file_name: str, editor: Optional[str]) -> None:
     """Versión sin review_id: el cliente tocó '✅ Todo perfecto' en el mail.
     NO guardamos nada en DB. Solo mandamos info al admin (dedupe 60 min)."""
