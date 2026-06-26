@@ -61,32 +61,13 @@ jobs:
           DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}
         run: python audit_recover.py --hours 12
 
-      - name: Commit DB if changed
+      - name: Commit DB (Contents API, rapido)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "asistente-bot"
-          git config user.email "bot@revolv.local"
           if ! git status --porcelain tracker.db | grep -q .; then
-            echo "DB sin cambios"
-            exit 0
+            echo "DB sin cambios"; exit 0
           fi
-          git add tracker.db
-          git commit -m "[bot-audit] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]"
-          # Mismo retry-with-theirs que scan-incremental
-          for attempt in 1 2 3; do
-            if git pull --rebase -X ours; then
-              if git push; then
-                echo "DB actualizada (intento $attempt)"
-                exit 0
-              fi
-            else
-              echo "⚠️ Conflicto en rebase (intento $attempt), abort y retry"
-              git rebase --abort || true
-              git fetch origin main
-              git reset --soft origin/main
-              git add tracker.db
-              git commit -m "[bot-audit] update tracker.db ($(date -u +%Y-%m-%dT%H:%M:%SZ)) [skip ci]" || true
-            fi
-            sleep $((2 * attempt))
-          done
-          echo "❌ No se pudo pushear tracker.db después de 3 intentos"
-          exit 1
+          python push_db_api.py
