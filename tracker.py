@@ -340,6 +340,12 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cliente ON client_reviews(cliente);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_review_video ON client_reviews(video_file_id);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_review_status ON client_reviews(status);")
+    # notified_at: cuándo se avisó al editor/admin de la revisión pedida. NULL =
+    # falta avisar. El scan (durable) procesa las NULL — antes el aviso lo mandaba
+    # solo el endpoint del portal (síncrono), que se perdía si la función Vercel
+    # moría entre el commit y el envío → el editor nunca se enteraba.
+    if "notified_at" not in [r[1] for r in conn.execute("PRAGMA table_info(client_reviews)").fetchall()]:
+        conn.execute("ALTER TABLE client_reviews ADD COLUMN notified_at TEXT")
 
     # Voice notes: cada task puede tener N notas de voz dejadas por el admin
     # como feedback rápido al editor. El audio se guarda como BLOB en SQLite
@@ -1887,6 +1893,41 @@ def get_latest_pending_review_for_client(cliente: str) -> Optional[dict]:
     """, (cliente,)).fetchone()
     conn.close()
     return dict(r) if r else None
+
+
+def list_unnotified_reviews(max_age_hours: int = 72) -> list[dict]:
+    """Reviews 'revision_requested' que todavía NO se avisaron al editor/admin
+    (notified_at NULL), de las últimas `max_age_hours`. El scan las procesa y manda
+    el mail de forma DURABLE (a diferencia del endpoint del portal, que se perdía si
+    la función Vercel moría). Límite de antigüedad para no remandar avisos viejos."""
+    from datetime import timedelta
+    conn = get_conn()
+    try:
+        cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat(timespec="seconds")
+        rows = conn.execute("""
+            SELECT id, cliente, video_file_id, video_file_name, editor, notes, created_at
+            FROM client_reviews
+            WHERE status='revision_requested' AND COALESCE(notified_at,'')=''
+              AND created_at >= ?
+            ORDER BY created_at ASC
+        """, (cutoff,)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"list_unnotified_reviews error: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def mark_review_notified(review_id: int) -> None:
+    """Marca una review como ya avisada (notified_at=now) para que el scan no
+    vuelva a mandar el mail."""
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE client_reviews SET notified_at=? WHERE id=?", (now_iso(), review_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_latest_review_for_video(video_file_id: str) -> Optional[dict]:
