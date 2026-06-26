@@ -39,7 +39,7 @@ from tracker import (
     is_file_known, claim_file, create_task, has_pending_for_client_editor,
     has_manual_pending_for_client, find_similar_pending_client,
     is_client_blocked, set_pending_count,
-    is_edited_known, claim_edited_file, decrement_pending_count,
+    is_edited_known, claim_edited_file, decrement_pending_count, reconcile_locked_tasks,
     enqueue_completion_mail, is_correction_for_client,
     get_editor_for_subfolder, _classify_subfolder_type,
     infer_subfolder_editor_from_history, register_subfolder_alert,
@@ -511,6 +511,16 @@ def run(notify: bool = False):
 
     if not new_tasks and not cierres:
         print("   (sin novedades relevantes)")
+
+    # Red de seguridad DURABLE: cerrar tasks manuales ya entregadas (re-derivado de
+    # mail_log). Cubre el caso de un decrement perdido por push concurrente, así
+    # reminders/daily/dashboard ven el estado correcto sin depender de ese UPDATE.
+    try:
+        n_rec = reconcile_locked_tasks()
+        if n_rec:
+            print(f"♻️  {n_rec} task(s) manual cerradas por entregas reales (reconcile)")
+    except Exception as _e:
+        print(f"reconcile_locked_tasks: {_e}")
 
     if notify:
         from notifier import run as notify_run, send_completion_mails
