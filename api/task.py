@@ -283,14 +283,16 @@ class handler(BaseHTTPRequestHandler):
                         cli = resolved
                 deleted["cliente"] = cli
                 deleted["count"] = count_deleted
-                # Bloquear re-creación del cliente de forma PERMANENTE (10 años).
-                # Bug recurrente 04/jun: el block era de solo 24h → el scan
-                # re-detectaba los crudos del cliente al día siguiente y re-creaba
-                # la task. El usuario lo borraba, volvía, lo borraba, volvía.
-                # Ahora: borrar = quitar el cliente del dashboard para siempre.
-                # IMPORTANTE: bloquear con editor='' (cliente ENTERO, cualquier
-                # editor) para que el scan no lo re-cree ni con otro editor.
-                blocked_until = (datetime.now() + timedelta(days=3650)).isoformat(timespec="seconds")
+                # Bloqueo CORTO (2 días). El bloqueo de 10 años (días=3650) mataba al
+                # cliente PARA SIEMPRE: los CRUDOS NUEVOS que subía después nunca
+                # generaban task ni mail (caso Rafa Rojas 29/jun + 35 clientes activos
+                # bloqueados). Lo que evita la reaparición de los crudos VIEJOS no es el
+                # bloqueo sino el marcado baseline de abajo (línea ~305). Con baseline,
+                # 2 días alcanzan para que el scan inmediato no re-cree la tarjeta, y a
+                # la vez los crudos NUEVOS (material que llega después) vuelven a
+                # detectarse automáticamente. Para apagar un cliente PARA SIEMPRE existe
+                # Archivar (is_client_archived), que es lo correcto para "no trabajo más".
+                blocked_until = (datetime.now() + timedelta(days=2)).isoformat(timespec="seconds")
                 for nombre in {cli, cliente}:
                     # block del cliente entero (editor='')
                     conn.execute("""
