@@ -2430,32 +2430,42 @@ def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
 
 
 def delivered_against_task(conn, cliente: str, editor: Optional[str], since_iso: str) -> int:
-    """Cuántos editados de ENTREGA (mails kind='completion' NO corrección) entregó
-    este editor para este cliente desde `since_iso`. Fuente DURABLE: mail_log
-    (respaldado por dedupe Turso), que no se pierde aunque un push de tracker.db
-    pise el descuento. Match de editor tolerante a apodos (Adri/Adrian) vía
-    canonical_editor; cuenta también mails sin editor (resueltos por cliente)."""
-    try:
-        eds = [r["name"] for r in conn.execute(
-            "SELECT name FROM cfg_editors WHERE active=1").fetchall()]
-    except Exception:
-        eds = []
-    tgt = canonical_editor(editor or "", eds).strip().lower()
+    """Cuántos videos ENTREGÓ este cliente desde `since_iso`, contando EDITADOS
+    DETECTADOS (known_edited_files, no baseline) — la señal DIRECTA de "se subió un
+    video". Es mucho más robusto que contar mails: un editado puede quedar
+    'huérfano' (claimeado pero sin mail) cuando un scan se cancela entre el claim y
+    el envío → el mail nunca sale, pero el editado SÍ está en known_edited. Contar
+    editados captura esos casos y descuenta igual.
+
+    - Match de cliente NORMALIZADO (acentos/case): 'Daniel Ramírez' = 'Daniel
+      Ramirez'. Antes el `TRIM(cliente)=TRIM(?)` exacto fallaba por la tilde → no
+      descontaba ni mandaba mail.
+    - Nombres ÚNICOS (normalizados): una corrección (re-subida con el MISMO nombre)
+      no cuenta doble.
+    - `since_iso` se compara contra first_seen_at (ambos en hora local, mismo huso
+      que detected_at). El editor queda en la firma por compatibilidad; no se filtra
+      por él (los clientes pending tienen un editor; known_edited no trae editor
+      confiable)."""
+    tgt_cli = _normalize_client_name(cliente or "")
+    cutoff = (since_iso or "")[:19]
     try:
         rows = conn.execute(
-            "SELECT editor FROM mail_log WHERE kind='completion' AND COALESCE(success,1)=1 "
-            "AND TRIM(cliente)=TRIM(?) AND subject NOT LIKE '%🔧%' "
-            "AND LOWER(subject) NOT LIKE '%correc%' AND sent_at >= ?",
-            (cliente or "", since_iso or "")
+            "SELECT cliente, name, first_seen_at FROM known_edited_files "
+            "WHERE COALESCE(is_baseline,0)=0"
         ).fetchall()
     except Exception:
         return 0
-    n = 0
+    vistos = set()
     for r in rows:
-        me = (r["editor"] or "").strip()
-        if not me or canonical_editor(me, eds).strip().lower() == tgt:
-            n += 1
-    return n
+        if _normalize_client_name(r["cliente"] or "") != tgt_cli:
+            continue
+        fecha = (r["first_seen_at"] or "")[:19]
+        if cutoff and fecha and fecha < cutoff:
+            continue
+        nm = _normalize_client_name(r["name"] or "")
+        if nm:
+            vistos.add(nm)
+    return len(vistos)
 
 
 def reconcile_locked_tasks(conn=None) -> int:
@@ -2518,11 +2528,12 @@ def decrement_pending_count(cliente: str, completed_by_file_id: str) -> dict:
     editor = row["editor"]
 
     if row["lk"]:
-        # MANUAL: restante = count_asignado - entregas (mails) ya hechas. Este
-        # editado todavía NO está en mail_log (el mail se encola después), por eso
-        # sumamos 1 a las entregas previas.
-        delivered_prev = delivered_against_task(conn, cliente, editor, row["detected_at"])
-        new_count = max(0, (row["cnt"] or 1) - (delivered_prev + 1))
+        # MANUAL: restante = count_asignado - editados detectados del cliente desde
+        # que se cargó el pendiente. El editado actual YA está en known_edited
+        # (claim_edited_file corre antes de decrement), así que delivered ya lo
+        # incluye — NO se suma 1.
+        delivered = delivered_against_task(conn, cliente, editor, row["detected_at"])
+        new_count = max(0, (row["cnt"] or 1) - delivered)
         closed = new_count <= 0
         if closed:
             conn.execute("""
