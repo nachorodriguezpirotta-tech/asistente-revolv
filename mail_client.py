@@ -198,6 +198,13 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
             body={"raw": raw},
         ).execute()
         msg_id = sent["id"]
+        # Confirmar el claim en Turso: el mail SALIÓ. Sin esto, el claim queda
+        # "fantasma" y otro proceso lo robaría a los 10 min → duplicado.
+        try:
+            from turso_dedupe import confirm_mail
+            confirm_mail(dkey)
+        except Exception:
+            pass
         # Log success con dedupe_key (sirve para próxima vez evitar duplicado)
         try:
             from tracker import log_mail
