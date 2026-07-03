@@ -171,10 +171,23 @@ def _bundle_conn():
     """Conn sqlite de SOLO LECTURA para tablas frías (clients/known_files/cfg)
     usadas por resolve_nickname. En Vercel abre la copia BUNDLEADA del deploy
     (stale pero instantánea, sin bajar 6MB) — suficiente para resolver apodos.
-    Las tasks NO se leen de acá (van directo a Turso)."""
+    Las tasks NO se leen de acá (van directo a Turso).
+    OJO: mode=ro obligatorio — el filesystem de Vercel es read-only y sqlite
+    necesita write para abrir en modo default ('unable to open database file')."""
     try:
-        import tracker
-        return tracker.get_conn()
+        import sqlite3 as _sq
+        try:
+            from config import DB_PATH as _dbp
+        except Exception:
+            import importlib.util as _ilu
+            _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            _spec = _ilu.spec_from_file_location("config_root", os.path.join(_root, "config.py"))
+            _cfg = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_cfg)
+            _dbp = _cfg.DB_PATH
+        c = _sq.connect(f"file:{_dbp}?mode=ro", uri=True)
+        c.row_factory = _sq.Row
+        return c
     except Exception:
         return None
 
