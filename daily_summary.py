@@ -33,13 +33,14 @@ def get_pending_grouped():
     'oldest_detected' es la fecha del crudo más viejo pendiente (para priorizar).
     """
     conn = get_conn()
-    rows = conn.execute("""
-        SELECT editor, cliente, COUNT(*) as videos, MIN(detected_at) as oldest
-        FROM tasks
-        WHERE status = 'pending'
-        GROUP BY editor, cliente
-        ORDER BY editor, cliente
-    """).fetchall()
+    _sql = ("SELECT editor, cliente, COUNT(*) as videos, MIN(detected_at) as oldest "
+            "FROM tasks WHERE status = 'pending' "
+            "GROUP BY editor, cliente ORDER BY editor, cliente")
+    try:
+        import tasks_store
+        rows = tasks_store.query(_sql)
+    except Exception:
+        rows = conn.execute(_sql).fetchall()
     conn.close()
 
     # Excluir clientes ARCHIVADOS (no aparecen en dashboard ni deben
