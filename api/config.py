@@ -663,9 +663,10 @@ class handler(BaseHTTPRequestHandler):
                 return " ".join(s.lower().split())
             targets = {_normx(n) for n in names}
             killed = 0
-            for row in conn.execute("SELECT id, cliente FROM tasks WHERE status='pending'").fetchall():
+            import tasks_store
+            for row in tasks_store.query("SELECT id, cliente FROM tasks WHERE status='pending'"):
                 if _normx(row["cliente"]) in targets:
-                    conn.execute("DELETE FROM tasks WHERE id=?", (row["id"],))
+                    tasks_store.execute("DELETE FROM tasks WHERE id=?", (row["id"],))
                     killed += 1
             result["archived"] = names
             result["tasks_borradas"] = killed
@@ -735,10 +736,11 @@ class handler(BaseHTTPRequestHandler):
             """, (folder_id, row["folder_name"], now))
             # Si hay editor, crear task pending count=1 con count_locked=1
             if editor:
-                conn.execute("""
-                    INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count, count_locked)
-                    VALUES (?, ?, ?, '(cliente agregado desde detección)', ?, 'pending', ?, 1, 1)
-                """, (row["folder_name"], editor, f"approval:{folder_id}", now, now))
+                import tasks_store
+                tasks_store.execute(
+                    "INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count, count_locked) "
+                    "VALUES (?, ?, ?, '(cliente agregado desde detección)', ?, 'pending', ?, 1, 1)",
+                    (row["folder_name"], editor, f"approval:{folder_id}", now, now))
         result["decision"] = decision
         result["folder_id"] = folder_id
 
