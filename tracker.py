@@ -532,6 +532,15 @@ def init_db():
         VALUES ('Valen', 'Avanzados', 0, 10, ?)
     """, (now,))
     conn.commit()
+    # Espejo de tablas CALIENTES (tasks/blocks/progress/priority) desde TURSO
+    # (fuente de verdad, jul/2026) para que los SELECT legacy del scan vean el
+    # estado real. Best-effort: sin Turso, queda la copia local (stale).
+    try:
+        import tasks_store
+        if tasks_store.available():
+            tasks_store.mirror_to_sqlite(conn)
+    except Exception as _e:
+        print(f"   ⚠️ mirror tasks_store en init_db: {_e}")
     conn.close()
 
 
@@ -640,160 +649,96 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
     """Crea task NUEVA SOLO si NO existe una task pending para (cliente, editor).
     Si ya existe → retorna el id de la existente (transparente para el caller).
 
-    Antes era un INSERT directo. El cluster de scans con bot pushes paralelos
-    pudo crear duplicados (caso Egdylu/Fran que tenía #267 + #273 ambas pending
-    para el mismo par). Ahora la creación es idempotente — múltiples scans
-    procesando el mismo cliente nunca van a crear task duplicada.
-
-    Nota: el count_locked y pending_count NO se modifican si ya existía. Esa
-    sigue siendo decisión del admin. Solo evitamos duplicar la row."""
-    conn = get_conn()
-    # Atómico: chequear y crear en una sola transacción
-    existing = conn.execute(
+    Desde jul/2026 las tasks viven en TURSO (transaccional): el INSERT condicional
+    es UNA sentencia atómica — dos scans concurrentes jamás duplican, y el
+    dashboard ve la task al instante (sin esperar push de tracker.db)."""
+    import tasks_store
+    tasks_store.execute(
+        "INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at) "
+        "SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS ("
+        "  SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+        "  AND COALESCE(editor,'')=COALESCE(?,'') AND status='pending')",
+        (cliente, editor, file_id, file_name, now_iso(), cliente, editor))
+    row = tasks_store.query(
         "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) "
-        "AND COALESCE(editor,'')=COALESCE(?,'') AND status='pending' LIMIT 1",
-        (cliente, editor)
-    ).fetchone()
-    if existing:
-        conn.close()
-        return existing[0]
-    cur = conn.execute("""
-        INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (cliente, editor, file_id, file_name, now_iso()))
-    task_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return task_id
+        "AND COALESCE(editor,'')=COALESCE(?,'') AND status='pending' "
+        "ORDER BY id DESC LIMIT 1", (cliente, editor))
+    return row[0]["id"] if row else 0
 
 
 def mark_pending_task_for_renotification(cliente: str, editor: Optional[str],
                                           latest_file_id: str, latest_file_name: str,
                                           min_silence_hours: float = 6.0) -> Optional[int]:
     """Hay una task pending para (cliente, editor) y entró material nuevo.
-
-    COMPORTAMIENTO (cambiado 01/jun por pedido de Ignacio):
-      - Si la task pending YA fue notificada (mail_sent_at no es NULL) →
-        NO re-notificar. El editor ya sabe que tiene material de ese cliente;
-        que siga subiendo tandas durante el día NO debe generar más mails.
-        Solo actualizamos file_id/file_name para que el dashboard muestre lo
-        último. Retorna None (el notifier no la procesa).
-      - Si la task pending NUNCA se notificó (mail_sent_at IS NULL) → la
-        dejamos lista para que el notifier mande EL primer (y único) mail.
-
-    Resultado: UN solo mail "material nuevo de X" por sesión de trabajo.
-    Cuando el editor entrega (task se cierra) y el cliente sube material
-    nuevo, se crea una task nueva → recién ahí otro mail.
-
-    Bug 01/jun: Jennifer Díaz / Ismafeten mandaban mail toda vez que subían
-    otra tanda (cada 6h). Ahora 1 mail y listo hasta que se cierre la task."""
+    Si YA fue notificada (mail_sent_at) → solo refresca file_id/name, retorna None
+    (un solo mail 'material nuevo' por task; bug Jennifer 01/jun). Si nunca se
+    notificó → retorna el id para que el notifier mande el primer mail.
+    Tasks en TURSO (jul/2026)."""
     if not cliente:
         return None
-    conn = get_conn()
+    import tasks_store
     if editor:
-        row = conn.execute(
+        rows = tasks_store.query(
             "SELECT id, mail_sent_at FROM tasks WHERE TRIM(cliente)=TRIM(?) "
             "AND COALESCE(editor,'')=COALESCE(?,'') AND status='pending' "
-            "ORDER BY id DESC LIMIT 1",
-            (cliente, editor)
-        ).fetchone()
+            "ORDER BY id DESC LIMIT 1", (cliente, editor))
     else:
-        row = conn.execute(
+        rows = tasks_store.query(
             "SELECT id, mail_sent_at FROM tasks WHERE TRIM(cliente)=TRIM(?) "
-            "AND status='pending' ORDER BY id DESC LIMIT 1",
-            (cliente,)
-        ).fetchone()
-    if not row:
-        conn.close()
+            "AND status='pending' ORDER BY id DESC LIMIT 1", (cliente,))
+    if not rows:
         return None
-
-    already_notified = bool(row["mail_sent_at"])
-    if already_notified:
-        # Ya se mandó el mail de esta task pending. NO re-notificar.
-        # Solo actualizar el último archivo (para el dashboard), sin tocar
-        # mail_sent_at → el notifier NO la va a re-procesar.
-        conn.execute(
-            "UPDATE tasks SET file_id=?, file_name=? WHERE id=?",
-            (latest_file_id, latest_file_name, row["id"])
-        )
-        conn.commit()
-        conn.close()
-        return None
-
-    # Nunca se notificó (mail_sent_at IS NULL): dejar lista para el PRIMER mail.
-    conn.execute(
+    row = rows[0]
+    tasks_store.execute(
         "UPDATE tasks SET file_id=?, file_name=? WHERE id=?",
-        (latest_file_id, latest_file_name, row["id"])
-    )
-    conn.commit()
-    task_id = row["id"]
-    conn.close()
-    return task_id
+        (latest_file_id, latest_file_name, row["id"]))
+    if row["mail_sent_at"]:
+        return None
+    return row["id"]
 
 
 def find_duplicate_pending_tasks() -> list[dict]:
-    """Detecta tasks pending duplicadas: mismo (cliente, editor) con >1 row
-    en status='pending'. Sirve para cleanup masivo."""
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT TRIM(cliente) as cliente, COALESCE(editor,'') as editor, COUNT(*) as n,
-               GROUP_CONCAT(id) as ids, SUM(COALESCE(pending_count, 1)) as total_count
-        FROM tasks WHERE status='pending'
-        GROUP BY TRIM(cliente), COALESCE(editor,'')
-        HAVING n > 1
-        ORDER BY n DESC
-    """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    """Pending duplicadas: mismo (cliente, editor) con >1 row. Turso."""
+    import tasks_store
+    rows = tasks_store.query(
+        "SELECT TRIM(cliente) as cliente, COALESCE(editor,'') as editor, COUNT(*) as n, "
+        "GROUP_CONCAT(id) as ids, SUM(COALESCE(pending_count, 1)) as total_count "
+        "FROM tasks WHERE status='pending' "
+        "GROUP BY TRIM(cliente), COALESCE(editor,'') HAVING COUNT(*) > 1")
+    return rows
 
 
 def consolidate_duplicate_tasks() -> int:
-    """Para cada (cliente, editor) con >1 pending: mantiene la más vieja
-    (ID más chico) con count_locked=1 y pending_count = max de los counts
-    individuales (no suma — el count es por entregables, no por archivos).
-    Borra las demás. Retorna cuántas tasks borró."""
+    """Mantiene la pending más vieja por (cliente,editor) con count_locked=1 y
+    pending_count=max; borra las demás. Turso."""
+    import tasks_store
     dupes = find_duplicate_pending_tasks()
     if not dupes:
         return 0
-    conn = get_conn()
     n_deleted = 0
     for d in dupes:
         ids = sorted(int(x) for x in (d["ids"] or "").split(",") if x)
         if len(ids) < 2:
             continue
-        keep_id = ids[0]  # la más vieja
-        delete_ids = ids[1:]
-        # Tomar el MAX pending_count de las duplicadas (no suma; cada row
-        # representaba 'el mismo trabajo' no trabajo extra)
-        max_pc = conn.execute(
-            f"SELECT MAX(COALESCE(pending_count,1)) FROM tasks WHERE id IN ({','.join('?'*len(ids))})",
-            ids
-        ).fetchone()[0] or 1
-        # Tomar urgent=1 si alguna lo tenía
-        any_urgent = conn.execute(
-            f"SELECT MAX(COALESCE(urgent,0)) FROM tasks WHERE id IN ({','.join('?'*len(ids))})",
-            ids
-        ).fetchone()[0] or 0
-        # Tomar la note no vacía si la hay
-        note_row = conn.execute(
-            f"SELECT note FROM tasks WHERE id IN ({','.join('?'*len(ids))}) AND note IS NOT NULL AND TRIM(note) != '' LIMIT 1",
-            ids
-        ).fetchone()
-        note_val = note_row[0] if note_row else None
-        conn.execute(
+        keep_id, delete_ids = ids[0], ids[1:]
+        ph = ",".join("?" * len(ids))
+        agg = tasks_store.query(
+            f"SELECT MAX(COALESCE(pending_count,1)) AS mpc, MAX(COALESCE(urgent,0)) AS mu "
+            f"FROM tasks WHERE id IN ({ph})", ids)
+        max_pc = (agg[0]["mpc"] if agg else 1) or 1
+        any_urgent = (agg[0]["mu"] if agg else 0) or 0
+        note_row = tasks_store.query(
+            f"SELECT note FROM tasks WHERE id IN ({ph}) AND note IS NOT NULL "
+            f"AND TRIM(note) != '' LIMIT 1", ids)
+        note_val = note_row[0]["note"] if note_row else None
+        tasks_store.execute(
             "UPDATE tasks SET pending_count=?, count_locked=1, urgent=?, note=COALESCE(note, ?) WHERE id=?",
-            (max_pc, any_urgent, note_val, keep_id)
-        )
-        n_deleted += conn.execute(
-            f"DELETE FROM tasks WHERE id IN ({','.join('?'*len(delete_ids))})",
-            delete_ids
-        ).rowcount
-    conn.commit()
-    conn.close()
+            (max_pc, any_urgent, note_val, keep_id))
+        dph = ",".join("?" * len(delete_ids))
+        r = tasks_store.execute(f"DELETE FROM tasks WHERE id IN ({dph})", delete_ids)
+        n_deleted += r.get("affected") or 0
     return n_deleted
 
-
-# ─── EDITADOS (cierre de tareas) ──────────────────────────────────────────────
 
 def is_edited_known(file_id: str) -> bool:
     conn = get_conn()
@@ -848,111 +793,75 @@ def edited_baseline_done(cliente: str) -> bool:
 
 
 def close_oldest_pending(cliente: str, completed_by_file_id: str) -> Optional[int]:
-    """
-    Marca como 'done' la tarea pendiente MÁS VIEJA de este cliente.
-    Retorna el id de la tarea cerrada o None si no había pendientes.
-    """
-    conn = get_conn()
-    row = conn.execute("""
-        SELECT id FROM tasks
-        WHERE cliente = ? AND status = 'pending'
-        ORDER BY detected_at ASC
-        LIMIT 1
-    """, (cliente,)).fetchone()
-    if row is None:
-        conn.close()
+    """Marca 'done' la pendiente MÁS VIEJA del cliente (en Turso)."""
+    import tasks_store
+    row = tasks_store.query(
+        "SELECT id FROM tasks WHERE cliente = ? AND status = 'pending' "
+        "ORDER BY detected_at ASC LIMIT 1", (cliente,))
+    if not row:
         return None
-    task_id = row[0]
-    conn.execute("""
-        UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?
-        WHERE id=?
-    """, (now_iso(), completed_by_file_id, task_id))
-    conn.commit()
-    conn.close()
+    task_id = row[0]["id"]
+    tasks_store.execute(
+        "UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=? WHERE id=?",
+        (now_iso(), completed_by_file_id, task_id))
     return task_id
 
 
 def count_pending_for_client(cliente: str) -> int:
-    conn = get_conn()
-    n = conn.execute("SELECT COUNT(*) FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
-                     (cliente,)).fetchone()[0]
-    conn.close()
-    return n
+    import tasks_store
+    try:
+        r = tasks_store.query(
+            "SELECT COUNT(*) AS n FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+            (cliente,))
+        return int(r[0]["n"]) if r else 0
+    except Exception:
+        conn = get_conn()
+        n = conn.execute("SELECT COUNT(*) FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+                         (cliente,)).fetchone()[0]
+        conn.close()
+        return n
 
 
 def increment_pending_count(cliente: str, editor: Optional[str]) -> bool:
-    """Suma 1 al pending_count de la task pending de cliente+editor. Retorna True si encontró."""
-    conn = get_conn()
+    """Suma 1 al pending_count de la task pending de cliente+editor (en Turso)."""
+    import tasks_store
     if editor:
-        n = conn.execute("""
-            UPDATE tasks SET pending_count = COALESCE(pending_count, 1) + 1
-            WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'
-        """, (cliente, editor)).rowcount
+        r = tasks_store.execute(
+            "UPDATE tasks SET pending_count = COALESCE(pending_count, 1) + 1 "
+            "WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+            (cliente, editor))
     else:
-        n = conn.execute("""
-            UPDATE tasks SET pending_count = COALESCE(pending_count, 1) + 1
-            WHERE TRIM(cliente)=TRIM(?) AND status='pending'
-        """, (cliente,)).rowcount
-    conn.commit()
-    conn.close()
-    return n > 0
+        r = tasks_store.execute(
+            "UPDATE tasks SET pending_count = COALESCE(pending_count, 1) + 1 "
+            "WHERE TRIM(cliente)=TRIM(?) AND status='pending'", (cliente,))
+    return (r.get("affected") or 0) > 0
 
 
 def set_pending_count(cliente: str, editor: Optional[str], count: int, lock: bool = False) -> int:
-    """
-    Setea pending_count. Si lock=True, marca count_locked=1 (no será sobrescrito por scan).
-    Retorna cuántas filas afectó.
-    """
-    conn = get_conn()
-    locked_val = 1 if lock else None
+    """Setea pending_count (en Turso). lock=True marca count_locked=1."""
+    import tasks_store
     if editor:
         if lock:
-            n = conn.execute("""
-                UPDATE tasks SET pending_count=?, count_locked=1
-                WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'
-            """, (count, cliente, editor)).rowcount
+            r = tasks_store.execute(
+                "UPDATE tasks SET pending_count=?, count_locked=1 "
+                "WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                (count, cliente, editor))
         else:
-            # Solo actualizar si NO está locked
-            n = conn.execute("""
-                UPDATE tasks SET pending_count=?
-                WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'
-                AND COALESCE(count_locked, 0) = 0
-            """, (count, cliente, editor)).rowcount
+            r = tasks_store.execute(
+                "UPDATE tasks SET pending_count=? "
+                "WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' "
+                "AND COALESCE(count_locked, 0) = 0", (count, cliente, editor))
     else:
         if lock:
-            n = conn.execute("""
-                UPDATE tasks SET pending_count=?, count_locked=1
-                WHERE TRIM(cliente)=TRIM(?) AND status='pending'
-            """, (count, cliente)).rowcount
+            r = tasks_store.execute(
+                "UPDATE tasks SET pending_count=?, count_locked=1 "
+                "WHERE TRIM(cliente)=TRIM(?) AND status='pending'", (count, cliente))
         else:
-            n = conn.execute("""
-                UPDATE tasks SET pending_count=?
-                WHERE TRIM(cliente)=TRIM(?) AND status='pending'
-                AND COALESCE(count_locked, 0) = 0
-            """, (count, cliente)).rowcount
-    conn.commit()
-    conn.close()
-    return n
-
-
-# ─── HELPERS: subfolders "de tipo" + inferencia + alertas ──────────────────────
-
-# Patrones que indican que la subfolder es un TIPO DE CONTENIDO (probable editor
-# distinto), NO un agrupador por proyecto/tanda/fecha. La key del dict es el
-# "tipo canónico" para mostrar en la alerta.
-#
-# Reglas:
-#   - Match SUBSTRING case-insensitive del nombre _normalizado_.
-#   - Si la subfolder es "Youtube tanda 5" → tipo=youtube (substring "youtube").
-#   - Si es "Tanda 5" / "Pack 1" / "Mayo 2026" / "Polara 3" → NO tipo (None).
-_SUBFOLDER_TYPE_PATTERNS = {
-    "youtube":  ["youtube", "yt ", " yt", "long form", "long-form", "podcast", "vsl", "tutorial"],
-    "reels":    ["reels", "reel ", " reel"],
-    "shorts":   ["shorts", "short ", " short"],
-    "tiktok":   ["tiktok", " tt", "tt "],
-    "twitch":   ["twitch", "stream", "vod"],
-    "ads":      ["anuncio", "ads ", " ads", "creativo", "publicidad"],
-}
+            r = tasks_store.execute(
+                "UPDATE tasks SET pending_count=? "
+                "WHERE TRIM(cliente)=TRIM(?) AND status='pending' "
+                "AND COALESCE(count_locked, 0) = 0", (count, cliente))
+    return r.get("affected") or 0
 
 
 def _classify_subfolder_type(subfolder_name: Optional[str]) -> Optional[str]:
@@ -1098,17 +1007,14 @@ def cfg_set_client_editor(cliente: str, editor: Optional[str]) -> None:
     Si editor es None/'', borra el override (vuelve a usar el Sheet)."""
     if not cliente:
         return
-    conn = get_conn()
+    import tasks_store
     if not editor:
-        conn.execute("DELETE FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?)", (cliente,))
+        tasks_store.execute("DELETE FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?)", (cliente,))
     else:
-        conn.execute("""
-            INSERT INTO cfg_client_editor (cliente, editor, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at
-        """, (cliente, editor, now_iso()))
-    conn.commit()
-    conn.close()
+        tasks_store.execute(
+            "INSERT INTO cfg_client_editor (cliente, editor, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at",
+            (cliente, editor, now_iso()))
 
 
 def cfg_get_client_editor(cliente: str) -> Optional[str]:
@@ -1294,30 +1200,86 @@ def get_editor_for_subfolder(cliente: str, subfolder_name: Optional[str]) -> Opt
 
 
 def has_manual_pending_for_client(cliente: str, editor: Optional[str] = None) -> bool:
-    """¿El cliente tiene alguna task pending con count_locked=1 (decisión manual del admin)?
-    Si sí, el scan NO debe crear duplicados para el MISMO editor según el Sheet.
+    """¿El cliente tiene alguna task pending con count_locked=1 (decisión manual)?
+    Si editor es dado, solo chequea pending manual para ESE editor (caso Roger
+    Marti multi-editor). Lee TURSO (fresco) con fallback al espejo local."""
+    import tasks_store
+    try:
+        if editor:
+            r = tasks_store.query(
+                "SELECT 1 AS x FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+                "AND TRIM(COALESCE(editor,''))=TRIM(?) "
+                "AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
+                (cliente, editor or ""))
+        else:
+            r = tasks_store.query(
+                "SELECT 1 AS x FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+                "AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
+                (cliente,))
+        return len(r) > 0
+    except Exception:
+        conn = get_conn()
+        if editor:
+            row = conn.execute(
+                "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND TRIM(COALESCE(editor,''))=TRIM(?) "
+                "AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
+                (cliente, editor or "")).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
+                (cliente,)).fetchone()
+        conn.close()
+        return row is not None
 
-    Si `editor` es None: chequea CUALQUIER editor (comportamiento legacy).
-    Si `editor` es dado: solo chequea pending manual para ESE editor específico.
 
-    Caso real (Roger Marti): tiene 2 editores — Fran para YouTube, Valen para reels.
-    Si existe task manual pending Roger/Fran (Youtube), un reel nuevo en /Material/
-    debe poder crear task Roger/Valen. Antes esto se bloqueaba porque el chequeo
-    era cliente-only sin filtrar por editor."""
+def recover_orphan_completion_mails(max_age_hours: int = 48, cap: int = 6) -> int:
+    """RED DE RECUPERACIÓN de mails de entrega perdidos: encola el completion mail
+    de editados DETECTADOS (known_edited, no baseline) que no tienen mail enviado
+    ni encolado y no son corrección. Un editado queda 'huérfano' cuando el proceso
+    muere entre el claim y el envío (run cancelado/crash/token) — sin esto, ese
+    mail no salía NUNCA. Cap por corrida para no generar aluvión; con el scan cada
+    2 min el backlog se drena solo. Idempotente (triple dedupe: mail_log +
+    pending_completion_mails + claim Turso al enviar)."""
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat(timespec="seconds")
     conn = get_conn()
-    if editor:
-        row = conn.execute(
-            "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND TRIM(COALESCE(editor,''))=TRIM(?) "
-            "AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
-            (cliente, editor or "")
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' AND COALESCE(count_locked, 0) = 1 LIMIT 1",
-            (cliente,)
-        ).fetchone()
-    conn.close()
-    return row is not None
+    n = 0
+    try:
+        rows = conn.execute(
+            "SELECT file_id, cliente, name, folder_id FROM known_edited_files "
+            "WHERE COALESCE(is_baseline,0)=0 AND first_seen_at >= ? "
+            "ORDER BY first_seen_at ASC", (cutoff,)).fetchall()
+        for r in rows:
+            if n >= cap:
+                break
+            cli, fid, name = r["cliente"], r["file_id"], r["name"]
+            try:
+                if is_client_archived(cli):
+                    continue
+                if completion_mail_already_sent(cli, fid, name):
+                    continue
+                # ¿ya está encolado (enviado o pendiente)?
+                q = conn.execute(
+                    "SELECT 1 FROM pending_completion_mails WHERE file_id=? LIMIT 1",
+                    (fid,)).fetchone()
+                if q:
+                    continue
+                if is_correction_for_client(cli, name, current_file_id=fid):
+                    continue
+                editor = resolve_editor_for_cliente(cli) or "—"
+                enqueue_completion_mail(
+                    task_id=None, cliente=cli, editor=editor,
+                    file_id=fid, file_name=name,
+                    edited_folder_id=r["folder_id"] if r["folder_id"] not in ("(incremental)", "(audit)", "(varias)") else None,
+                    client_folder_id=None, new_count=0, closed=False,
+                    is_correction=False)
+                n += 1
+                print(f"   ♻️ mail huérfano re-encolado: {cli} / {name[:40]}")
+            except Exception as e:
+                print(f"   ⚠️ orphan check {cli}/{name[:20]}: {e}")
+    finally:
+        conn.close()
+    return n
 
 
 def enqueue_completion_mail(task_id: Optional[int], cliente: str, editor: Optional[str],
@@ -2260,17 +2222,7 @@ def decide_pending_drive_folder(folder_id: str, decision: str, editor: Optional[
 
 
 def find_similar_pending_client(cliente: str) -> Optional[str]:
-    """Busca pending tasks con nombre similar (fuzzy match) al cliente dado.
-    Sirve para detectar duplicados por apodos: 'Cisco' (manual) vs 'Cisco Amengual' (scan).
-
-    Retorna el nombre del cliente que matchea si encuentra uno, None si no.
-
-    Lógica:
-      - Normaliza ambos nombres (sin acentos, minúsculas)
-      - Match si:
-          a) Uno es prefijo del otro (con espacio o final)
-          b) Comparten al menos un token de >=4 chars
-    """
+    """Pending con nombre similar (apodos: 'Cisco' vs 'Cisco Amengual'). Turso."""
     import unicodedata
     def _norm(s):
         s = unicodedata.normalize("NFD", s or "")
@@ -2282,73 +2234,73 @@ def find_similar_pending_client(cliente: str) -> Optional[str]:
         return None
     target_tokens = {t for t in target.split() if len(t) >= 4}
 
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT DISTINCT cliente FROM tasks WHERE status='pending'"
-    ).fetchall()
-    conn.close()
+    import tasks_store
+    try:
+        rows = tasks_store.query("SELECT DISTINCT cliente FROM tasks WHERE status='pending'")
+    except Exception:
+        conn = get_conn()
+        rows = [dict(r) for r in conn.execute(
+            "SELECT DISTINCT cliente FROM tasks WHERE status='pending'").fetchall()]
+        conn.close()
 
     for r in rows:
         existing = _norm(r["cliente"])
         if not existing or existing == target:
-            continue  # exact match no es duplicado por apodo
-        # Caso prefijo: 'cisco' es prefijo de 'cisco amengual'
+            continue
         if existing.startswith(target + " ") or target.startswith(existing + " "):
             return r["cliente"]
-        # Caso token compartido (>=4 chars): 'roger marti' vs 'roger mendez' → ojo, false positive
-        # Solo aceptar si compartido es UN token único distintivo
         existing_tokens = {t for t in existing.split() if len(t) >= 4}
         shared = target_tokens & existing_tokens
-        # Solo si el shared token es ÚNICO en ambos lados (no genérico como "video", "edit")
         if shared and len(target_tokens) <= 2 and len(existing_tokens) <= 2:
-            # Ambos nombres cortos (1-2 tokens) que comparten uno → probable misma persona
             return r["cliente"]
     return None
 
 
 def has_pending_for_client_editor(cliente: str, editor: Optional[str]) -> bool:
-    conn = get_conn()
-    if editor:
-        row = conn.execute(
-            "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1",
-            (cliente, editor)
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1",
-            (cliente,)
-        ).fetchone()
-    conn.close()
-    return row is not None
+    import tasks_store
+    try:
+        if editor:
+            r = tasks_store.query(
+                "SELECT 1 AS x FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? "
+                "AND status='pending' LIMIT 1", (cliente, editor))
+        else:
+            r = tasks_store.query(
+                "SELECT 1 AS x FROM tasks WHERE TRIM(cliente)=TRIM(?) "
+                "AND status='pending' LIMIT 1", (cliente,))
+        return len(r) > 0
+    except Exception:
+        conn = get_conn()
+        if editor:
+            row = conn.execute(
+                "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1",
+                (cliente, editor)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1",
+                (cliente,)).fetchone()
+        conn.close()
+        return row is not None
 
 
 def close_all_pending_for_client(cliente: str, completed_by_file_id: str) -> int:
-    """Marca como 'done' TODAS las tareas pendientes de un cliente. Retorna cuántas cerró."""
-    conn = get_conn()
-    n = conn.execute("""
-        UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?
-        WHERE TRIM(cliente)=TRIM(?) AND status='pending'
-    """, (now_iso(), completed_by_file_id, cliente)).rowcount
-    conn.commit()
-    conn.close()
-    return n
+    """Marca 'done' TODAS las pendientes de un cliente (en Turso)."""
+    import tasks_store
+    r = tasks_store.execute(
+        "UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=? "
+        "WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+        (now_iso(), completed_by_file_id, cliente))
+    return r.get("affected") or 0
 
 
 def block_client(cliente: str, editor: Optional[str], hours: int = 24):
-    """
-    Marca un cliente como 'no re-crear automáticamente' por X horas.
-    Útil cuando el usuario borra manual y no quiere que vuelva a aparecer.
-    """
+    """Bloquea re-creación automática del cliente por X horas (en Turso)."""
     from datetime import datetime, timedelta
+    import tasks_store
     blocked_until = (datetime.now() + timedelta(hours=hours)).isoformat(timespec="seconds")
-    conn = get_conn()
-    conn.execute("""
-        INSERT INTO client_blocks (cliente, editor, blocked_until)
-        VALUES (TRIM(?), ?, ?)
-        ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until
-    """, (cliente, editor or "", blocked_until))
-    conn.commit()
-    conn.close()
+    tasks_store.execute(
+        "INSERT INTO client_blocks (cliente, editor, blocked_until) VALUES (TRIM(?), ?, ?) "
+        "ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until",
+        (cliente, editor or "", blocked_until))
 
 
 def is_client_archived(cliente: str) -> bool:
@@ -2384,33 +2336,23 @@ def list_archived_clients() -> list:
 
 
 def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
-    """Devuelve True si el cliente tiene un bloqueo activo (no expirado).
-
-    Match: 1) exacto TRIM. 2) fallback normalizado (acentos/case) — para que
-    un block de 'Ronny Matrix Painting' atrape también 'Ronny Matrix painting'
-    o variaciones. Bug 04/jun: clientes reaparecían por mismatch de nombre.
-    """
-    # Cliente ARCHIVADO = bloqueado para todo (cubre los 4 puntos de creación
-    # de tasks en scan/incremental/audit sin tocarlos).
+    """True si el cliente tiene un bloqueo activo (no expirado) o está archivado.
+    Match exacto o normalizado (acentos/case); editor wildcard ''. Bloqueos en
+    TURSO (jul/2026) con fallback al espejo local si Turso no responde."""
     if is_client_archived(cliente):
         return True
     from datetime import datetime
     now = datetime.now()
     target = _normalize_client_name(cliente)
     ed = editor or ""
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT cliente, editor, blocked_until FROM client_blocks"
-    ).fetchall()
-    conn.close()
-    # Revisar TODOS los bloqueos: devolver True si CUALQUIERA está activo y
-    # matchea el cliente (exacto o normalizado por acentos/case) y el editor
-    # (wildcard editor='' = cliente entero, o editor igual).
-    # Bug 09/jun Alicia Ramírez: la versión vieja hacía un match exacto que
-    # encontraba un bloqueo VENCIDO (de 'Alicia Ramírez' con tilde) y se
-    # saltaba el fallback que tenía el bloqueo PERMANENTE de 'Alicia Ramirez'
-    # (sin tilde, editor='') → devolvía False → el scan re-creaba la task todos
-    # los días. Ahora juntamos todos y nos quedamos con cualquier activo.
+    import tasks_store
+    try:
+        rows = tasks_store.query("SELECT cliente, editor, blocked_until FROM client_blocks")
+    except Exception:
+        conn = get_conn()
+        rows = [dict(r) for r in conn.execute(
+            "SELECT cliente, editor, blocked_until FROM client_blocks").fetchall()]
+        conn.close()
     for r in rows:
         name_match = (
             (r["cliente"] or "").strip() == (cliente or "").strip()
@@ -2418,7 +2360,6 @@ def is_client_blocked(cliente: str, editor: Optional[str]) -> bool:
         )
         if not name_match:
             continue
-        # editor: wildcard (vacío/NULL) aplica a cualquiera; si no, debe coincidir
         if r["editor"] and r["editor"] != ed:
             continue
         try:
@@ -2469,30 +2410,25 @@ def delivered_against_task(conn, cliente: str, editor: Optional[str], since_iso:
 
 
 def reconcile_locked_tasks(conn=None) -> int:
-    """Cierra las tasks pending MANUALES (count_locked=1) cuyas entregas reales
-    (mails de completion) ya cubren el count asignado. IDEMPOTENTE y DURABLE: el
-    restante se re-deriva de mail_log, así si un push perdió el decrement, el
-    próximo scan re-cierra. Devuelve cuántas cerró. Las tasks auto NO se tocan
-    (esas las cierra decrement + el closer contando crudos vs editados)."""
+    """Cierra pendientes MANUALES ya cubiertas por editados detectados. Tasks en
+    TURSO; known_edited se lee de la conn sqlite (local del scan). Idempotente."""
+    import tasks_store
     own = conn is None
     if own:
         conn = get_conn()
     n = 0
     try:
-        tasks = conn.execute(
+        tasks = tasks_store.query(
             "SELECT id, TRIM(cliente) AS c, TRIM(COALESCE(editor,'')) AS e, "
             "COALESCE(pending_count,1) AS pc, detected_at "
-            "FROM tasks WHERE status='pending' AND COALESCE(count_locked,0)=1"
-        ).fetchall()
+            "FROM tasks WHERE status='pending' AND COALESCE(count_locked,0)=1")
         for t in tasks:
             d = delivered_against_task(conn, t["c"], t["e"], t["detected_at"])
             if d >= (t["pc"] or 1):
-                conn.execute(
+                tasks_store.execute(
                     "UPDATE tasks SET status='done', completed_at=?, pending_count=0 WHERE id=?",
                     (now_iso(), t["id"]))
                 n += 1
-        if n:
-            conn.commit()
     except Exception as e:
         print(f"reconcile_locked_tasks error: {e}")
     finally:
@@ -2502,77 +2438,57 @@ def reconcile_locked_tasks(conn=None) -> int:
 
 
 def decrement_pending_count(cliente: str, completed_by_file_id: str) -> dict:
-    """
-    Decrementa pending_count en 1. Si llega a 0, marca la task como done.
-    Retorna: {'task_id', 'new_count', 'closed': bool}
-    Si NO había task pending, retorna {'task_id': None, ...}
-
-    Tasks MANUALES (count_locked=1): NO se muta el pending_count (= lo que fijó el
-    admin, estable). El restante se DERIVA de los mails de entrega ya enviados
-    (durable, no se pierde con un push). Solo se marca done cuando las entregas
-    cubren el count. Esto evita el bug de manual-no-descontada: el descuento ya no
-    depende de que el UPDATE perdure en tracker.db.
-    """
-    conn = get_conn()
-    row = conn.execute("""
-        SELECT id, COALESCE(pending_count, 1) as cnt, editor,
-               COALESCE(count_locked, 0) as lk, detected_at FROM tasks
-        WHERE TRIM(cliente)=TRIM(?) AND status='pending'
-        ORDER BY detected_at ASC LIMIT 1
-    """, (cliente,)).fetchone()
-    if not row:
-        conn.close()
+    """Descuenta 1 pendiente al detectar un editado. Tasks en TURSO (jul/2026).
+    MANUAL (count_locked=1): restante = count - editados detectados desde
+    detected_at (durable, no muta el count del admin). AUTO: descuento clásico."""
+    import tasks_store
+    rows = tasks_store.query(
+        "SELECT id, COALESCE(pending_count, 1) AS cnt, editor, "
+        "COALESCE(count_locked, 0) AS lk, detected_at FROM tasks "
+        "WHERE TRIM(cliente)=TRIM(?) AND status='pending' "
+        "ORDER BY detected_at ASC LIMIT 1", (cliente,))
+    if not rows:
         return {"task_id": None, "new_count": 0, "closed": False, "editor": None}
-
-    task_id = row["id"]
-    editor = row["editor"]
+    row = rows[0]
+    task_id, editor = row["id"], row["editor"]
 
     if row["lk"]:
-        # MANUAL: restante = count_asignado - editados detectados del cliente desde
-        # que se cargó el pendiente. El editado actual YA está en known_edited
-        # (claim_edited_file corre antes de decrement), así que delivered ya lo
-        # incluye — NO se suma 1.
-        delivered = delivered_against_task(conn, cliente, editor, row["detected_at"])
+        # known_edited vive en tracker.db local (el scan lo acaba de escribir)
+        conn = get_conn()
+        try:
+            delivered = delivered_against_task(conn, cliente, editor, row["detected_at"])
+        finally:
+            conn.close()
         new_count = max(0, (row["cnt"] or 1) - delivered)
         closed = new_count <= 0
         if closed:
-            conn.execute("""
-                UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?, pending_count=0
-                WHERE id=?
-            """, (now_iso(), completed_by_file_id, task_id))
-            conn.commit()
-        conn.close()
+            tasks_store.execute(
+                "UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?, pending_count=0 "
+                "WHERE id=?", (now_iso(), completed_by_file_id, task_id))
         return {"task_id": task_id, "new_count": new_count, "closed": closed, "editor": editor}
 
-    # AUTO: descuento clásico (mutando pending_count)
     new_count = (row["cnt"] or 1) - 1
     if new_count <= 0:
-        conn.execute("""
-            UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?, pending_count=0
-            WHERE id=?
-        """, (now_iso(), completed_by_file_id, task_id))
-        result = {"task_id": task_id, "new_count": 0, "closed": True, "editor": editor}
-    else:
-        conn.execute("""
-            UPDATE tasks SET pending_count=?
-            WHERE id=?
-        """, (new_count, task_id))
-        result = {"task_id": task_id, "new_count": new_count, "closed": False, "editor": editor}
-
-    conn.commit()
-    conn.close()
-    return result
+        tasks_store.execute(
+            "UPDATE tasks SET status='done', completed_at=?, completed_by_file_id=?, pending_count=0 "
+            "WHERE id=?", (now_iso(), completed_by_file_id, task_id))
+        return {"task_id": task_id, "new_count": 0, "closed": True, "editor": editor}
+    tasks_store.execute("UPDATE tasks SET pending_count=? WHERE id=?", (new_count, task_id))
+    return {"task_id": task_id, "new_count": new_count, "closed": False, "editor": editor}
 
 
-# ─── TAREAS ───────────────────────────────────────────────────────────────────
-
-def list_pending_tasks() -> list[sqlite3.Row]:
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT * FROM tasks WHERE status='pending' ORDER BY detected_at ASC
-    """).fetchall()
-    conn.close()
-    return rows
+def list_pending_tasks() -> list:
+    """Tasks pending (desde Turso; dicts accesibles por nombre como sqlite3.Row)."""
+    import tasks_store
+    try:
+        return tasks_store.query(
+            "SELECT * FROM tasks WHERE status='pending' ORDER BY detected_at ASC")
+    except Exception:
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT * FROM tasks WHERE status='pending' ORDER BY detected_at ASC").fetchall()
+        conn.close()
+        return rows
 
 
 def list_clients() -> list[sqlite3.Row]:
