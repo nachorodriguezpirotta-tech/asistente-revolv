@@ -141,6 +141,26 @@ def fetch_db() -> Tuple[str, str]:
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
     tmp.write(raw)
     tmp.close()
+
+    # Tablas CALIENTES del dashboard (tasks/blocks/progress/priority) viven en
+    # Turso desde jul/2026 — la copia en git es solo un espejo que puede estar
+    # vieja. Refrescarlas acá para que TODOS los SELECT legacy (data/stats/
+    # config/reviews) vean el estado real sin reescribirlos. Best-effort.
+    try:
+        import sys as _sys, os as _os
+        _root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        import tasks_store
+        if tasks_store.available():
+            _mc = sqlite3.connect(tmp.name)
+            try:
+                tasks_store.mirror_to_sqlite(_mc)
+            finally:
+                _mc.close()
+    except Exception as _e:
+        print(f"   ⚠️ mirror tasks_store: {_e}")
+
     return tmp.name, sha
 
 
