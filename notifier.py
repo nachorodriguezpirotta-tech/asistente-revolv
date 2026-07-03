@@ -162,18 +162,33 @@ def get_pending_unsent_grouped() -> dict:
     esas no se notifican individualmente, solo aparecen en el resumen diario.
     """
     conn = get_conn()
-    rows = conn.execute("""
-        SELECT t.id, t.cliente, t.editor, t.file_id, t.file_name, t.detected_at,
-               kf.size, kf.folder_id as raw_folder_id, c.folder_id as client_folder_id
-        FROM tasks t
-        LEFT JOIN known_files kf ON kf.file_id = t.file_id
-        LEFT JOIN clients c ON c.cliente = t.cliente
-        WHERE t.status='pending'
-          AND t.mail_sent_at IS NULL
-          AND t.file_name != '(pendiente cargado manualmente)'
-          AND t.file_id NOT LIKE 'manual:%'
-        ORDER BY t.detected_at ASC
-    """).fetchall()
+    # Tasks desde TURSO (fuente de verdad, jul/2026): el espejo local puede no
+    # tener las tasks que ESTE run acaba de crear. known_files/clients siguen
+    # locales (los escribe este mismo proceso).
+    import tasks_store
+    try:
+        t_rows = tasks_store.query(
+            "SELECT id, cliente, editor, file_id, file_name, detected_at FROM tasks "
+            "WHERE status='pending' AND mail_sent_at IS NULL "
+            "AND file_name != '(pendiente cargado manualmente)' "
+            "AND file_id NOT LIKE 'manual:%' ORDER BY detected_at ASC")
+    except Exception:
+        t_rows = [dict(r) for r in conn.execute(
+            "SELECT id, cliente, editor, file_id, file_name, detected_at FROM tasks "
+            "WHERE status='pending' AND mail_sent_at IS NULL "
+            "AND file_name != '(pendiente cargado manualmente)' "
+            "AND file_id NOT LIKE 'manual:%' ORDER BY detected_at ASC").fetchall()]
+    rows = []
+    for t in t_rows:
+        kf = conn.execute(
+            "SELECT size, folder_id FROM known_files WHERE file_id=?",
+            (t["file_id"],)).fetchone()
+        cf = conn.execute(
+            "SELECT folder_id FROM clients WHERE cliente=?",
+            (t["cliente"],)).fetchone()
+        rows.append({**t, "size": kf["size"] if kf else None,
+                     "raw_folder_id": kf["folder_id"] if kf else None,
+                     "client_folder_id": cf["folder_id"] if cf else None})
 
     grouped = defaultdict(list)
     seen_files_per_group = defaultdict(set)  # evita duplicar mismo file en items
@@ -220,12 +235,10 @@ def get_pending_unsent_grouped() -> dict:
 def mark_mail_sent(task_ids: list[int]):
     if not task_ids:
         return
-    conn = get_conn()
+    import tasks_store
     placeholders = ",".join("?" * len(task_ids))
-    conn.execute(f"UPDATE tasks SET mail_sent_at = ? WHERE id IN ({placeholders})",
-                 [now_iso(), *task_ids])
-    conn.commit()
-    conn.close()
+    tasks_store.execute(f"UPDATE tasks SET mail_sent_at = ? WHERE id IN ({placeholders})",
+                        [now_iso(), *task_ids])
 
 
 def run(dry_run: bool = False, recipient: Optional[str] = None):
