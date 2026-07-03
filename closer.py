@@ -45,15 +45,14 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
 
 def _get_clients_with_pending() -> list[dict]:
     """Devuelve [{cliente, oldest_pending_at, editor}] para todos los clientes con tareas pending."""
-    conn = get_conn()
-    rows = conn.execute("""
+    import tasks_store
+    rows = tasks_store.query("""
         SELECT TRIM(cliente) as cliente, MIN(detected_at) as oldest,
                (SELECT editor FROM tasks t2 WHERE TRIM(t2.cliente)=TRIM(tasks.cliente) AND t2.status='pending' LIMIT 1) as editor
         FROM tasks
         WHERE status = 'pending'
         GROUP BY TRIM(cliente)
-    """).fetchall()
-    conn.close()
+    """)
     return [{"cliente": r["cliente"], "oldest_pending_at": r["oldest"], "editor": r["editor"]} for r in rows]
 
 
@@ -133,12 +132,11 @@ def run_closer(verbose: bool = True) -> dict:
         # entregas POSTERIORES a la corrida actual.
         is_manual_pending = False
         try:
-            conn = get_conn()
-            row = conn.execute(
+            import tasks_store
+            _r = tasks_store.query(
                 "SELECT file_id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' ORDER BY detected_at ASC LIMIT 1",
-                (cliente,)
-            ).fetchone()
-            conn.close()
+                (cliente,))
+            row = _r[0] if _r else None
             if row and row["file_id"] and str(row["file_id"]).startswith("manual:"):
                 is_manual_pending = True
         except Exception:
