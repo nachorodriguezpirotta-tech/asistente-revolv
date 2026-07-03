@@ -531,6 +531,19 @@ def run(notify: bool = False):
         sent = send_completion_mails(cierres)
         if sent:
             print(f"📧 {sent} mails de cierre enviados.")
+        # RED DE HUÉRFANOS: re-encolar mails de entrega que se perdieron entre
+        # el claim y el envío (run muerto). El próximo send_completion_mails de
+        # este mismo run los procesa. Cap 6 por corrida.
+        try:
+            from tracker import recover_orphan_completion_mails
+            norf = recover_orphan_completion_mails()
+            if norf:
+                print(f"♻️ {norf} mail(s) de entrega huérfanos re-encolados.")
+                sent2 = send_completion_mails([])
+                if sent2:
+                    print(f"📧 {sent2} mails huérfanos enviados.")
+        except Exception as _e:
+            print(f"recover_orphan_completion_mails: {_e}")
         # Avisos de revisión pedida que el endpoint del portal no logró mandar
         # (notified_at NULL). DURABLE: el scan tiene creds de mail y no muere por
         # timeout HTTP como el endpoint. Cubre el bug de "el editor no se entera
