@@ -46,13 +46,16 @@ def run(dry_run: bool = False):
     editors_active = {r["name"]: r["email"] for r in eds}
 
     # Pending por editor con tiempo desde el más viejo + flag urgente
-    raw = conn.execute("""
-        SELECT editor, cliente, MIN(detected_at) as oldest,
-               SUM(COALESCE(pending_count, 1)) as total_videos,
-               MAX(COALESCE(urgent, 0)) as has_urgent
-        FROM tasks WHERE status='pending' AND editor IS NOT NULL
-        GROUP BY editor, cliente
-    """).fetchall()
+    _sql = ("SELECT editor, cliente, MIN(detected_at) as oldest, "
+            "SUM(COALESCE(pending_count, 1)) as total_videos, "
+            "MAX(COALESCE(urgent, 0)) as has_urgent "
+            "FROM tasks WHERE status='pending' AND editor IS NOT NULL "
+            "GROUP BY editor, cliente")
+    try:
+        import tasks_store
+        raw = tasks_store.query(_sql)
+    except Exception:
+        raw = conn.execute(_sql).fetchall()
     conn.close()
     # Excluir clientes ARCHIVADOS antes de agregar por editor (bug 12/jun:
     # Alicia archivada seguía sumando en el recordatorio de Benja).
