@@ -185,8 +185,12 @@ def _bundle_conn():
             _cfg = _ilu.module_from_spec(_spec)
             _spec.loader.exec_module(_cfg)
             _dbp = _cfg.DB_PATH
-        c = _sq.connect(f"file:{_dbp}?mode=ro", uri=True)
+        # immutable=1: la DB bundleada es de solo lectura Y está en journal WAL —
+        # sin immutable, sqlite intenta crear los archivos -wal/-shm y en el fs
+        # read-only de Vercel da "unable to open database file" al primer query.
+        c = _sq.connect(f"file:{_dbp}?mode=ro&immutable=1", uri=True)
         c.row_factory = _sq.Row
+        c.execute("SELECT 1")  # validar acá (connect es lazy) — si falla → None
         return c
     except Exception:
         return None
