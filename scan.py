@@ -40,8 +40,13 @@ from aliases import resolve_alias
 
 
 def _clients_with_pending(conn):
-    rows = conn.execute("SELECT DISTINCT cliente FROM tasks WHERE status='pending'").fetchall()
-    return {r[0].strip() for r in rows}
+    try:
+        import tasks_store
+        rows = tasks_store.query("SELECT DISTINCT cliente FROM tasks WHERE status='pending'")
+        return {(r["cliente"] or "").strip() for r in rows}
+    except Exception:
+        rows = conn.execute("SELECT DISTINCT cliente FROM tasks WHERE status='pending'").fetchall()
+        return {r[0].strip() for r in rows}
 
 
 def _clients_already_baselined(conn):
