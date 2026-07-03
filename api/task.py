@@ -15,6 +15,8 @@ from urllib.parse import urlparse, parse_qs
 
 # Asegurar que podemos importar _shared.py del mismo directorio
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# ... y tasks_store/tracker de la raíz del repo
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from _shared import check_token, with_db, json_response, now_iso
@@ -60,8 +62,14 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
     # 2. Construir universo de clientes conocidos
     universe = {}  # cliente_real → metadata {has_pending, same_editor, in_drive}
 
-    # 2a. Clientes con tasks (cualquier editor)
-    for r in conn.execute("SELECT DISTINCT TRIM(cliente) as c, editor, status FROM tasks").fetchall():
+    # 2a. Clientes con tasks (desde TURSO — fuente de verdad, jul/2026)
+    try:
+        import tasks_store
+        _task_rows = tasks_store.query("SELECT DISTINCT TRIM(cliente) as c, editor, status FROM tasks")
+    except Exception:
+        _task_rows = [dict(r) for r in conn.execute(
+            "SELECT DISTINCT TRIM(cliente) as c, editor, status FROM tasks").fetchall()] if conn else []
+    for r in _task_rows:
         if not r["c"]: continue
         ent = universe.setdefault(r["c"], {"has_pending": False, "same_editor": False, "in_drive": False})
         if r["status"] == "pending":
@@ -70,7 +78,7 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
             ent["same_editor"] = True
 
     # 2b. Clientes en tabla clients (carpetas Drive conocidas)
-    for r in conn.execute("SELECT DISTINCT cliente FROM clients").fetchall():
+    for r in (conn.execute("SELECT DISTINCT cliente FROM clients").fetchall() if conn else []):
         if not r["cliente"]: continue
         ent = universe.setdefault(r["cliente"].strip(), {"has_pending": False, "same_editor": False, "in_drive": False})
         ent["in_drive"] = True
@@ -78,6 +86,8 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
     # 2c. Clientes en known_files / known_edited_files
     for table in ("known_files", "known_edited_files"):
         try:
+            if not conn:
+                break
             for r in conn.execute(f"SELECT DISTINCT cliente FROM {table}").fetchall():
                 if r["cliente"]:
                     universe.setdefault(r["cliente"].strip(), {"has_pending": False, "same_editor": False, "in_drive": False})
@@ -143,20 +153,30 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
     return cliente_input
 
 
-def _set_pending_count_op(conn, cliente, editor, count):
-    """Setea pending_count para una task pending de cliente+editor Y MARCA count_locked=1
-    para que el scan automático no lo sobrescriba."""
+def _set_pending_count_op(cliente, editor, count):
+    """Setea pending_count (count_locked=1) en TURSO. Instantáneo y transaccional."""
+    import tasks_store
     if editor:
-        rows = conn.execute(
+        r = tasks_store.execute(
             "UPDATE tasks SET pending_count=?, count_locked=1 WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-            (count, cliente, editor),
-        )
+            (count, cliente, editor))
     else:
-        rows = conn.execute(
+        r = tasks_store.execute(
             "UPDATE tasks SET pending_count=?, count_locked=1 WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
-            (count, cliente),
-        )
-    return rows.rowcount
+            (count, cliente))
+    return r.get("affected") or 0
+
+
+def _bundle_conn():
+    """Conn sqlite de SOLO LECTURA para tablas frías (clients/known_files/cfg)
+    usadas por resolve_nickname. En Vercel abre la copia BUNDLEADA del deploy
+    (stale pero instantánea, sin bajar 6MB) — suficiente para resolver apodos.
+    Las tasks NO se leen de acá (van directo a Turso)."""
+    try:
+        import tracker
+        return tracker.get_conn()
+    except Exception:
+        return None
 
 
 class handler(BaseHTTPRequestHandler):
@@ -188,39 +208,27 @@ class handler(BaseHTTPRequestHandler):
             if not check_token(editor, token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
-        cliente_resuelto_holder = {}
-        def op(conn):
-            # Resolver apodo: si el usuario escribió 'delfi', buscar el cliente real
-            cliente_resuelto = resolve_nickname(conn, cliente, editor)
-            existing = conn.execute(
-                "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                (cliente_resuelto, editor),
-            ).fetchone()
-            if existing:
-                raise ValueError("duplicado")
-            cliente_resuelto_holder["v"] = cliente_resuelto
-            pseudo_id = f"manual:{editor.lower()}:{cliente_resuelto.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
-            # count_locked=1 desde el principio: significa "esto es manual, el scan
-            # automático NO debe sobreescribir count NI crear duplicado para otro editor".
-            conn.execute(
-                """INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count, count_locked)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?, 1, 1)""",
-                (cliente_resuelto, editor, pseudo_id, "(pendiente cargado manualmente)", now_iso(), now_iso()),
-            )
-
-        def verify_add(conn):
-            return conn.execute(
-                "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? "
-                "AND status='pending' AND count_locked=1",
-                (cliente_resuelto_holder.get("v", cliente), editor)).fetchone() is not None
-
+        # AGREGAR pendiente manual — directo a TURSO (jul/2026): antes with_db
+        # (bajar+subir 6MB, 5-8s y a veces se pisaba). Ahora ~300ms transaccional.
+        import tasks_store
         try:
-            with_db(op, message=f"manual: agregada {cliente} / {editor}", verify=verify_add)
-            return json_response(self, {"ok": True, "cliente": cliente, "editor": editor})
-        except ValueError as e:
-            if "duplicado" in str(e):
+            conn = _bundle_conn()
+            try:
+                cliente_resuelto = resolve_nickname(conn, cliente, editor)
+            finally:
+                if conn:
+                    conn.close()
+            existing = tasks_store.query(
+                "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1",
+                (cliente_resuelto, editor))
+            if existing:
                 return json_response(self, {"error": f"Ya hay un pendiente de '{cliente}'"}, status=409)
-            return json_response(self, {"error": str(e)[:200]}, status=500)
+            pseudo_id = f"manual:{editor.lower()}:{cliente_resuelto.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
+            tasks_store.execute(
+                "INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count, count_locked) "
+                "VALUES (?, ?, ?, ?, ?, 'pending', ?, 1, 1)",
+                (cliente_resuelto, editor, pseudo_id, "(pendiente cargado manualmente)", now_iso(), now_iso()))
+            return json_response(self, {"ok": True, "cliente": cliente_resuelto, "editor": editor})
         except Exception as e:
             return json_response(self, {"error": str(e)[:200]}, status=500)
 
@@ -239,145 +247,83 @@ class handler(BaseHTTPRequestHandler):
             if not editor or not check_token(editor, token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
-        # MODO CLIENTE: borrar TODAS las tasks pending de un cliente (+ editor opcional)
+        import tasks_store
+
+        # MODO CLIENTE: borrar TODAS las pending del cliente (+ editor opcional).
+        # TURSO directo (jul/2026): transaccional, sin verify, instantáneo.
         if cliente:
-            # "— sin editor —" es el label que el dashboard pone para tasks con
-            # editor=NULL en la DB. Si viene ese string, lo tratamos como "sin editor".
             is_no_editor_placeholder = bool(editor and editor.startswith("—"))
             if is_no_editor_placeholder:
                 editor = ""
             target_editor = editor if not is_admin else (editor or None)
-            deleted = {"count": 0, "cliente": cliente, "editor": target_editor}
-
-            def op_cliente(conn):
+            try:
                 from datetime import datetime, timedelta
                 if target_editor:
-                    # Editor específico → borrar solo de ese editor
-                    rows = conn.execute(
+                    r = tasks_store.execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                        (cliente, target_editor),
-                    )
+                        (cliente, target_editor))
                 elif is_no_editor_placeholder or (editor == "" and not is_admin):
-                    # "Sin editor" → borrar las tasks con editor=NULL o ''
-                    rows = conn.execute(
+                    r = tasks_store.execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND (editor IS NULL OR editor='') AND status='pending'",
-                        (cliente,),
-                    )
+                        (cliente,))
                 else:
-                    # Admin sin editor especificado: borrar TODAS las tasks del cliente
-                    rows = conn.execute(
+                    r = tasks_store.execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
-                        (cliente,),
-                    )
-                count_deleted = rows.rowcount
+                        (cliente,))
+                count_deleted = r.get("affected") or 0
                 cli = cliente
-                # Si no encontró nada, fallback al resolved (por si vino apodo)
                 if count_deleted == 0 and target_editor:
-                    resolved = resolve_nickname(conn, cliente, target_editor)
-                    if resolved != cliente:
-                        rows = conn.execute(
-                            "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                            (resolved, target_editor),
-                        )
-                        count_deleted = rows.rowcount
-                        cli = resolved
-                deleted["cliente"] = cli
-                deleted["count"] = count_deleted
-                # Bloqueo CORTO (2 días). El bloqueo de 10 años (días=3650) mataba al
-                # cliente PARA SIEMPRE: los CRUDOS NUEVOS que subía después nunca
-                # generaban task ni mail (caso Rafa Rojas 29/jun + 35 clientes activos
-                # bloqueados). Lo que evita la reaparición de los crudos VIEJOS no es el
-                # bloqueo sino el marcado baseline de abajo (línea ~305). Con baseline,
-                # 2 días alcanzan para que el scan inmediato no re-cree la tarjeta, y a
-                # la vez los crudos NUEVOS (material que llega después) vuelven a
-                # detectarse automáticamente. Para apagar un cliente PARA SIEMPRE existe
-                # Archivar (is_client_archived), que es lo correcto para "no trabajo más".
-                blocked_until = (datetime.now() + timedelta(days=2)).isoformat(timespec="seconds")
-                for nombre in {cli, cliente}:
-                    # block del cliente entero (editor='')
-                    conn.execute("""
-                        INSERT INTO client_blocks (cliente, editor, blocked_until)
-                        VALUES (TRIM(?), '', ?)
-                        ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until
-                    """, (nombre, blocked_until))
-                # Además marcar los CRUDOS actuales del cliente como baseline,
-                # para que ni siquiera se re-detecten (defensa extra).
-                try:
-                    conn.execute("""
-                        UPDATE known_files SET is_baseline=1
-                        WHERE TRIM(cliente)=TRIM(?) AND COALESCE(is_baseline,0)=0
-                    """, (cli,))
-                except Exception:
-                    pass
-
-            def verify_delete(conn):
-                # Confirmar que el BLOQUEO persistió (es lo que mantiene al
-                # cliente fuera para siempre). Si un scan pisó el push y borró
-                # el block, with_db re-ejecuta op_cliente. Pedido Ignacio 09/jun:
-                # "borro un cliente y no se guarda nunca".
-                from datetime import datetime
-                for nombre in {deleted["cliente"], cliente}:
-                    row = conn.execute(
-                        "SELECT blocked_until FROM client_blocks "
-                        "WHERE TRIM(cliente)=TRIM(?) AND editor='' "
-                        "ORDER BY blocked_until DESC LIMIT 1", (nombre,)
-                    ).fetchone()
-                    if not row:
-                        return False
+                    conn = _bundle_conn()
                     try:
-                        if datetime.fromisoformat(row["blocked_until"]) <= datetime.now():
-                            return False
-                    except Exception:
-                        return False
-                return True
-
-            try:
-                with_db(op_cliente,
-                        message=f"manual: borradas tasks de {cliente}" + (f" / {target_editor}" if target_editor else ""),
-                        verify=verify_delete)
-                return json_response(self, {"ok": True, **deleted})
+                        resolved = resolve_nickname(conn, cliente, target_editor)
+                    finally:
+                        if conn:
+                            conn.close()
+                    if resolved != cliente:
+                        r = tasks_store.execute(
+                            "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                            (resolved, target_editor))
+                        count_deleted = r.get("affected") or 0
+                        cli = resolved
+                # Bloqueo CORTO (2 días): evita que el scan re-cree la tarjeta ya,
+                # pero los crudos NUEVOS posteriores vuelven a detectarse solos.
+                # (El bloqueo de 10 años mataba clientes para siempre — 30/jun.)
+                # Los crudos actuales ya están claimeados en known_files, no se
+                # re-procesan. Para apagar un cliente PARA SIEMPRE: Archivar.
+                blocked_until = (datetime.now() + timedelta(days=2)).isoformat(timespec="seconds")
+                stmts = []
+                for nombre in {cli, cliente}:
+                    stmts.append((
+                        "INSERT INTO client_blocks (cliente, editor, blocked_until) VALUES (TRIM(?), '', ?) "
+                        "ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until",
+                        (nombre, blocked_until)))
+                tasks_store.execute_many(stmts)
+                return json_response(self, {"ok": True, "count": count_deleted,
+                                            "cliente": cli, "editor": target_editor})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
-        # MODO TASK: borrar una task específica por id (compatibilidad con código viejo)
+        # MODO TASK: borrar por id
         try:
             task_id = int(task_id_str)
         except ValueError:
             return json_response(self, {"error": "falta id o cliente"}, status=400)
-
-        captured = {"cliente": None, "editor": None}
-
-        def op_id(conn):
-            row = conn.execute("SELECT id, cliente, editor FROM tasks WHERE id = ?", (task_id,)).fetchone()
-            if not row:
-                raise ValueError("notfound")
-            if not is_admin and row["editor"] != editor:
-                raise ValueError("forbidden")
-            captured["cliente"] = row["cliente"]
-            captured["editor"] = row["editor"]
-            conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-
-        def verify_del_id(conn):
-            return conn.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone() is None
-
         try:
-            with_db(op_id, message=f"manual: borrada task #{task_id}", verify=verify_del_id)
-            return json_response(self, {"ok": True, "task_id": task_id, **captured})
-        except ValueError as e:
-            err = str(e)
-            if err == "notfound":
+            rows = tasks_store.query("SELECT id, cliente, editor FROM tasks WHERE id = ?", (task_id,))
+            if not rows:
                 return json_response(self, {"error": f"task #{task_id} no existe"}, status=404)
-            if err == "forbidden":
+            row = rows[0]
+            if not is_admin and row["editor"] != editor:
                 return json_response(self, {"error": "No podés borrar tareas de otro editor"}, status=403)
-            return json_response(self, {"error": err[:200]}, status=500)
+            tasks_store.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            return json_response(self, {"ok": True, "task_id": task_id,
+                                        "cliente": row["cliente"], "editor": row["editor"]})
         except Exception as e:
             return json_response(self, {"error": str(e)[:200]}, status=500)
 
     def do_PATCH(self):
-        """PATCH /api/task → 2 modos:
-           - Modo "task": body {cliente, editor, count, t, [admin]} → setea pending_count
-           - Modo "progress": body {progress: 1, editor, current, total, t, [admin]} → setea editor_progress
-        """
+        """PATCH /api/task — todas las mutaciones van a TURSO (jul/2026):
+        transaccionales, ~300ms, sin verify (no hay pisadas posibles)."""
         try:
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
@@ -388,13 +334,9 @@ class handler(BaseHTTPRequestHandler):
         token = (body.get("t") or "").strip()
         editor = (body.get("editor") or "").strip()
         is_admin = body.get("admin") == 1
+        import tasks_store
 
-        # MODO BATCH: aplica VARIOS pending_count en UN solo with_db.
-        # Pedido Ignacio 09/jun: "corregir todo de una y que se corrija al toque".
-        # Antes era 1 PATCH por cliente → con_db concurrentes que chocaban en git
-        # (si tocabas 2 clientes a la vez, uno se perdía y "no cargaba"). Ahora
-        # todos los cambios van juntos en 1 fetch-modify-push, con `verify` que
-        # re-aplica si un scan pisó algún valor. Un solo guardado, atómico.
+        # MODO BATCH: varios counts en UN request a Turso
         if isinstance(body.get("batch"), list):
             if is_admin:
                 if not check_token("ADMIN", token):
@@ -409,7 +351,7 @@ class handler(BaseHTTPRequestHandler):
                 c = (it.get("cliente") or "").strip()
                 e = (it.get("editor") or "").strip()
                 if not is_admin:
-                    e = editor  # un editor solo puede tocar sus propios pendientes
+                    e = editor
                 e = e or None
                 try:
                     cnt = int(it.get("count"))
@@ -420,44 +362,26 @@ class handler(BaseHTTPRequestHandler):
                 changes.append((c, e, cnt))
             if not changes:
                 return json_response(self, {"error": "batch vacío"}, status=400)
-
-            applied = {"n": 0}
-            def op_batch(conn):
+            try:
                 total = 0
                 for (c, e, cnt) in changes:
-                    n = _set_pending_count_op(conn, c, e, cnt)
+                    n = _set_pending_count_op(c, e, cnt)
                     if n == 0 and e:
-                        resolved = resolve_nickname(conn, c, e)
+                        conn = _bundle_conn()
+                        try:
+                            resolved = resolve_nickname(conn, c, e)
+                        finally:
+                            if conn:
+                                conn.close()
                         if resolved != c:
-                            n = _set_pending_count_op(conn, resolved, e, cnt)
+                            n = _set_pending_count_op(resolved, e, cnt)
                     total += n
-                applied["n"] = total
-
-            def verify_batch(conn):
-                # Confirma que cada count quedó realmente guardado. Si un scan
-                # pisó alguno (rebase), with_db re-ejecuta op_batch.
-                for (c, e, cnt) in changes:
-                    if e:
-                        row = conn.execute(
-                            "SELECT pending_count FROM tasks WHERE TRIM(cliente)=TRIM(?) "
-                            "AND editor=? AND status='pending' LIMIT 1", (c, e)).fetchone()
-                    else:
-                        row = conn.execute(
-                            "SELECT pending_count FROM tasks WHERE TRIM(cliente)=TRIM(?) "
-                            "AND status='pending' LIMIT 1", (c,)).fetchone()
-                    if row is not None and row["pending_count"] != cnt:
-                        return False
-                return True
-
-            try:
-                with_db(op_batch, message=f"manual: batch counts ({len(changes)} clientes)",
-                        verify=verify_batch)
-                return json_response(self, {"ok": True, "applied": applied["n"],
+                return json_response(self, {"ok": True, "applied": total,
                                             "clientes": len(changes)})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
-        # MODO PROGRESS: editar editor_progress (current/total del pack)
+        # MODO PROGRESS
         if body.get("progress") == 1:
             if is_admin:
                 if not check_token("ADMIN", token):
@@ -475,41 +399,23 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, {"error": "current/total deben ser números"}, status=400)
             if current < 0 or total < 0:
                 return json_response(self, {"error": "valores >= 0"}, status=400)
-
-            def op_prog(conn):
-                conn.execute("""
-                    INSERT INTO editor_progress (editor, label, current, total, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(editor, label) DO UPDATE SET
-                        current=excluded.current,
-                        total=excluded.total,
-                        updated_at=excluded.updated_at
-                """, (editor, label, current, total, now_iso()))
-
-            def verify_prog(conn):
-                r = conn.execute("SELECT current, total FROM editor_progress WHERE editor=? AND label=?",
-                                 (editor, label)).fetchone()
-                return r is not None and r["current"] == current and r["total"] == total
-
             try:
-                with_db(op_prog, message=f"manual: progress {editor}/{label} = {current}/{total}",
-                        verify=verify_prog)
-                return json_response(self, {"ok": True, "editor": editor, "label": label, "current": current, "total": total})
+                tasks_store.execute(
+                    "INSERT INTO editor_progress (editor, label, current, total, updated_at) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(editor, label) DO UPDATE SET current=excluded.current, "
+                    "total=excluded.total, updated_at=excluded.updated_at",
+                    (editor, label, current, total, now_iso()))
+                return json_response(self, {"ok": True, "editor": editor, "label": label,
+                                            "current": current, "total": total})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
-        # MODO SET_PRIORITY: guardar el ORDEN de entrega de los clientes de un
-        # editor. Pedido Ignacio 10/jun: "ordenar en prioridad de entrega a los
-        # clientes que tiene pendientes un editor" (opcional). El orden vive en
-        # cfg_delivery_priority (editor, cliente) → priority = índice. Sobrevive
-        # a re-creaciones de tasks (keyed por nombre, no por task_id). Clientes
-        # sin prioridad van después, alfabético (como siempre).
+        # MODO SET_PRIORITY
         if body.get("action") == "set_priority":
             target_editor_p = (body.get("editor") or "").strip()
             order = body.get("order")
             if not target_editor_p or not isinstance(order, list):
                 return json_response(self, {"error": "falta editor u order (lista)"}, status=400)
-            # Auth: admin, o el propio editor ordenando su lista
             if is_admin:
                 if not check_token("ADMIN", token):
                     return json_response(self, {"error": "unauthorized"}, status=401)
@@ -517,42 +423,18 @@ class handler(BaseHTTPRequestHandler):
                 if not check_token(target_editor_p, token):
                     return json_response(self, {"error": "unauthorized"}, status=401)
             clean = [str(c).strip() for c in order if str(c).strip()][:200]
-
-            def op_prio(conn):
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS cfg_delivery_priority (
-                        editor TEXT NOT NULL,
-                        cliente TEXT NOT NULL,
-                        priority INTEGER NOT NULL,
-                        updated_at TEXT,
-                        PRIMARY KEY (editor, cliente)
-                    )
-                """)
-                conn.execute("DELETE FROM cfg_delivery_priority WHERE editor=?", (target_editor_p,))
-                for i, cli in enumerate(clean):
-                    conn.execute(
-                        "INSERT INTO cfg_delivery_priority (editor, cliente, priority, updated_at) VALUES (?,?,?,?)",
-                        (target_editor_p, cli, i, now_iso()),
-                    )
-
-            def verify_prio(conn):
-                try:
-                    n = conn.execute(
-                        "SELECT COUNT(*) FROM cfg_delivery_priority WHERE editor=?",
-                        (target_editor_p,)).fetchone()[0]
-                    return n == len(clean)
-                except Exception:
-                    return False
-
             try:
-                with_db(op_prio,
-                        message=f"manual: orden de entrega {target_editor_p} ({len(clean)} clientes) [skip ci]",
-                        verify=verify_prio)
+                stmts = [("DELETE FROM cfg_delivery_priority WHERE editor=?", (target_editor_p,))]
+                for i, cli in enumerate(clean):
+                    stmts.append((
+                        "INSERT INTO cfg_delivery_priority (editor, cliente, priority, updated_at) VALUES (?,?,?,?)",
+                        (target_editor_p, cli, i, now_iso())))
+                tasks_store.execute_many(stmts)
                 return json_response(self, {"ok": True, "editor": target_editor_p, "orden": len(clean)})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
-        # MODO SET_NOTE: agregar/editar nota de una task pending
+        # MODO SET_NOTE
         if body.get("action") == "set_note":
             if not is_admin or not check_token("ADMIN", token):
                 return json_response(self, {"error": "unauthorized (admin)"}, status=401)
@@ -562,34 +444,20 @@ class handler(BaseHTTPRequestHandler):
             note = note.strip() if note else None
             if not cliente_n:
                 return json_response(self, {"error": "falta cliente"}, status=400)
-
-            def op_note(conn):
-                if editor_n:
-                    conn.execute(
-                        "UPDATE tasks SET note=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                        (note, cliente_n, editor_n),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE tasks SET note=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
-                        (note, cliente_n),
-                    )
-
-            def verify_note(conn):
-                q = ("SELECT note FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1"
-                     if editor_n else
-                     "SELECT note FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1")
-                args = (cliente_n, editor_n) if editor_n else (cliente_n,)
-                r = conn.execute(q, args).fetchone()
-                return r is None or (r["note"] or None) == note
-
             try:
-                with_db(op_note, message=f"manual: note {cliente_n}", verify=verify_note)
+                if editor_n:
+                    tasks_store.execute(
+                        "UPDATE tasks SET note=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                        (note, cliente_n, editor_n))
+                else:
+                    tasks_store.execute(
+                        "UPDATE tasks SET note=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+                        (note, cliente_n))
                 return json_response(self, {"ok": True, "cliente": cliente_n, "note": note})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
-        # MODO SET_URGENT: marcar/desmarcar urgente
+        # MODO SET_URGENT
         if body.get("action") == "set_urgent":
             if not is_admin or not check_token("ADMIN", token):
                 return json_response(self, {"error": "unauthorized (admin)"}, status=401)
@@ -598,34 +466,20 @@ class handler(BaseHTTPRequestHandler):
             urgent = 1 if body.get("urgent") else 0
             if not cliente_u:
                 return json_response(self, {"error": "falta cliente"}, status=400)
-
-            def op_urgent(conn):
-                if editor_u:
-                    conn.execute(
-                        "UPDATE tasks SET urgent=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                        (urgent, cliente_u, editor_u),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE tasks SET urgent=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
-                        (urgent, cliente_u),
-                    )
-
-            def verify_urgent(conn):
-                q = ("SELECT COALESCE(urgent,0) u FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1"
-                     if editor_u else
-                     "SELECT COALESCE(urgent,0) u FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1")
-                args = (cliente_u, editor_u) if editor_u else (cliente_u,)
-                r = conn.execute(q, args).fetchone()
-                return r is None or r["u"] == urgent
-
             try:
-                with_db(op_urgent, message=f"manual: urgent={urgent} {cliente_u}", verify=verify_urgent)
+                if editor_u:
+                    tasks_store.execute(
+                        "UPDATE tasks SET urgent=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                        (urgent, cliente_u, editor_u))
+                else:
+                    tasks_store.execute(
+                        "UPDATE tasks SET urgent=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+                        (urgent, cliente_u))
                 return json_response(self, {"ok": True, "cliente": cliente_u, "urgent": bool(urgent)})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
-        # MODO REASSIGN: cambiar editor de una task pending
+        # MODO REASSIGN
         if body.get("action") == "reassign":
             if not is_admin or not check_token("ADMIN", token):
                 return json_response(self, {"error": "unauthorized (admin)"}, status=401)
@@ -634,89 +488,41 @@ class handler(BaseHTTPRequestHandler):
             new_editor = (body.get("new_editor") or "").strip()
             if not cliente_r or not new_editor:
                 return json_response(self, {"error": "falta cliente o new_editor"}, status=400)
-
-            # Detectar el placeholder "sin editor" del UI. El backend
-            # (api/data.py) reemplaza editor NULL/'' por "— sin editor —"
-            # para mostrar. El UI nos manda ese mismo string. Lo tratamos
-            # como "filtrar por NULL o vacío" en el WHERE.
-            # Bug 21/may: reassign "sin editor" → Fran no se guardaba porque
-            # WHERE editor='— sin editor —' no matcheaba con editor=''.
             is_no_editor_placeholder = (
                 not current_editor or
                 current_editor.startswith("—") or
-                "sin editor" in current_editor.lower()
-            )
-
-            updated_count = {"n": 0}
-            def op_reassign(conn):
-                # Verificar que NO exista ya una task del nuevo editor con el mismo cliente
-                existing = conn.execute(
-                    "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                    (cliente_r, new_editor),
-                ).fetchone()
+                "sin editor" in current_editor.lower())
+            try:
+                existing = tasks_store.query(
+                    "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1",
+                    (cliente_r, new_editor))
                 if existing:
-                    raise ValueError("ya_existe")
-                # Reasignar
+                    return json_response(self, {"error": f"{new_editor} ya tiene pending de {cliente_r}"}, status=409)
                 if is_no_editor_placeholder:
-                    # Match tasks con editor NULL o '' (string vacío)
-                    r = conn.execute(
+                    r = tasks_store.execute(
                         "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) "
                         "AND (editor IS NULL OR editor='') AND status='pending'",
-                        (new_editor, cliente_r),
-                    )
+                        (new_editor, cliente_r))
                 else:
-                    r = conn.execute(
+                    r = tasks_store.execute(
                         "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                        (new_editor, cliente_r, current_editor),
-                    )
-                updated_count["n"] = r.rowcount
-                if updated_count["n"] == 0:
-                    # No actualizamos nada — el cliente no existe con el editor
-                    # actual. Avisamos al frontend.
-                    raise ValueError("not_found")
-                # IMPORTANTE: persistir el cambio como override permanente para
-                # que los próximos archivos de este cliente vayan al nuevo
-                # editor. Antes el cambio era SOLO de las tasks actuales —
-                # próximos scans creaban nueva task con el editor del Sheet
-                # original, pisando lo que el user reasignó. Bug 29/may.
-                from datetime import datetime as _dt
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS cfg_client_editor (
-                        cliente TEXT PRIMARY KEY,
-                        editor TEXT NOT NULL,
-                        updated_at TEXT
-                    )
-                """)
-                conn.execute("""
-                    INSERT INTO cfg_client_editor (cliente, editor, updated_at)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at
-                """, (cliente_r, new_editor, _dt.now().isoformat(timespec='seconds')))
-
-            def verify_reassign(conn):
-                t = conn.execute(
-                    "SELECT 1 FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
-                    (cliente_r, new_editor)).fetchone()
-                o = conn.execute(
-                    "SELECT 1 FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?) AND editor=?",
-                    (cliente_r, new_editor)).fetchone()
-                return t is not None and o is not None
-
-            try:
-                with_db(op_reassign,
-                        message=f"manual: reasignar {cliente_r}: {current_editor} → {new_editor}",
-                        verify=verify_reassign)
-                return json_response(self, {"ok": True, "cliente": cliente_r, "from": current_editor, "to": new_editor, "affected": updated_count["n"]})
-            except ValueError as e:
-                if "ya_existe" in str(e):
-                    return json_response(self, {"error": f"{new_editor} ya tiene pending de {cliente_r}"}, status=409)
-                if "not_found" in str(e):
+                        (new_editor, cliente_r, current_editor))
+                n = r.get("affected") or 0
+                if n == 0:
                     return json_response(self, {"error": f"No se encontró task pending de {cliente_r}"}, status=404)
-                return json_response(self, {"error": str(e)[:200]}, status=500)
+                # Override permanente: próximos archivos del cliente van al nuevo
+                # editor (cfg_client_editor es tabla caliente en Turso, el scan
+                # la ve vía espejo). Bug 29/may.
+                tasks_store.execute(
+                    "INSERT INTO cfg_client_editor (cliente, editor, updated_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at",
+                    (cliente_r, new_editor, now_iso()))
+                return json_response(self, {"ok": True, "cliente": cliente_r,
+                                            "from": current_editor, "to": new_editor, "affected": n})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
-        # MODO TASK: editar pending_count
+        # MODO TASK: editar pending_count (single)
         cliente = (body.get("cliente") or "").strip()
         try:
             count = int(body.get("count", 1))
@@ -724,7 +530,6 @@ class handler(BaseHTTPRequestHandler):
             return json_response(self, {"error": "count debe ser número"}, status=400)
         if count < 0:
             return json_response(self, {"error": "count debe ser >= 0"}, status=400)
-
         if is_admin:
             if not check_token("ADMIN", token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
@@ -733,32 +538,20 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, {"error": "unauthorized"}, status=401)
         if not cliente:
             return json_response(self, {"error": "falta cliente"}, status=400)
-
         target_editor = editor if (not is_admin or editor) else None
-        updated = {"count": 0}
-
-        def op(conn):
-            # En PATCH NO resolvemos apodo: la task ya existe con el nombre como está.
-            # Si no se encuentra con el nombre tal cual, fallback al resolved (por si vino apodo).
-            n = _set_pending_count_op(conn, cliente, target_editor, count)
-            if n == 0 and target_editor:
-                resolved = resolve_nickname(conn, cliente, target_editor)
-                if resolved != cliente:
-                    n = _set_pending_count_op(conn, resolved, target_editor, count)
-            updated["count"] = n
-
-        def verify_count(conn):
-            q = ("SELECT pending_count FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1"
-                 if target_editor else
-                 "SELECT pending_count FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' LIMIT 1")
-            args = (cliente, target_editor) if target_editor else (cliente,)
-            r = conn.execute(q, args).fetchone()
-            return r is None or r["pending_count"] == count
-
         try:
-            with_db(op, message=f"manual: count={count} para {cliente}" + (f" / {target_editor}" if target_editor else ""),
-                    verify=verify_count)
-            return json_response(self, {"ok": True, "cliente": cliente, "editor": target_editor, "count": count, "affected": updated["count"]})
+            n = _set_pending_count_op(cliente, target_editor, count)
+            if n == 0 and target_editor:
+                conn = _bundle_conn()
+                try:
+                    resolved = resolve_nickname(conn, cliente, target_editor)
+                finally:
+                    if conn:
+                        conn.close()
+                if resolved != cliente:
+                    n = _set_pending_count_op(resolved, target_editor, count)
+            return json_response(self, {"ok": True, "cliente": cliente, "editor": target_editor,
+                                        "count": count, "affected": n})
         except Exception as e:
             return json_response(self, {"error": str(e)[:200]}, status=500)
 
