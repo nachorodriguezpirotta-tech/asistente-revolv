@@ -425,6 +425,24 @@ class handler(BaseHTTPRequestHandler):
                         nm = (data.get("name") or "").strip()
                         r = conn.execute("SELECT 1 FROM cfg_editors WHERE name=?", (nm,)).fetchone()
                         return bool(r)
+                    if section == "pending_folder":
+                        # Caso Mónica Vozmediano 30/jun: la aprobación pusheó pero un
+                        # scan concurrente la pisó → el cliente NUNCA entró a `clients`
+                        # → sin tarjeta, sin link, sin tasks automáticas. Verificar que
+                        # la decisión Y el alta en clients persistieron; si no, with_db
+                        # re-ejecuta la operación completa.
+                        fid = (data.get("folder_id") or "").strip()
+                        dec = (data.get("decision") or "").strip()
+                        r = conn.execute(
+                            "SELECT status FROM pending_drive_folders WHERE folder_id=?",
+                            (fid,)).fetchone()
+                        if not r or r["status"] != dec:
+                            return False
+                        if dec == "approved":
+                            return conn.execute(
+                                "SELECT 1 FROM clients WHERE folder_id=?", (fid,)
+                            ).fetchone() is not None
+                        return True
                 except Exception:
                     return True  # si la verificación falla, no bloquear
                 return True
