@@ -499,6 +499,36 @@ def run(notify: bool = False):
                 closed=result["closed"],
             )
 
+    # 4.5) Re-estimar pending_count de los clientes con crudos NUEVOS este run.
+    # Bug Cris García 04/jul: subió 12 reels, la tarjeta nacía con count=1 y
+    # recién el scan completo (1×/hora) la corregía — Ignacio la veía mal y la
+    # ajustaba a mano. Ahora el count se corrige acá mismo, a los ~2 min.
+    # set_pending_count con lock=False NO pisa counts manuales (count_locked=1).
+    try:
+        from drive_client import estimate_pending_videos
+        _pares = {(t["cliente"], t.get("editor")) for t in new_tasks}
+        if _pares:
+            _conn_est = get_conn()
+            try:
+                for _cli, _ed in _pares:
+                    try:
+                        row = _conn_est.execute(
+                            "SELECT folder_id, raw_folder_id FROM clients "
+                            "WHERE TRIM(cliente)=TRIM(?) LIMIT 1", (_cli,)).fetchone()
+                        if not row:
+                            continue
+                        est = estimate_pending_videos(row["raw_folder_id"], row["folder_id"])
+                        if est > 0:
+                            n = set_pending_count(_cli, _ed, est)
+                            if n:
+                                print(f"  🔢 count re-estimado: {_cli} ({_ed}) = {est}")
+                    except Exception as _e:
+                        print(f"  ⚠️ re-estimar {_cli}: {_e}")
+            finally:
+                _conn_est.close()
+    except Exception as _e:
+        print(f"re-estimación: {_e}")
+
     # 5) Reportar y notificar
     if new_tasks:
         print(f"\n🆕 {len(new_tasks)} crudos nuevos:")
