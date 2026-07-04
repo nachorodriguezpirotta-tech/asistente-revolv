@@ -503,11 +503,24 @@ def estimate_pending_videos(raw_folder_id: Optional[str], client_folder_id: Opti
             if target and _has_unknown_file(target):
                 sub_count += 1
 
-    # 2. Archivos sueltos NO CONOCIDOS en raíz de /Material/ → agrupar por sesión temporal
+    # 2. Archivos sueltos NO CONOCIDOS en raíz de /Material/.
+    #    - Nombre "de cámara" (IMG_/VID_/DSC/DJI/WhatsApp/timestamps...): son CLIPS
+    #      de un mismo video → agrupar por sesión temporal (±1h = 1 video).
+    #    - Nombre PROPIO ("Reel 7 - ...", "video 20", títulos editoriales): cada
+    #      archivo ES un video a editar → contar 1 c/u. Bug Cris García 04/jul:
+    #      subió 12 reels sueltos en 2 horas y la sesión temporal los colapsó a 1.
+    import re as _re
+    _CAM = _re.compile(
+        r"^((IMG|VID|DSC|MVI|DJI|PXL|GOPR)[_\-0-9]|GX\d|GP\d|CLIP[_\-0-9 ]|C\d{3,}|P\d{7}|"
+        r"WhatsApp Video|Screen Recording|Grabaci|\d{8}[_-]\d{4,6})",
+        _re.IGNORECASE)
     files = _list_files(raw_folder_id, only_videos=True)
     unknown_files = [f for f in files if not is_file_known(f["id"])]
+    named = [f for f in unknown_files if not _CAM.match((f.get("name") or "").strip())]
+    camera = [f for f in unknown_files if _CAM.match((f.get("name") or "").strip())]
+
     times = sorted(
-        [t for t in (_parse(f.get("createdTime")) for f in unknown_files) if t is not None]
+        [t for t in (_parse(f.get("createdTime")) for f in camera) if t is not None]
     )
     sessions = 0
     last_t = None
@@ -515,12 +528,11 @@ def estimate_pending_videos(raw_folder_id: Optional[str], client_folder_id: Opti
         if last_t is None or (t - last_t) > timedelta(hours=1):
             sessions += 1
         last_t = t
-
-    files_without_time = sum(1 for f in unknown_files if not f.get("createdTime"))
+    files_without_time = sum(1 for f in camera if not f.get("createdTime"))
     if files_without_time and sessions == 0:
         sessions = 1
 
-    return sub_count + sessions
+    return sub_count + sessions + len(named)
 
 
 def list_crudos_anywhere(client_folder_id: str, client_folder_name: Optional[str] = None) -> list[dict]:
