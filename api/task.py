@@ -302,12 +302,14 @@ class handler(BaseHTTPRequestHandler):
                             (resolved, target_editor))
                         count_deleted = r.get("affected") or 0
                         cli = resolved
-                # Bloqueo CORTO (2 días): evita que el scan re-cree la tarjeta ya,
-                # pero los crudos NUEVOS posteriores vuelven a detectarse solos.
-                # (El bloqueo de 10 años mataba clientes para siempre — 30/jun.)
-                # Los crudos actuales ya están claimeados en known_files, no se
-                # re-procesan. Para apagar un cliente PARA SIEMPRE: Archivar.
-                blocked_until = (datetime.now() + timedelta(days=2)).isoformat(timespec="seconds")
+                # Bloqueo de 6 HORAS (06/jul, caso Simona: tachito el sábado a la
+                # noche + material nuevo el domingo a la mañana → el block de 2 días
+                # se comió la tarjeta y el mail). Los crudos actuales ya están
+                # claimeados en known_files (no se re-procesan) — el block solo
+                # cubre scans en vuelo y races del índice de Drive (minutos), así
+                # que 6h sobra y el material del día siguiente entra normal.
+                # Para apagar un cliente PARA SIEMPRE: Archivar.
+                blocked_until = (datetime.now() + timedelta(hours=6)).isoformat(timespec="seconds")
                 stmts = []
                 for nombre in {cli, cliente}:
                     stmts.append((
