@@ -55,17 +55,19 @@ def _clients_already_baselined(conn):
     return {r[0].strip() for r in rows}
 
 
-def _is_file_too_old(created_time_str, max_age_days=1):
+def _is_file_too_old(created_time_str, max_age_days=3):
     """Si createdTime es más viejo que max_age_days (default 1 día), asumimos
     que es histórico: el archivo existía hace tiempo y recién lo descubrimos
     hoy por algún motivo (carpeta no scaneada antes, archivo movido/renombrado,
     backfill de raw_folder_id, etc.). Tratarlo como baseline para no mandar
     mail de 'crudo/editado nuevo' por algo del pasado.
 
-    Antes era 3d, bajado a 1d por pedido de Ignacio: 'no quiero ver más mails
-    viejos'. Si un editor entrega algo y el sistema tarda más de 24h en
-    procesarlo (raro pero posible), va a entrar como baseline silencioso —
-    mejor que mandar un mail tarde sobre algo de hace varios días."""
+    Historia del umbral: 3d → 1d (pedido 'no quiero mails viejos') → 3d de
+    nuevo (06/jul, caso Ismafeten): subió el VIERNES a la tarde, el sistema lo
+    procesó el DOMINGO (finde + lag) → con 1d entró como baseline silencioso →
+    ni mail ni tarjeta. 1 día no sobrevive un fin de semana. Los backfills
+    históricos reales (Fer Trips, Sandy) eran de 8+ días — 3d los sigue
+    cubriendo sin comerse material legítimo del finde."""
     if not created_time_str:
         return False
     try:
