@@ -567,6 +567,53 @@ def meta_set(key: str, value: str):
     conn.close()
 
 
+def rename_client_for_folder(folder_id: str, viejo: str, nuevo: str) -> None:
+    """La carpeta de Drive fue RENOMBRADA (mismo folder_id, otro nombre): migrar
+    el cliente entero al nombre nuevo para que no quede PARTIDO en dos (caso
+    Pedro→Román Pedroza 07/jul: historial y tarjeta bajo 'Pedro', carpeta nueva
+    'Román Pedroza' invisible). Renombra en las tablas git (known_files, edited,
+    reviews, cfg_clients) + Turso (tasks, blocks, overrides, prioridades). Si el
+    Sheet tenía editor para el nombre viejo, deja un override para el nuevo
+    (el Sheet suele quedar desactualizado tras un renombre)."""
+    if not viejo or not nuevo or viejo.strip() == nuevo.strip():
+        return
+    v, n = viejo.strip(), nuevo.strip()
+    print(f"   🔁 carpeta renombrada: {v!r} → {n!r} — migrando cliente completo")
+    conn = get_conn()
+    try:
+        for tbl in ("known_files", "known_edited_files", "client_reviews",
+                    "cfg_clients", "cfg_delivery_folders"):
+            try:
+                conn.execute(f"UPDATE {tbl} SET cliente=? WHERE TRIM(cliente)=TRIM(?)", (n, v))
+            except Exception:
+                pass
+        # editor del Sheet para el nombre viejo → override para el nuevo
+        try:
+            ed_row = conn.execute(
+                "SELECT editor FROM cfg_excel_clients WHERE TRIM(cliente)=TRIM(?) LIMIT 1",
+                (v,)).fetchone()
+        except Exception:
+            ed_row = None
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        import tasks_store
+        tasks_store.execute("UPDATE tasks SET cliente=? WHERE TRIM(cliente)=TRIM(?)", (n, v))
+        tasks_store.execute("UPDATE client_blocks SET cliente=? WHERE TRIM(cliente)=TRIM(?)", (n, v))
+        tasks_store.execute("UPDATE cfg_delivery_priority SET cliente=? WHERE TRIM(cliente)=TRIM(?)", (n, v))
+        tasks_store.execute(
+            "INSERT INTO cfg_client_editor (cliente, editor, updated_at) "
+            "SELECT ?, editor, updated_at FROM cfg_client_editor WHERE TRIM(cliente)=TRIM(?) "
+            "ON CONFLICT(cliente) DO NOTHING", (n, v))
+        if ed_row and ed_row["editor"]:
+            tasks_store.execute(
+                "INSERT INTO cfg_client_editor (cliente, editor, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(cliente) DO NOTHING", (n, ed_row["editor"], now_iso()))
+    except Exception as e:
+        print(f"   ⚠️ rename en Turso: {e}")
+
+
 def upsert_client(folder_id: str, cliente: str, raw_folder_id: Optional[str]):
     conn = get_conn()
     c = conn.cursor()
