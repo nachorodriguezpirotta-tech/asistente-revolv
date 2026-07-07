@@ -91,6 +91,19 @@ def _process_standard_client(c, packs):
     Devuelve (new_tasks_list, sin_editor_list, had_new_file).
     Diseñada para correr en ThreadPoolExecutor (cada llamada es independiente)."""
     cliente_real = resolve_alias(c.cliente)
+    # ¿La carpeta fue RENOMBRADA en Drive? (mismo folder_id, nombre distinto al
+    # registrado). Migrar el cliente entero al nombre nuevo ANTES del upsert —
+    # si no, queda partido en dos (caso Pedro→Román Pedroza 07/jul).
+    try:
+        from tracker import rename_client_for_folder
+        _conn_rn = get_conn()
+        _prev = _conn_rn.execute(
+            "SELECT cliente FROM clients WHERE folder_id=?", (c.folder_id,)).fetchone()
+        _conn_rn.close()
+        if _prev and (_prev["cliente"] or "").strip() and _prev["cliente"].strip() != cliente_real.strip():
+            rename_client_for_folder(c.folder_id, _prev["cliente"], cliente_real)
+    except Exception as _e:
+        print(f"   ⚠️ chequeo de renombre {cliente_real}: {_e}")
     upsert_client(c.folder_id, cliente_real, c.raw_folder_id)
     files = list_material_files(c.raw_folder_id)
 
