@@ -591,14 +591,15 @@ function openClientEmailModal(c) {
     // tildes (más correcta); si empatan, la más larga. Pedido Nacho 31/may.
     const _norm = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
     const _accentScore = s => ((s || '').match(/[áéíóúñÁÉÍÓÚÑ]/g) || []).length;
+    // Ya-configurados: NO se excluyen (caso Mónica 07/jul: Ignacio la buscaba
+    // para agregar mail, no aparecía porque YA lo tenía → creía que faltaba).
+    // Se muestran marcados "ya tiene mail" y al elegirlos se abre su EDICIÓN.
+    const _configuredNorm = new Set([...alreadyConfigured].map(c => _norm(c)));
     const dedup = {};  // normalized → mejor nombre
     for (const name of all) {
       const t = (name || '').trim();
-      if (!t || alreadyConfigured.has(t)) continue;
-      // Excluir si una variante normalizada ya está configurada
+      if (!t) continue;
       const n = _norm(t);
-      const alreadyNorm = [...alreadyConfigured].some(c => _norm(c) === n);
-      if (alreadyNorm) continue;
       const cur = dedup[n];
       if (!cur) { dedup[n] = t; continue; }
       // Preferir más tildes, después más largo
@@ -620,7 +621,7 @@ function openClientEmailModal(c) {
                autocomplete="off" style="width:100%;"
                oninput="ceFilterClientes()" onfocus="ceFilterClientes()">
         <div id="ce-cli-dropdown" style="display:none; position:absolute; left:0; right:0; z-index:50; background:#1a1e27; border:1px solid #2a2f3a; border-radius:8px; max-height:240px; overflow-y:auto; margin-top:2px; box-shadow:0 6px 20px rgba(0,0,0,0.4);"></div>
-        <div class="field-hint">${lista.length} clientes disponibles · ${alreadyConfigured.size} ya configurados (no aparecen)</div>
+        <div class="field-hint">${lista.length} clientes · los que ya tienen mail aparecen marcados (elegilos para editarlos)</div>
       </div>`;
   } else {
     clienteField = `
@@ -670,18 +671,29 @@ function ceFilterClientes() {
     dd.style.display = 'none';
     return;
   }
-  dd.innerHTML = matches.map(n =>
-    `<div onmousedown="ceSelectCliente(this)" data-name="${escapeAttr(n)}"
+  const normFn = window._CE_NORM || (s => (s || '').toLowerCase());
+  const configured = new Set((DATA.client_emails || []).map(x => normFn(x.cliente)));
+  dd.innerHTML = matches.map(n => {
+    const has = configured.has(normFn(n));
+    const tag = has ? ' <span style="font-size:11px; color:#fbbf24;">✉ ya tiene mail — click para editar</span>' : '';
+    return `<div onmousedown="ceSelectCliente(this)" data-name="${escapeAttr(n)}" data-configured="${has ? 1 : 0}"
        style="padding:9px 12px; cursor:pointer; font-size:14px; border-bottom:1px solid #232733;"
        onmouseover="this.style.background='#232733'" onmouseout="this.style.background='transparent'">
-       ${escape(n)}</div>`
-  ).join('');
+       ${escape(n)}${tag}</div>`;
+  }).join('');
   dd.style.display = 'block';
 }
 function ceSelectCliente(el) {
+  const name = el.getAttribute('data-name');
+  if (el.getAttribute('data-configured') === '1') {
+    // Ya tiene mail: abrir su edición directo (evita el 409 de duplicado)
+    const normFn = window._CE_NORM || (s => (s || '').toLowerCase());
+    const existing = (DATA.client_emails || []).find(x => normFn(x.cliente) === normFn(name));
+    if (existing) { closeModal(); openClientEmailModal(existing); return; }
+  }
   const inp = document.getElementById('m-c-name');
   const dd = document.getElementById('ce-cli-dropdown');
-  if (inp) inp.value = el.getAttribute('data-name');
+  if (inp) inp.value = name;
   if (dd) dd.style.display = 'none';
 }
 // Cerrar el dropdown al hacer click afuera
