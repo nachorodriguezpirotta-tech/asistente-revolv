@@ -258,6 +258,13 @@ def run(notify: bool = False):
             continue
 
         cliente_real, is_crudo = _resolve_client_for_file(f, folder_to_client, raw_to_client, ancestry_cache)
+        # Normalizar variantes (cfg_aliases) — mismo motivo que en audit_recover:
+        # nombres viejos del Sheet no deben re-crear clientes fantasma (Pedro 08/jul).
+        if cliente_real:
+            try:
+                cliente_real = resolve_alias(cliente_real)
+            except Exception:
+                pass
         if cliente_real is None:
             # Archivo no está en una carpeta de cliente conocida — ignorar.
             # (El scan completo se encarga de descubrir clientes nuevos cada hora.)
