@@ -107,6 +107,14 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
     new_tasks = []
     for f in pendientes:
         cliente, is_crudo = _resolve_client_for_file(f, folder_to_client, raw_to_client, ancestry_cache)
+        # Normalizar variantes de nombre (cfg_aliases): p.ej. la fila vieja del
+        # Sheet 'Pedro' fuzzy-matchea archivos de 'Román Pedroza' → sin esto, el
+        # audit creaba known_files/tasks bajo el nombre viejo (08/jul).
+        if cliente:
+            try:
+                cliente = resolve_alias(cliente)
+            except Exception:
+                pass
         if not cliente:
             stats["sin_cliente"] += 1
             owner = (f.get('owners') or [{}])[0].get('emailAddress','?')
