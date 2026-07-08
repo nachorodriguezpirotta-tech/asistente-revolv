@@ -289,9 +289,20 @@ def run(notify: bool = False):
             folder = find_folder_by_name(cliente_name, all_root)
             if not folder:
                 return local_new_tasks, local_sin_editor
-            # Guardar folder en clients para que el dashboard muestre link a Drive
+            # Guardar folder en clients para el link — SOLO si esa carpeta NO está
+            # ya registrada. Antes pisaba el registro existente con el nombre del
+            # SHEET (caso Pedro 08/jul: el Sheet decía 'Pedro', la carpeta real
+            # 'Román Pedroza' → esta línea la re-bautizaba 'Pedro' cada hora,
+            # deshaciendo el rename automático de la fase 1, y encima le borraba
+            # raw_folder_id (upsert con None)). El nombre REAL de la carpeta manda;
+            # el del Sheet es solo para encontrarla.
             try:
-                upsert_client(folder["id"], cliente_name, None)
+                _conn_x = get_conn()
+                _exists = _conn_x.execute(
+                    "SELECT 1 FROM clients WHERE folder_id=?", (folder["id"],)).fetchone()
+                _conn_x.close()
+                if not _exists:
+                    upsert_client(folder["id"], cliente_name, None)
             except Exception:
                 pass
             crudos = list_crudos_anywhere(folder["id"], folder.get("name"))
