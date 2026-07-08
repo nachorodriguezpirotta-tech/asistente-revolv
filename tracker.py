@@ -1838,28 +1838,21 @@ def cfg_upsert_client(cliente: str, email: str, display_name: Optional[str] = No
     recibe mails de 'tu video está listo'."""
     if not cliente or not email:
         raise ValueError("cliente y email son requeridos")
-    conn = get_conn()
-    conn.execute("""
-        INSERT INTO cfg_clients (cliente, email, display_name, notifications_enabled, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(cliente) DO UPDATE SET
-            email=excluded.email,
-            display_name=excluded.display_name,
-            notifications_enabled=excluded.notifications_enabled,
-            updated_at=excluded.updated_at
-    """, (cliente, email.strip().lower(), (display_name or "").strip() or None,
-          1 if notifications_enabled else 0, now_iso(), now_iso()))
-    conn.commit()
-    conn.close()
+    import tasks_store
+    tasks_store.execute(
+        "INSERT INTO cfg_clients (cliente, email, display_name, notifications_enabled, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(cliente) DO UPDATE SET email=excluded.email, display_name=excluded.display_name, "
+        "notifications_enabled=excluded.notifications_enabled, updated_at=excluded.updated_at",
+        (cliente, email.strip().lower(), (display_name or "").strip() or None,
+         1 if notifications_enabled else 0, now_iso(), now_iso()))
 
 
 def cfg_delete_client(cliente: str) -> int:
     if not cliente:
         return 0
-    conn = get_conn()
-    n = conn.execute("DELETE FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cliente,)).rowcount
-    conn.commit()
-    conn.close()
+    import tasks_store
+    n = tasks_store.execute("DELETE FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cliente,)).get("affected") or 0
     return n
 
 
