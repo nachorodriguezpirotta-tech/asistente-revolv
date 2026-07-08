@@ -287,6 +287,13 @@ def run(notify: bool = False):
             local_new_tasks = []
             local_sin_editor = []
             folder = find_folder_by_name(cliente_name, all_root)
+            # Normalizar variantes (cfg_aliases): si el Sheet trae un nombre viejo
+            # ('Pedro'), todo lo que se procese acá debe quedar bajo el nombre
+            # real ('Román Pedroza') — si no, el cliente se parte en dos (08/jul).
+            try:
+                cliente_name = resolve_alias(cliente_name)
+            except Exception:
+                pass
             if not folder:
                 return local_new_tasks, local_sin_editor
             # Guardar folder en clients para el link — SOLO si esa carpeta NO está
