@@ -606,7 +606,8 @@ class handler(BaseHTTPRequestHandler):
         """)
 
         if action == "delete":
-            conn.execute("DELETE FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cliente,))
+            import tasks_store
+            tasks_store.execute("DELETE FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cliente,))
             result["deleted"] = cliente
             return
 
@@ -622,16 +623,20 @@ class handler(BaseHTTPRequestHandler):
             existing = conn.execute("SELECT 1 FROM cfg_clients WHERE TRIM(cliente)=TRIM(?)", (cliente,)).fetchone()
             if existing:
                 raise ValueError(f"cliente '{cliente}' ya tiene mail configurado (usar update)")
-            conn.execute("""
-                INSERT INTO cfg_clients (cliente, email, display_name, notifications_enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (cliente, email, display, enabled, now, now))
+            # cfg_clients vive en TURSO (08/jul): el mail de Román se agregó vía
+            # with_db y un push concurrente lo PISÓ. Transaccional = no se pierde.
+            import tasks_store
+            tasks_store.execute(
+                "INSERT INTO cfg_clients (cliente, email, display_name, notifications_enabled, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (cliente, email, display, enabled, now, now))
             result["created"] = cliente
         else:  # update
-            conn.execute("""
-                UPDATE cfg_clients SET email=?, display_name=?, notifications_enabled=?, updated_at=?
-                WHERE TRIM(cliente)=TRIM(?)
-            """, (email, display, enabled, now, cliente))
+            import tasks_store
+            tasks_store.execute(
+                "UPDATE cfg_clients SET email=?, display_name=?, notifications_enabled=?, updated_at=? "
+                "WHERE TRIM(cliente)=TRIM(?)",
+                (email, display, enabled, now, cliente))
             result["updated"] = cliente
 
     def _op_archive_client(self, conn, action, data, result):
