@@ -1443,10 +1443,14 @@ function showAddClientDialog(presetEditor) {
 
     async function update(q) {
         const list = await getClientsList();
-        const norm = (q || '').trim().toLowerCase();
+        // Búsqueda INSENSIBLE a tildes: "monica" debe encontrar "Mónica
+        // Vozmediano" (bug 08/jul: el filtro con toLowerCase simple no
+        // matcheaba nombres con acento y parecía que el cliente no existía).
+        const strip = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const norm = strip(q).trim();
         if (!norm) { suggest.innerHTML = ''; currentMatches = []; activeIdx = -1; return; }
         currentMatches = list.filter(c =>
-            c.cliente.toLowerCase().includes(norm)
+            strip(c.cliente).includes(norm)
         ).slice(0, 8);
         suggest.innerHTML = currentMatches.map((c, i) => `
           <div class="suggest-item ${i===activeIdx?'active':''}" data-idx="${i}">
