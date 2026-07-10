@@ -118,6 +118,10 @@
     "api/admin_folder_action.py": {
       "memory": 512,
       "maxDuration": 60
+    },
+    "api/admin_create_review.py": {
+      "memory": 256,
+      "maxDuration": 30
     }
   },
   "crons": [
