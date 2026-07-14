@@ -150,10 +150,14 @@ function render() {
       <div class="n">${s.resolved||0}</div><div class="lbl">Resueltas</div>
     </div>
   `;
+  const openCount = s.revision_requested || 0;
   document.getElementById('filters').innerHTML = `
     <button class="${CURRENT_FILTER==='revision_requested'?'active':''}" onclick="setFilter('revision_requested')">⚡ Pendientes</button>
     <button class="${CURRENT_FILTER==='resolved'?'active':''}" onclick="setFilter('resolved')">✅ Resueltas</button>
     <button class="${CURRENT_FILTER==='all'?'active':''}" onclick="setFilter('all')">Todas</button>
+    ${openCount > 0 ? `<button onclick="resolveAll(${openCount})"
+       style="margin-left:auto; background:rgba(74,222,128,0.14); color:#4ade80; border:1px solid rgba(74,222,128,0.35); border-radius:8px; padding:6px 14px; cursor:pointer; font-weight:600;">
+       ✅ Marcar todas como corregidas (${openCount})</button>` : ''}
   `;
 
   let items = DATA.items || [];
@@ -256,6 +260,22 @@ async function resolveReview(id, cliente) {
     await load();
   } catch (e) {
     alert('Error: ' + e.message);
+  }
+}
+
+async function resolveAll(n) {
+  // Marca TODAS las correcciones abiertas como corregidas. Admin: todas; editor:
+  // solo las suyas (el backend filtra). NO manda mails a clientes (limpieza).
+  if (!confirm(`¿Marcar las ${n} correcciones pendientes como corregidas?\n\n(No se avisa a los clientes — es solo limpieza del tablero.)`)) return;
+  try {
+    const auth = IS_ADMIN ? `admin=1&t=${encodeURIComponent(TOKEN)}` : `editor=${encodeURIComponent(EDITOR)}&t=${encodeURIComponent(TOKEN)}`;
+    const res = await fetch(`/api/review?action=resolve_all&${auth}`);
+    const d = await res.json();
+    if (!res.ok || d.error) throw new Error(d.error || res.status);
+    await load();
+    alert(`✅ ${d.resolved} correcciones marcadas como corregidas.`);
+  } catch (e) {
+    alert('No se pudo: ' + e.message);
   }
 }
 
