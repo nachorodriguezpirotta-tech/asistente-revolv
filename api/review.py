@@ -251,7 +251,74 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, {"ok": True, "id": int(review_id), "status": "resolved",
                                             "cliente_notificado": notified_client})
 
-            # MODO renotify: admin re-dispara la notificación de una review existente.
+            # MODO resolve_all: marca TODAS las correcciones abiertas como
+            # resueltas de un saque (pedido Ignacio 08/jul: "un botón que marque
+            # todas como corregidas"). Admin: todas. Editor: solo las suyas
+            # (misma lógica canónica que /api/reviews). A DIFERENCIA del resolve
+            # individual, NO avisa a los clientes (es limpieza masiva — evitar
+            # un aluvión de mails "tu revisión está lista" accidental).
+            if action == "resolve_all":
+                is_admin = params.get("admin", [""])[0] == "1"
+                authorized = False
+                if is_admin:
+                    authorized = check_token("ADMIN", token)
+                elif editor:
+                    authorized = check_token(editor, token)
+                if not authorized:
+                    return json_response(self, {"error": "unauthorized"}, status=401)
+
+                resolved_ids = []
+                def _do_all(conn):
+                    open_rows = conn.execute(
+                        "SELECT id, cliente, editor FROM client_reviews "
+                        "WHERE status='revision_requested'").fetchall()
+                    targets = []
+                    if is_admin:
+                        targets = [r["id"] for r in open_rows]
+                    else:
+                        # filtrar por editor canónico (reutiliza la lógica de reviews.py)
+                        from reviews import _cliente_editor_map
+                        from tracker import canonical_editor
+                        cmap, norm = _cliente_editor_map(conn)
+                        try:
+                            editors = [r["name"] for r in conn.execute(
+                                "SELECT name FROM cfg_editors WHERE active=1").fetchall()]
+                        except Exception:
+                            editors = []
+                        def _canon(n):
+                            return canonical_editor(n, editors).strip().lower() if n else ""
+                        ed_canon = _canon(editor)
+                        for r in open_rows:
+                            rev_ed = (r["editor"] or "").strip()
+                            if rev_ed:
+                                if _canon(rev_ed) == ed_canon:
+                                    targets.append(r["id"])
+                            else:
+                                resolved_ed = cmap.get(norm(r["cliente"] or ""))
+                                if resolved_ed and _canon(resolved_ed) == ed_canon:
+                                    targets.append(r["id"])
+                    if targets:
+                        ph = ",".join("?" * len(targets))
+                        conn.execute(
+                            f"UPDATE client_reviews SET status='resolved', "
+                            f"resolved_at=datetime('now') WHERE id IN ({ph})", targets)
+                    resolved_ids.extend(targets)
+
+                def _verify_all(conn):
+                    if not resolved_ids:
+                        return True
+                    ph = ",".join("?" * len(resolved_ids))
+                    n = conn.execute(
+                        f"SELECT COUNT(*) FROM client_reviews WHERE id IN ({ph}) "
+                        f"AND status='resolved'", resolved_ids).fetchone()[0]
+                    return n == len(resolved_ids)
+
+                who = "admin" if is_admin else editor
+                with_db(_do_all, message=f"reviews: resolve_all por {who} ({0 if not resolved_ids else len(resolved_ids)})",
+                        verify=_verify_all)
+                return json_response(self, {"ok": True, "resolved": len(resolved_ids)})
+
+            # MODO renotify: admin re-dispara la notificación de una review existente.            # MODO renotify: admin re-dispara la notificación de una review existente.
             # Útil cuando notify_revision_requested falló silenciosamente.
             if action == "renotify":
                 review_id_param = (params.get("id", [""])[0] or "").strip()
