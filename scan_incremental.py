@@ -450,6 +450,14 @@ def run(notify: bool = False):
             print(f"  ⏭️  ya procesado por otro worker (mail_log): {cliente_real} / {f['name'][:40]}")
             continue
         size = int(f["size"]) if f.get("size") else None
+        # Editado viejo re-aparecido (>3 días) = histórico, no entrega (caso Iván 16/jul)
+        if _is_file_too_old(f.get("createdTime")):
+            claim_edited_file(
+                file_id=f["id"], cliente=cliente_real, folder_id="(incremental)",
+                name=f["name"], size=size, created_time=f.get("createdTime"),
+                is_baseline=True, closed_task_id=None,
+            )
+            continue
         claimed = claim_edited_file(
             file_id=f["id"], cliente=cliente_real, folder_id="(incremental)",
             name=f["name"], size=size, created_time=f.get("createdTime"),
