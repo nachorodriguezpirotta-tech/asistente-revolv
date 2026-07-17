@@ -1373,10 +1373,30 @@ function copyLink(url, btn) {
     });
 }
 
-// Cache de la lista de clientes (autocomplete)
+// Cache de la lista de clientes (autocomplete). El fetch tarda 2-4s (baja la
+// DB entera), así que: (a) cache en localStorage 10 min → aperturas siguientes
+// instantáneas; (b) se PRECARGA al abrir el modal y al cargar la página, no
+// recién al primer keystroke (bug 16/jul: "tipeo y no busca" = estaba esperando
+// el fetch).
 let CLIENTS_CACHE = null;
+let CLIENTS_LOADING = null;
+function _clientsCacheFromStorage() {
+    try {
+        const raw = localStorage.getItem('revolv_clients_cache');
+        if (!raw) return null;
+        const { ts, list } = JSON.parse(raw);
+        if (Date.now() - ts > 10 * 60 * 1000) return null;
+        return Array.isArray(list) && list.length ? list : null;
+    } catch (e) { return null; }
+}
 async function getClientsList() {
     if (CLIENTS_CACHE) return CLIENTS_CACHE;
+    const stored = _clientsCacheFromStorage();
+    if (stored) { CLIENTS_CACHE = stored; refreshClientsInBackground(); return stored; }
+    if (!CLIENTS_LOADING) CLIENTS_LOADING = _fetchClientsList();
+    return CLIENTS_LOADING;
+}
+async function _fetchClientsList() {
     try {
         const params = IS_ADMIN
             ? `admin=1&t=${encodeURIComponent(TOKEN)}&list_clients=1`
@@ -1384,11 +1404,15 @@ async function getClientsList() {
         const res = await fetch(`/api/data?${params}`);
         const data = await res.json();
         CLIENTS_CACHE = data.clients || [];
+        try { localStorage.setItem('revolv_clients_cache', JSON.stringify({ ts: Date.now(), list: CLIENTS_CACHE })); } catch (e) {}
         return CLIENTS_CACHE;
     } catch (e) {
-        return [];
-    }
+        return CLIENTS_CACHE || [];
+    } finally { CLIENTS_LOADING = null; }
 }
+function refreshClientsInBackground() { _fetchClientsList(); }
+// Precarga en background al cargar la página (no bloquea nada)
+setTimeout(() => { getClientsList(); }, 1500);
 
 async function addClientToEditor(editor) {
     showAddClientDialog(editor);
@@ -1399,6 +1423,7 @@ async function addClientToEditorPrompt() {
 function refreshClientsCache() { CLIENTS_CACHE = null; }
 
 function showAddClientDialog(presetEditor) {
+    getClientsList();  // precargar ya (si no está cacheada) para que el tipeo responda
     const editores = LAST_DATA && LAST_DATA.by_editor
         ? Object.keys(LAST_DATA.by_editor).filter(e => !e.startsWith('—'))
         : [];
@@ -1442,16 +1467,25 @@ function showAddClientDialog(presetEditor) {
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
     async function update(q) {
-        const list = await getClientsList();
-        // Búsqueda INSENSIBLE a tildes: "monica" debe encontrar "Mónica
-        // Vozmediano" (bug 08/jul: el filtro con toLowerCase simple no
-        // matcheaba nombres con acento y parecía que el cliente no existía).
         const strip = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-        const norm = strip(q).trim();
+        const normNow = strip(q).trim();
+        if (normNow && !CLIENTS_CACHE) {
+            suggest.innerHTML = '<div class="suggest-item" style="opacity:0.6">Cargando lista de clientes…</div>';
+        }
+        const list = await getClientsList();
+        // Si mientras cargaba el user siguió tipeando, usar el valor ACTUAL del input
+        const norm = strip(input.value).trim();
         if (!norm) { suggest.innerHTML = ''; currentMatches = []; activeIdx = -1; return; }
-        currentMatches = list.filter(c =>
-            strip(c.cliente).includes(norm)
-        ).slice(0, 8);
+        // Relevancia: primero los que EMPIEZAN con lo tipeado (o alguna palabra
+        // empieza así), después los que solo lo contienen.
+        const starts = [], wordStarts = [], contains = [];
+        for (const c of list) {
+            const s = strip(c.cliente);
+            if (s.startsWith(norm)) starts.push(c);
+            else if (s.split(' ').some(w => w.startsWith(norm))) wordStarts.push(c);
+            else if (s.includes(norm)) contains.push(c);
+        }
+        currentMatches = [...starts, ...wordStarts, ...contains].slice(0, 8);
         suggest.innerHTML = currentMatches.map((c, i) => `
           <div class="suggest-item ${i===activeIdx?'active':''}" data-idx="${i}">
             ${c.folder_id ? '<span class="icon">📁</span>' : '<span class="icon" style="opacity:0.3">—</span>'}
