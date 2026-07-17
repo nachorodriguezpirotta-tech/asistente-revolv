@@ -232,9 +232,22 @@ def run_closer(verbose: bool = True) -> dict:
         for f in editados:
             if is_edited_known(f["id"]):
                 continue
+            size = int(f["size"]) if f.get("size") else None
+            # Editado con createdTime VIEJO (>3 días) que recién aparece = histórico
+            # re-indexado (cliente reorganizó carpetas, re-share, etc.) — NO es una
+            # entrega. Claim como baseline silencioso: sin decrement, sin mail.
+            # Caso Iván Juárez 16/jul: Video 17/21/23 (dic-mar) re-aparecieron y
+            # cerraron 4 tarjetas de Benja/Rami como entregas falsas.
+            from scan import _is_file_too_old
+            if _is_file_too_old(f.get("createdTime")):
+                claim_edited_file(
+                    file_id=f["id"], cliente=cliente, folder_id="(varias)",
+                    name=f["name"], size=size, created_time=f.get("createdTime"),
+                    is_baseline=True, closed_task_id=None,
+                )
+                continue
             # CLAIM ATÓMICO: intentamos marcar el archivo como conocido ANTES de cerrar
             # task / mandar mail. Si otro proceso ya lo claimó (return False), saltamos.
-            size = int(f["size"]) if f.get("size") else None
             claimed = claim_edited_file(
                 file_id=f["id"], cliente=cliente, folder_id="(varias)",
                 name=f["name"], size=size, created_time=f.get("createdTime"),
