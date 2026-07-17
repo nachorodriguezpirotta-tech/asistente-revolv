@@ -222,6 +222,15 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
         if completion_mail_already_sent(cliente, f["id"], f["name"]):
             print(f"  ⏭️  ya procesado por incremental: {cliente} / {f['name'][:40]}")
             continue
+        # Editado viejo re-aparecido (>3 días) = histórico, no entrega (caso Iván 16/jul)
+        from scan import _is_file_too_old as _too_old
+        if _too_old(f.get("createdTime")):
+            claim_edited_file(
+                file_id=f["id"], cliente=cliente, folder_id="(audit)",
+                name=f["name"], size=size, created_time=f.get("createdTime"),
+                is_baseline=True, closed_task_id=None,
+            )
+            continue
         claimed = claim_edited_file(
             file_id=f["id"], cliente=cliente, folder_id="(audit)",
             name=f["name"], size=size, created_time=f.get("createdTime"),
