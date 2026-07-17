@@ -2287,12 +2287,16 @@ def find_similar_pending_client(cliente: str) -> Optional[str]:
         existing = _norm(r["cliente"])
         if not existing or existing == target:
             continue
+        # Caso apodo REAL: uno es prefijo del otro ('Cisco' vs 'Cisco Amengual')
         if existing.startswith(target + " ") or target.startswith(existing + " "):
             return r["cliente"]
-        existing_tokens = {t for t in existing.split() if len(t) >= 4}
-        shared = target_tokens & existing_tokens
-        if shared and len(target_tokens) <= 2 and len(existing_tokens) <= 2:
-            return r["cliente"]
+        # ELIMINADA la regla de "token compartido" (16/jul, caso Alejandro Visas):
+        # consideraba misma persona a 'Alejandro Visas' y 'Alejandro Araya' por
+        # compartir el nombre de pila → los crudos de Visas se colgaban de la
+        # tarjeta de Araya (Valen) y el aviso le llegaba al editor equivocado.
+        # Con 5 'Alejandros' distintos como clientes, compartir UN token no
+        # significa nada. Regla de Ignacio: ante la duda, NO adivinar — mejor
+        # crear la tarjeta aparte (o sin editor) y que él la acomode.
     return None
 
 
