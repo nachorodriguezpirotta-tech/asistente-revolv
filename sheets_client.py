@@ -157,10 +157,17 @@ def get_editor_for_client(cliente_drive_name: str, packs: Optional[list[Pack]] =
     matches = [p for p in packs if p.editor and _normalize(p.cliente) == target]
 
     if not matches:
-        # fallback: contiene
+        # fallback: contiene — con GUARDA DE UNICIDAD (16/jul, caso Alejandro
+        # Visas): si el matching parcial encuentra 2+ clientes DISTINTOS del
+        # Sheet ('Alejandro Araya', 'Alejandro Suarez'...), es AMBIGUO → None →
+        # la tarjeta se crea SIN editor y la asigna Ignacio a mano. Antes
+        # elegía "la fila más reciente" entre candidatos que no eran el cliente.
         matches = [p for p in packs if p.editor and target in _normalize(p.cliente)]
         if not matches:
             matches = [p for p in packs if p.editor and _normalize(p.cliente) in target]
+        distinct = {_normalize(p.cliente) for p in matches}
+        if len(distinct) > 1:
+            return None
 
     if not matches:
         return None
