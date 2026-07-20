@@ -164,6 +164,22 @@ def identify_editor_by_owner(file: dict) -> Optional[str]:
     return None
 
 
+def looks_like_client_upload(file: dict) -> bool:
+    """True si el archivo lo subió alguien que NO es un editor conocido — es
+    decir, el CLIENTE subiendo material a la carpeta de editados (verificado
+    20/jul: cada cuenta desconocida mapea a 1 solo cliente: Duna/eamnietoalberto,
+    Iván/astranexgen, Luis/tigercutez...). Sirve para NO contar eso como entrega.
+
+    SEGURO: solo devuelve True si HAY info de owner/lastModifier y ese owner no
+    es editor. Sin info de owner → False (mantiene el comportamiento viejo, no
+    descarta por las dudas)."""
+    owners = file.get("owners") or []
+    lm = (file.get("lastModifyingUser") or {}).get("emailAddress")
+    if not owners and not lm:
+        return False
+    return identify_editor_by_owner(file) is None
+
+
 def _get_owner_emails(file: dict) -> list[str]:
     """Devuelve la lista de mails relevantes del archivo (owners + lastModifyingUser), lowercase."""
     candidates = []
