@@ -466,6 +466,15 @@ def run(notify: bool = False):
         if not claimed:
             continue
 
+        # Un "editado" solo cuenta como ENTREGA/corrección si lo subió un EDITOR
+        # conocido. Owner que NO es editor = el CLIENTE subiendo material a la
+        # carpeta de editados (caso Duna/eamnietoalberto 20/jul). NO mandar
+        # "X entregó" ni descontar. Regla de Ignacio: fijate el email del que sube.
+        from classifier import looks_like_client_upload as _cli_up
+        if _cli_up(f):
+            print(f"  🚫 material del cliente (owner no-editor), no es entrega: {cliente_real} / {f['name'][:40]}")
+            continue
+
         # ¿Es CORRECCIÓN de un editado previo del mismo cliente?
         from classifier import identify_editor_by_owner
         if is_correction_for_client(cliente_real, f["name"], current_file_id=f["id"]):
