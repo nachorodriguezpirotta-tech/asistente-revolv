@@ -391,6 +391,39 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
         closed = c.get("closed", False)
         is_correction = bool(c.get("is_correction"))
 
+        # DEFENSA FINAL owner (20/jul, caso Duna): un editado solo es entrega si lo
+        # subió un EDITOR. Si el owner del archivo es el CLIENTE (sube material a
+        # la carpeta de editados desde su cuenta), NO mandar NI el "X entregó" NI
+        # el "🎬 Tu video está listo" al cliente. Cubre la cola encolada por scans
+        # viejos (antes del guard en los detectores). Consulta el owner por file_id.
+        if file_id and not is_correction:
+            try:
+                from drive_client import get_service as _gs
+                from classifier import looks_like_client_upload as _cli_up
+                _f = _gs().files().get(fileId=file_id,
+                        fields="owners(emailAddress),lastModifyingUser(emailAddress)",
+                        supportsAllDrives=True).execute()
+                if _cli_up(_f):
+                    print(f"   🚫 {cliente} / {file_name[:36]}: lo subió el CLIENTE (owner no-editor), NO es entrega — skip mail")
+                    # marcar la cola como enviada para que no se reintente + baseline
+                    row_id = c.get("id")
+                    if isinstance(row_id, int):
+                        try:
+                            from tracker import mark_completion_mail_sent
+                            mark_completion_mail_sent(row_id)
+                        except Exception:
+                            pass
+                    try:
+                        from tracker import get_conn as _gc
+                        _cc = _gc()
+                        _cc.execute("UPDATE known_edited_files SET is_baseline=1 WHERE file_id=?", (file_id,))
+                        _cc.commit(); _cc.close()
+                    except Exception:
+                        pass
+                    continue
+            except Exception as _e:
+                print(f"   ⚠️ chequeo owner {file_name[:20]}: {_e}")
+
         # DEDUPE DEFINITIVO vía Drive appProperties (atómico, no depende de git).
         # Si el archivo de Drive ya está marcado como "mail mandado", saltear.
         # Esto resuelve el bug crónico de mails duplicados: el dedupe por
