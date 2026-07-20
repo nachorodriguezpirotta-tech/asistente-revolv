@@ -241,6 +241,13 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
         from classifier import looks_like_client_upload as _cli_up
         if _cli_up(f):
             print(f"  🚫 material del cliente (owner no-editor), no es entrega: {cliente} / {f['name'][:40]}")
+            # marcar baseline para que TAMPOCO descuente el pendiente (bl=0 lo contaba)
+            try:
+                _cc = get_conn()
+                _cc.execute("UPDATE known_edited_files SET is_baseline=1 WHERE file_id=?", (f["id"],))
+                _cc.commit(); _cc.close()
+            except Exception:
+                pass
             continue
 
         is_correction = is_correction_for_client(cliente, f["name"], current_file_id=f["id"])
