@@ -640,6 +640,7 @@ def set_baseline(folder_id: str):
 def add_known_file(file_id: str, cliente: str, folder_id: str, name: str,
                    size: Optional[int], created_time: Optional[str], is_baseline: bool = False,
                    subfolder_name: Optional[str] = None):
+    cliente = (cliente or "").strip()  # normalizar trailing space (no partir cliente: 'Gaetan Jsph ' vs 'Gaetan Jsph')
     conn = get_conn()
     conn.execute("""
         INSERT OR IGNORE INTO known_files
@@ -661,6 +662,7 @@ def claim_file(file_id: str, cliente: str, folder_id: str, name: str,
     archivo al detectarlo. '' = root de Material. NULL = desconocido (caller no
     pudo determinarlo). Sirve para auto-inferir editor por subfolder y para
     alertar al admin de subfolders "tipo" no-mapeadas."""
+    cliente = (cliente or "").strip()  # normalizar trailing space (no partir cliente: 'Gaetan Jsph ' vs 'Gaetan Jsph')
     conn = get_conn()
     cur = conn.execute("""
         INSERT OR IGNORE INTO known_files
@@ -700,6 +702,18 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
     es UNA sentencia atómica — dos scans concurrentes jamás duplican, y el
     dashboard ve la task al instante (sin esperar push de tracker.db)."""
     import tasks_store
+    cliente = (cliente or "").strip()  # no partir cliente por trailing space
+    # Sin editor resuelto: si el cliente YA tiene un pendiente CON editor, NO crear
+    # una tarjeta "sin editor" fantasma — el material queda cubierto por la
+    # existente. Bug Gaetan 20/jul: crudos con nombre 'Gaetan Jsph ' (trailing
+    # space) no matcheaban el Sheet → tarjeta sin editor que reaparecía al borrarla,
+    # mientras Santi ya la tenía.
+    if not (editor or "").strip():
+        _ex = tasks_store.query(
+            "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending' "
+            "AND TRIM(COALESCE(editor,''))!='' ORDER BY id DESC LIMIT 1", (cliente,))
+        if _ex:
+            return _ex[0]["id"]
     tasks_store.execute(
         "INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at) "
         "SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS ("
@@ -798,6 +812,7 @@ def add_known_edited_file(file_id: str, cliente: str, folder_id: str, name: str,
                           size: Optional[int], created_time: Optional[str],
                           is_baseline: bool = False,
                           closed_task_id: Optional[int] = None):
+    cliente = (cliente or "").strip()  # normalizar trailing space (no partir cliente: 'Gaetan Jsph ' vs 'Gaetan Jsph')
     conn = get_conn()
     conn.execute("""
         INSERT OR IGNORE INTO known_edited_files
@@ -816,6 +831,7 @@ def claim_edited_file(file_id: str, cliente: str, folder_id: str, name: str,
     """Versión atómica de add_known_edited_file: retorna True si efectivamente insertó
     (primero en verlo), False si ya existía. Sirve como lock anti-race condition
     para evitar mails de cierre duplicados cuando dos scans corren concurrentes."""
+    cliente = (cliente or "").strip()  # normalizar trailing space (no partir cliente: 'Gaetan Jsph ' vs 'Gaetan Jsph')
     conn = get_conn()
     cur = conn.execute("""
         INSERT OR IGNORE INTO known_edited_files
