@@ -255,6 +255,10 @@ def run_closer(verbose: bool = True) -> dict:
             )
             if not claimed:
                 continue  # otro workflow ya lo procesó
+            from classifier import looks_like_client_upload as _cli_up
+            if _cli_up(f):
+                print(f"  🚫 material del cliente (owner no-editor), no es entrega: {cliente} / {f['name'][:40]}")
+                continue
 
             # ¿Es una CORRECCIÓN de un video previo? Detecta si ya hubo un editado
             # con el mismo número (Video 1 / Reel 5 / etc) del mismo cliente.
