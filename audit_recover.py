@@ -238,6 +238,10 @@ def run(hours_back: int = 12, notify: bool = True) -> dict:
         )
         if not claimed:
             continue
+        from classifier import looks_like_client_upload as _cli_up
+        if _cli_up(f):
+            print(f"  🚫 material del cliente (owner no-editor), no es entrega: {cliente} / {f['name'][:40]}")
+            continue
 
         is_correction = is_correction_for_client(cliente, f["name"], current_file_id=f["id"])
         real_editor = identify_editor_by_owner(f) or get_editor_for_client(cliente, packs) or "—"
