@@ -258,6 +258,12 @@ def run_closer(verbose: bool = True) -> dict:
             from classifier import looks_like_client_upload as _cli_up
             if _cli_up(f):
                 print(f"  🚫 material del cliente (owner no-editor), no es entrega: {cliente} / {f['name'][:40]}")
+                try:
+                    _cc = get_conn()
+                    _cc.execute("UPDATE known_edited_files SET is_baseline=1 WHERE file_id=?", (f["id"],))
+                    _cc.commit(); _cc.close()
+                except Exception:
+                    pass
                 continue
 
             # ¿Es una CORRECCIÓN de un video previo? Detecta si ya hubo un editado
