@@ -1913,6 +1913,68 @@ def get_latest_pending_review_for_client(cliente: str) -> Optional[dict]:
     return dict(r) if r else None
 
 
+def sync_reviews_from_portal(max_age_hours: int = 72) -> int:
+    """Reconcilia revisiones pedidas desde el PORTAL (Turso, fuente de verdad
+    transaccional) hacia client_reviews (tracker.db, frágil por concurrencia).
+    Una review se pierde si el push de tracker.db se pisa (caso V178 Alberto
+    21/jul: el portal la tenía en feedback_sent pero no llegó al dashboard).
+    IDEMPOTENTE: crea solo las que faltan. notified_at=NULL → notify_pending_reviews
+    avisa al editor. Devuelve #recuperadas."""
+    import tasks_store, time as _t
+    try:
+        cutoff = int(_t.time()) - max_age_hours * 3600
+        projs = tasks_store.query(
+            "SELECT p.id, p.name, p.drive_file_id, p.editor, c.name AS cliente "
+            "FROM projects p LEFT JOIN clients c ON c.id=p.client_id "
+            "WHERE p.status='feedback_sent' AND CAST(p.created_at AS INTEGER) >= ? "
+            "ORDER BY p.created_at DESC LIMIT 50", (cutoff,))
+    except Exception as e:
+        print(f"sync_reviews_from_portal (portal): {e}")
+        return 0
+    if not projs:
+        return 0
+    conn = get_conn()
+    n = 0
+    try:
+        for p in projs:
+            dfid = (p.get("drive_file_id") or "").strip()
+            vname = (p.get("name") or "").strip()
+            cliente = (p.get("cliente") or "").strip()
+            if not cliente or not vname:
+                continue
+            ex = conn.execute(
+                "SELECT id FROM client_reviews WHERE "
+                "(video_file_id=? AND ?<>'') OR (video_file_name=? AND TRIM(cliente)=TRIM(?)) LIMIT 1",
+                (dfid, dfid, vname, cliente)).fetchone()
+            if ex:
+                continue
+            try:
+                comments = tasks_store.query(
+                    "SELECT timestamp_seconds, body FROM comments WHERE project_id=? "
+                    "ORDER BY timestamp_seconds", (p["id"],))
+            except Exception:
+                comments = []
+            def _fmt(s):
+                s = int(s or 0)
+                return f"[{s // 60}:{s % 60:02d}]"
+            notes = "\r\n\r\n".join(f"{_fmt(c['timestamp_seconds'])} {c['body']}"
+                                    for c in comments if c.get("body"))
+            conn.execute(
+                "INSERT INTO client_reviews (cliente, video_file_id, video_file_name, editor, "
+                "status, notes, created_at, responded_at, notified_at) "
+                "VALUES (?, ?, ?, ?, 'revision_requested', ?, datetime('now'), datetime('now'), NULL)",
+                (cliente, dfid or None, vname, (p.get("editor") or None), notes))
+            n += 1
+            print(f"   🔁 review recuperada del portal: {cliente} / {vname[:30]}")
+        if n:
+            conn.commit()
+    except Exception as e:
+        print(f"sync_reviews_from_portal (write): {e}")
+    finally:
+        conn.close()
+    return n
+
+
 def list_unnotified_reviews(max_age_hours: int = 72) -> list[dict]:
     """Reviews 'revision_requested' que todavía NO se avisaron al editor/admin
     (notified_at NULL), de las últimas `max_age_hours`. El scan las procesa y manda
