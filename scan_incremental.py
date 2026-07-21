@@ -605,6 +605,15 @@ def run(notify: bool = False):
                     print(f"📧 {sent2} mails huérfanos enviados.")
         except Exception as _e:
             print(f"recover_orphan_completion_mails: {_e}")
+        # Reconciliar reviews del PORTAL: recuperar las que se perdieron al pisarse
+        # tracker.db (caso V178 Alberto 21/jul). El portal (Turso) es la verdad.
+        try:
+            from tracker import sync_reviews_from_portal
+            nsync = sync_reviews_from_portal()
+            if nsync:
+                print(f"🔁 {nsync} review(s) recuperadas del portal.")
+        except Exception as _e:
+            print(f"sync_reviews_from_portal: {_e}")
         # Avisos de revisión pedida que el endpoint del portal no logró mandar
         # (notified_at NULL). DURABLE: el scan tiene creds de mail y no muere por
         # timeout HTTP como el endpoint. Cubre el bug de "el editor no se entera
