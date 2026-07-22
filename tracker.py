@@ -1319,13 +1319,26 @@ def recover_orphan_completion_mails(max_age_hours: int = 48, cap: int = 6) -> in
             try:
                 if is_client_archived(cli):
                     continue
-                if completion_mail_already_sent(cli, fid, name):
+                # ¿ya salió de verdad? (mail_log, ventana 14 días — no solo 6h)
+                if completion_mail_already_sent(cli, fid, name, minutes=20160):
                     continue
-                # ¿ya está encolado (enviado o pendiente)?
+                # ¿está encolado SIN mandar? → pendiente legítimo, el notifier lo procesa
                 q = conn.execute(
-                    "SELECT 1 FROM pending_completion_mails WHERE file_id=? LIMIT 1",
-                    (fid,)).fetchone()
-                if q:
+                    "SELECT id, mail_sent_at FROM pending_completion_mails WHERE file_id=? "
+                    "ORDER BY id DESC LIMIT 1", (fid,)).fetchone()
+                if q and not q["mail_sent_at"]:
+                    continue
+                if q and q["mail_sent_at"]:
+                    # ENVÍO FANTASMA (caso Roger/video 5 21/jul): la cola quedó marcada
+                    # 'enviada' (claim) pero el run murió antes del send real — no hay
+                    # rastro en mail_log. Resetear el claim para que el notifier lo
+                    # mande de verdad. El dedupe Turso evita duplicar si sí salió.
+                    conn.execute(
+                        "UPDATE pending_completion_mails SET mail_sent_at=NULL, "
+                        "retry_count=COALESCE(retry_count,0)+1 WHERE id=?", (q["id"],))
+                    conn.commit()
+                    n += 1
+                    print(f"   ♻️ envío fantasma reseteado: {cli} / {name[:40]}")
                     continue
                 if is_correction_for_client(cli, name, current_file_id=fid):
                     continue
