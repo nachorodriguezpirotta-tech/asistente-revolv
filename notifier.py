@@ -583,7 +583,12 @@ Archivo: {file_name}{link_text}
                                    dedupe_window_minutes=10080,
                                    dedupe_key_override=_override)
                 print(f"  ✅ mail cierre enviado a {dest}: {editor} → {cliente} (msg_id={msg_id})")
-                any_sent = True
+                # Solo un envío REAL habilita el marcado en Drive. Un 'dedupe-skip'
+                # puede ser el eco de un claim FANTASMA (run muerto entre claim y
+                # send): si lo contáramos, marcaríamos Drive y el mail moriría
+                # para siempre (cadena de fantasmas, caso video 6 Roger RM 23/jul).
+                if msg_id and not str(msg_id).endswith("-skip"):
+                    any_sent = True
                 sent += 1
             except Exception as e:
                 print(f"  ❌ falló mail cierre a {dest} [{cliente}]: {e}")
