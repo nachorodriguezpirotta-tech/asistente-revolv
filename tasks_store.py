@@ -24,7 +24,7 @@ import json
 import time
 import urllib.request
 
-HOT_TABLES = ("tasks", "client_blocks", "editor_progress", "cfg_delivery_priority", "cfg_client_editor", "cfg_clients")
+HOT_TABLES = ("tasks", "client_blocks", "editor_progress", "cfg_delivery_priority", "cfg_client_editor", "cfg_clients", "cfg_editor_extra_emails")
 
 _SCHEMA = [
     """CREATE TABLE IF NOT EXISTS tasks (
@@ -73,6 +73,9 @@ _SCHEMA = [
         notifications_enabled INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS cfg_editor_extra_emails (
+        email TEXT PRIMARY KEY,
+        editor TEXT NOT NULL)""",
 ]
 
 _SCHEMA_READY = False
