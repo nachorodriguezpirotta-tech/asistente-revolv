@@ -156,6 +156,20 @@ def identify_editor_by_owner(file: dict) -> Optional[str]:
         if not v:
             continue
         by_email[_normalize_email(v)] = k
+    # Cuentas SECUNDARIAS de editores (cfg_editor_extra_emails, espejo local):
+    # p.ej. Santi también sube con francomartinezcorte71@gmail.com (23/jul, caso
+    # Duna 2ª Tanda: 4 entregas silenciadas como "material del cliente").
+    try:
+        from tracker import get_conn as _gc
+        _c = _gc()
+        try:
+            for r in _c.execute("SELECT email, editor FROM cfg_editor_extra_emails").fetchall():
+                if r[0]:
+                    by_email.setdefault(_normalize_email(r[0]), r[1])
+        finally:
+            _c.close()
+    except Exception:
+        pass
     if not by_email:
         return None
     for em in _get_owner_emails(file):
