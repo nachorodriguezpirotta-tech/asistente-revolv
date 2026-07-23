@@ -190,7 +190,17 @@ def mirror_to_sqlite(conn, tables=HOT_TABLES):
             cur = conn.execute(f"SELECT * FROM {t} LIMIT 0")
             local_cols = [d[0] for d in cur.description]
         except Exception:
-            continue  # tabla local no existe (DB muy vieja) — skip
+            # La tabla local no existe (tabla NUEVA, ej. cfg_editor_extra_emails
+            # 23/jul: el espejo la salteaba → los scans no veían las cuentas
+            # secundarias). Crearla con las columnas de Turso y seguir.
+            cols_t = [c["name"] for c in r.get("cols", [])]
+            if not cols_t:
+                continue
+            try:
+                conn.execute(f"CREATE TABLE IF NOT EXISTS {t} ({', '.join(c + ' TEXT' for c in cols_t)})")
+                local_cols = cols_t
+            except Exception:
+                continue
         conn.execute(f"DELETE FROM {t}")
         if rows:
             cols = [c for c in rows[0].keys() if c in local_cols]
