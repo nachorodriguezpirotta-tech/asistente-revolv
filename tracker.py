@@ -1682,7 +1682,8 @@ def is_correction_for_client(cliente: str, file_name: str, current_file_id: Opti
     cutoff = (now - timedelta(days=max_age_days)).isoformat(timespec="seconds")
     rows = conn.execute(
         "SELECT file_id, name FROM known_edited_files "
-        "WHERE TRIM(cliente)=TRIM(?) AND COALESCE(created_time, first_seen_at) >= ?",
+        "WHERE COALESCE(is_baseline,0)=0 "  # material del cliente/históricos NO son entregas previas (23/jul: 'video 12' de Memes convertía la entrega real en 'corrección')
+        "AND TRIM(cliente)=TRIM(?) AND COALESCE(created_time, first_seen_at) >= ?",
         (cliente, cutoff)
     ).fetchall()
     conn.close()
