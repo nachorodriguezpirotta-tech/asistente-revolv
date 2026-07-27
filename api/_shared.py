@@ -77,6 +77,28 @@ def check_token(editor: str, token: str) -> bool:
     return hmac.compare_digest(expected, token)
 
 
+def make_attachment_token(att_id) -> str:
+    """Token de ALCANCE MÍNIMO: sirve SOLO para ver ESA imagen adjunta.
+
+    Por qué (27/jul): los mails de "revisión pedida" con fotos incrustaban el
+    TOKEN ADMIN en el link de cada imagen — y ese mail va a Ignacio Y al editor
+    asignado. O sea, la llave maestra del panel viajaba por correo: quien tuviera
+    ese mail (o lo reenviara) entraba a TODO el dashboard. Ahora cada imagen lleva
+    su propio token, que no abre nada más.
+    """
+    return hmac.new(
+        DASHBOARD_SECRET.encode(),
+        f"att:{att_id}".encode(),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+
+
+def check_attachment_token(att_id, token: str) -> bool:
+    if not token:
+        return False
+    return hmac.compare_digest(make_attachment_token(att_id), token)
+
+
 def make_client_token(cliente: str) -> str:
     """Token determinístico para el cliente (distinto namespace que editores).
     Prefijo 'client:' para que no colisione con 'rami', 'admin', etc.
