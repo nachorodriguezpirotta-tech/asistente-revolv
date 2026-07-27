@@ -24,7 +24,19 @@ import json
 import time
 import urllib.request
 
-HOT_TABLES = ("tasks", "client_blocks", "editor_progress", "cfg_delivery_priority", "cfg_client_editor", "cfg_clients", "cfg_editor_extra_emails")
+HOT_TABLES = ("tasks", "client_blocks", "editor_progress", "cfg_delivery_priority",
+              "cfg_client_editor", "cfg_clients", "cfg_editor_extra_emails",
+              # Tablas del PANEL DE CONFIGURACIÓN + correcciones (26/jul): antes
+              # iban por with_db (git) y se perdían al pisarse — "borro algo y no
+              # se guarda". Chicas (12-79 filas) → replace completo es barato.
+              "cfg_editors", "cfg_nicknames", "cfg_aliases", "cfg_delivery_folders",
+              "cfg_archived_clients", "pending_drive_folders", "client_reviews")
+
+# Las que el dashboard muta vía with_db y hay que empujar a Turso tras cada
+# mutación (las otras ya se escriben directo con tasks_store.execute).
+PUSH_AFTER_WITH_DB = ("cfg_editors", "cfg_nicknames", "cfg_aliases",
+                      "cfg_delivery_folders", "cfg_archived_clients",
+                      "pending_drive_folders", "client_reviews")
 
 _SCHEMA = [
     """CREATE TABLE IF NOT EXISTS tasks (
@@ -211,6 +223,66 @@ def mirror_to_sqlite(conn, tables=HOT_TABLES):
                 [[row.get(c) for c in cols] for row in rows])
     conn.commit()
     return True
+
+
+def push_tables_from_sqlite(conn, tables=None) -> bool:
+    """Empuja el contenido de `tables` de la conn sqlite → Turso (replace completo).
+    Se llama al final de with_db: la copia sqlite viene de fetch_db (que YA espejó
+    Turso), se le aplicó la mutación, y acá el resultado vuelve a Turso. Así las
+    escrituras del panel de configuración dejan de perderse cuando un push de git
+    se pisa. Tablas chicas → 1 request. Best-effort: si Turso falla, el dato igual
+    quedó en git (no se pierde, solo no gana durabilidad extra)."""
+    tables = tables or PUSH_AFTER_WITH_DB
+    try:
+        ensure_schema()
+        stmts = []
+        for t in tables:
+            try:
+                cur = conn.execute(f"SELECT * FROM {t}")
+                cols = [d[0] for d in cur.description]
+                rows = cur.fetchall()
+            except Exception:
+                continue  # tabla no existe localmente
+            stmts.append((f"DELETE FROM {t}", None))
+            ph = ",".join("?" * len(cols))
+            collist = ",".join(cols)
+            for row in rows:
+                stmts.append((f"INSERT INTO {t} ({collist}) VALUES ({ph})", list(row)))
+        if stmts:
+            _pipeline(stmts, timeout=30)
+        return True
+    except Exception as e:
+        print(f"   ⚠️ push_tables_from_sqlite: {str(e)[:90]}")
+        return False
+
+
+def upsert_tables_from_sqlite(conn, tables) -> bool:
+    """Empuja filas de sqlite → Turso con INSERT OR REPLACE (SIN borrar).
+    Para el SCAN: escribe lo suyo (reviews nuevas, carpetas detectadas) sin pisar
+    lo que el panel de configuración pudo cambiar mientras tanto. El dashboard usa
+    push_tables_from_sqlite (replace completo) porque parte de una copia fresca."""
+    try:
+        ensure_schema()
+        stmts = []
+        for t in tables:
+            try:
+                cur = conn.execute(f"SELECT * FROM {t}")
+                cols = [d[0] for d in cur.description]
+                rows = cur.fetchall()
+            except Exception:
+                continue
+            if not rows:
+                continue
+            ph = ",".join("?" * len(cols))
+            collist = ",".join(cols)
+            for row in rows:
+                stmts.append((f"INSERT OR REPLACE INTO {t} ({collist}) VALUES ({ph})", list(row)))
+        if stmts:
+            _pipeline(stmts, timeout=40)
+        return True
+    except Exception as e:
+        print(f"   ⚠️ upsert_tables_from_sqlite: {str(e)[:90]}")
+        return False
 
 
 def seed_from_sqlite(conn, tables=HOT_TABLES):
