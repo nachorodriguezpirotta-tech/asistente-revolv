@@ -213,7 +213,12 @@ def mirror_to_sqlite(conn, tables=HOT_TABLES):
                 local_cols = cols_t
             except Exception:
                 continue
-        conn.execute(f"DELETE FROM {t}")
+        # Tablas que el SCAN escribe: espejo por UPSERT (sin DELETE). Si el scan
+        # acaba de crear una review/carpeta y todavía no la subió a Turso, un
+        # replace la borraría de la copia local → se perdería. Las demás (config
+        # pura, que solo escribe el dashboard) sí se reemplazan completas.
+        if t not in ("client_reviews", "pending_drive_folders"):
+            conn.execute(f"DELETE FROM {t}")
         if rows:
             cols = [c for c in rows[0].keys() if c in local_cols]
             ph = ",".join("?" * len(cols))
