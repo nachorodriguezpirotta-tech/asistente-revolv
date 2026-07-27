@@ -1324,10 +1324,13 @@ def recover_orphan_completion_mails(max_age_hours: int = 48, cap: int = 6) -> in
                     continue
                 # ¿está encolado SIN mandar? → pendiente legítimo, el notifier lo procesa
                 q = conn.execute(
-                    "SELECT id, mail_sent_at FROM pending_completion_mails WHERE file_id=? "
+                    "SELECT id, mail_sent_at, COALESCE(retry_count,0) AS retry_count "
+                    "FROM pending_completion_mails WHERE file_id=? "
                     "ORDER BY id DESC LIMIT 1", (fid,)).fetchone()
                 if q and not q["mail_sent_at"]:
                     continue
+                if q and q["mail_sent_at"] and int(q["retry_count"] or 0) >= 20:
+                    continue  # ya se intentó 20+ veces: no reabrir (anti-loop 26/jul)
                 if q and q["mail_sent_at"]:
                     # ENVÍO FANTASMA (caso Roger/video 5 21/jul): la cola quedó marcada
                     # 'enviada' (claim) pero el run murió antes del send real — no hay
