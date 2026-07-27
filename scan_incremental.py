@@ -627,6 +627,20 @@ def run(notify: bool = False):
             print(f"notify_pending_reviews: {_e}")
 
 
+    # DURABILIDAD (26/jul): subir a Turso lo que este scan escribió en las tablas
+    # calientes compartidas con el dashboard (reviews del portal, carpetas nuevas).
+    # UPSERT (no replace) para no pisar cambios del panel hechos en paralelo.
+    try:
+        import tasks_store as _ts
+        if _ts.available():
+            _c = get_conn()
+            try:
+                _ts.upsert_tables_from_sqlite(_c, ("client_reviews", "pending_drive_folders"))
+            finally:
+                _c.close()
+    except Exception as _e:
+        print(f"   ⚠️ durabilidad scan→Turso: {_e}")
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--notify", action="store_true")
