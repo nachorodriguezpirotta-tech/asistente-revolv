@@ -667,16 +667,47 @@ Archivo: {file_name}{link_text}
         row_id = c.get("id")
         if row_id is not None and isinstance(row_id, int):
             if not any_sent:
-                # Revertir: queremos retry en próximo scan
-                from tracker import get_conn
-                conn = get_conn()
-                conn.execute(
-                    "UPDATE pending_completion_mails SET mail_sent_at = NULL WHERE id = ?",
-                    (row_id,),
-                )
-                conn.commit()
-                conn.close()
-                mark_completion_mail_failed(row_id)
+                # LOOP INFINITO (26/jul, caso "notificador loco"): un dedupe-skip
+                # dejaba any_sent=False → se revertía el claim → se reintentaba cada
+                # 2 min PARA SIEMPRE (items con 1567 retries, 4000 registros/día en
+                # mail_log). Distinguir:
+                #  a) skip legítimo (el mail YA salió de verdad, hay rastro en
+                #     mail_log success sin error de skip) → CERRAR el item.
+                #  b) tope de reintentos (>20 ≈ 40 min) → CERRAR igual: si en 20
+                #     intentos no salió, reintentar no lo va a arreglar y el ruido
+                #     es peor que el mail perdido (la red de huérfanos lo re-encola
+                #     si de verdad falta).
+                #  c) falla transitoria genuina → revertir y reintentar.
+                _close = False
+                try:
+                    from tracker import completion_mail_already_sent as _sent_ok
+                    if file_id and _sent_ok(cliente, file_id, file_name, minutes=20160):
+                        _close = True   # (a) ya salió: no reintentar más
+                except Exception:
+                    pass
+                try:
+                    if int(c.get("retry_count") or 0) >= 20:
+                        _close = True   # (b) tope
+                except Exception:
+                    pass
+                if _close:
+                    print(f"  🛑 cierro item de cola #{row_id} ({cliente} / {str(file_name)[:30]}): ya enviado o tope de reintentos")
+                    try:
+                        from tracker import mark_completion_mail_sent
+                        mark_completion_mail_sent(row_id)
+                    except Exception:
+                        pass
+                else:
+                    # (c) Revertir: queremos retry en próximo scan
+                    from tracker import get_conn
+                    conn = get_conn()
+                    conn.execute(
+                        "UPDATE pending_completion_mails SET mail_sent_at = NULL WHERE id = ?",
+                        (row_id,),
+                    )
+                    conn.commit()
+                    conn.close()
+                    mark_completion_mail_failed(row_id)
             # Si any_sent=True, ya está marcado correctamente (claim lo marcó)
 
     return sent
