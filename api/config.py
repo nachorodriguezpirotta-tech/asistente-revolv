@@ -321,6 +321,42 @@ def _get_all_config(conn):
     }
 
 
+class _TursoCursor:
+    """Resultado con interfaz sqlite (fetchone/fetchall/rowcount/lastrowid)."""
+    def __init__(self, rows=None, rowcount=0, lastrowid=None):
+        self._rows = rows or []
+        self.rowcount = rowcount
+        self.lastrowid = lastrowid
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+    def fetchall(self):
+        return self._rows
+
+
+class TursoConn:
+    """Adaptador con interfaz de sqlite3.Connection que escribe/lee en TURSO.
+
+    Por qué (26/jul): las mutaciones del panel iban por with_db → bajar+subir
+    tracker.db (7MB) + verify = 13 SEGUNDOS por guardado, y si un push se pisaba
+    el cambio se perdía. De ahí el "cambio algo y no se guarda". Turso es
+    transaccional y responde en ~0.3s. Se usa en las secciones cuyas tablas están
+    100% en Turso; `pending_folder` (toca `clients`) sigue por with_db.
+    El scan mantiene git al día vía el espejo Turso→sqlite de init_db.
+    """
+    def execute(self, sql, args=()):
+        import tasks_store
+        s = sql.strip().lower()
+        if s.startswith("select") or " returning " in s:
+            rows = tasks_store.query(sql, list(args) if args else None)
+            return _TursoCursor(rows=rows)
+        r = tasks_store.execute(sql, list(args) if args else None)
+        return _TursoCursor(rowcount=r.get("affected", 0), lastrowid=r.get("last_id"))
+    def commit(self):
+        pass
+    def close(self):
+        pass
+
+
 class handler(BaseHTTPRequestHandler):
 
     def _auth(self, token):
@@ -447,6 +483,16 @@ class handler(BaseHTTPRequestHandler):
                     return True  # si la verificación falla, no bloquear
                 return True
 
+            # Secciones 100% en Turso → escritura DIRECTA (0.3s, transaccional).
+            # `pending_folder` toca `clients` (no migrada) → sigue por with_db.
+            TURSO_SECTIONS = ("editor", "nickname", "alias", "delivery",
+                              "client_email", "client_editor", "archive_client")
+            if section in TURSO_SECTIONS:
+                import tasks_store
+                if tasks_store.available():
+                    op(TursoConn())
+                    return json_response(self, {"ok": True, "section": section,
+                                                "action": action, **result})
             with_db(op, message=f"config: {action} {section}", verify=_verify)
             return json_response(self, {"ok": True, "section": section, "action": action, **result})
         except ValueError as e:
