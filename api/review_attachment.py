@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from _shared import check_token, check_client_token, json_response, read_db
+    from _shared import (check_token, check_client_token, check_attachment_token,
+                         json_response, read_db)
     _IMPORT_ERROR = None
 except Exception as _e:
     _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
@@ -61,7 +62,12 @@ class handler(BaseHTTPRequestHandler):
 
             # Auth: admin O cliente del review
             ok = False
-            if admin and check_token("ADMIN", token):
+            # Token de ALCANCE MÍNIMO (?at=): solo esta imagen. Es el que viaja
+            # en los mails, para no exponer el token admin (27/jul).
+            at_token = (params.get("at", [""])[0] or "").strip()
+            if at_token and check_attachment_token(att_id, at_token):
+                ok = True
+            elif admin and check_token("ADMIN", token):
                 ok = True
             elif cliente and row.get("review_cliente") == cliente and check_client_token(cliente, token):
                 ok = True
