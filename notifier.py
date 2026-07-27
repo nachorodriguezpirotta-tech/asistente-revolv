@@ -930,14 +930,17 @@ def notify_revision_requested(review_id: int, review: dict, notes: str) -> None:
     attach_html = ""
     if attachments_info:
         attach_text = f"\n\n📷 {len(attachments_info)} foto(s) adjunta(s) — ver en el dashboard de revisiones:\n"
-        admin_token = ""
-        try:
-            from api._shared import make_token
-            admin_token = make_token("ADMIN")
-        except Exception:
-            pass
+        # Token por-imagen (NO el admin): el mail va a Ignacio y al editor, así
+        # que la llave maestra no debe viajar ahí (27/jul).
+        def _att_url(a):
+            try:
+                from api._shared import make_attachment_token
+                return _build_vercel_url(
+                    f"/api/review_attachment?id={a['id']}&at={make_attachment_token(a['id'])}")
+            except Exception:
+                return _build_vercel_url(f"/api/review_attachment?id={a['id']}")
         for a in attachments_info:
-            url = _build_vercel_url(f"/api/review_attachment?id={a['id']}&admin=1&t={admin_token}")
+            url = _att_url(a)
             attach_text += f"  · {a.get('filename') or 'imagen'}: {url}\n"
         attach_html = (
             f'<div style="margin:18px 0;padding:14px 18px;background:#f4f8fc;border-left:3px solid #60a5fa;border-radius:6px;">'
@@ -946,7 +949,7 @@ def notify_revision_requested(review_id: int, review: dict, notes: str) -> None:
             f'<div style="display:flex;gap:8px;flex-wrap:wrap;">'
         )
         for a in attachments_info:
-            url = _build_vercel_url(f"/api/review_attachment?id={a['id']}&admin=1&t={admin_token}")
+            url = _att_url(a)
             attach_html += (
                 f'<a href="{url}" target="_blank" style="display:block;">'
                 f'<img src="{url}" alt="{a.get("filename") or ""}" style="width:120px;height:120px;object-fit:cover;border-radius:6px;border:1px solid #ddd;">'
