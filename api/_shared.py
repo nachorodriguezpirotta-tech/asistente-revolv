@@ -204,6 +204,22 @@ def with_db(operation, message: str, max_retries: int = 8, verify=None):
             try:
                 result = operation(conn)
                 conn.commit()
+                # DURABILIDAD (26/jul): empujar las tablas del PANEL a Turso ANTES
+                # del push a git. Antes, si el push de tracker.db se pisaba con un
+                # scan, el cambio del dashboard se perdía → "borro/cambio algo y no
+                # se guarda". Turso es transaccional: lo que se guarda acá queda,
+                # aunque git falle. El espejo de fetch_db lo devuelve en la próxima
+                # lectura.
+                try:
+                    import sys as _s, os as _o
+                    _r = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+                    if _r not in _s.path:
+                        _s.path.insert(0, _r)
+                    import tasks_store as _ts
+                    if _ts.available():
+                        _ts.push_tables_from_sqlite(conn)
+                except Exception as _e:
+                    print(f"   ⚠️ durabilidad Turso: {_e}")
             finally:
                 conn.close()
 
