@@ -24,8 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from _shared import (
         check_token, read_db, json_response, EDITORS, make_token,
-        DASHBOARD_SECRET, GITHUB_PAT,
-    )
+        DASHBOARD_SECRET, GITHUB_PAT, rate_limited)
     _IMPORT_ERROR = None
 except Exception as _e:
     _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
@@ -629,6 +628,8 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, data)
 
             return json_response(self, {"error": "unauthorized"}, status=401)
+            if rate_limited(self, "rd", limit=90):
+                return
         except Exception as e:
             return json_response(self, {
                 "error": str(e),
