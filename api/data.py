@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from _shared import (
-        check_token, read_db, json_response, EDITORS, make_token,
+        check_token, read_db, json_response, EDITORS, make_token, rate_limited,
         DASHBOARD_SECRET, GITHUB_PAT,
     )
     _IMPORT_ERROR = None
@@ -403,6 +403,8 @@ class handler(BaseHTTPRequestHandler):
             from _shared import make_token
             if not check_token("ADMIN", token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
+            if rate_limited(self, "admin", limit=90):
+                return
             try:
                 if list_clients == "1":
                     data = read_db(get_all_clients)
@@ -416,6 +418,8 @@ class handler(BaseHTTPRequestHandler):
             return json_response(self, {"error": "missing editor param"}, status=400)
         if not check_token(editor, token):
             return json_response(self, {"error": "unauthorized"}, status=401)
+        if rate_limited(self, f"ed:{editor.lower()}", limit=90):
+            return
 
         try:
             if list_clients == "1":
