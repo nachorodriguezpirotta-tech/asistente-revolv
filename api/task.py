@@ -329,12 +329,22 @@ class handler(BaseHTTPRequestHandler):
                 # que 6h sobra y el material del día siguiente entra normal.
                 # Para apagar un cliente PARA SIEMPRE: Archivar.
                 blocked_until = (datetime.now() + timedelta(hours=6)).isoformat(timespec="seconds")
+                deleted_at = datetime.utcnow().isoformat(timespec="seconds")
                 stmts = []
                 for nombre in {cli, cliente}:
                     stmts.append((
                         "INSERT INTO client_blocks (cliente, editor, blocked_until) VALUES (TRIM(?), '', ?) "
                         "ON CONFLICT(cliente, editor) DO UPDATE SET blocked_until=excluded.blocked_until",
                         (nombre, blocked_until)))
+                    # BORRADO PERMANENTE respecto del material EXISTENTE (28/jul,
+                    # "yo borro algo y reaparece"): create_task consulta esta marca
+                    # y NO re-crea la tarjeta por crudos anteriores al borrado.
+                    # Solo material NUEVO (posterior) la revive. El block de 6h
+                    # sigue cubriendo los scans en vuelo.
+                    stmts.append((
+                        "INSERT INTO client_deletions (cliente, deleted_at) VALUES (TRIM(?), ?) "
+                        "ON CONFLICT(cliente) DO UPDATE SET deleted_at=excluded.deleted_at",
+                        (nombre, deleted_at)))
                 tasks_store.execute_many(stmts)
                 return json_response(self, {"ok": True, "count": count_deleted,
                                             "cliente": cli, "editor": target_editor})
