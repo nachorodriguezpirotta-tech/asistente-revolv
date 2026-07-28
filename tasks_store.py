@@ -88,6 +88,10 @@ _SCHEMA = [
     """CREATE TABLE IF NOT EXISTS cfg_editor_extra_emails (
         email TEXT PRIMARY KEY,
         editor TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS rate_limit (
+        k TEXT PRIMARY KEY,
+        window_start INTEGER NOT NULL,
+        n INTEGER NOT NULL DEFAULT 0)""",
 ]
 
 _SCHEMA_READY = False
@@ -228,6 +232,36 @@ def mirror_to_sqlite(conn, tables=HOT_TABLES):
                 [[row.get(c) for c in cols] for row in rows])
     conn.commit()
     return True
+
+
+def rate_limit_hit(key: str, limit: int = 60, window_s: int = 60) -> bool:
+    """Cuenta un uso y devuelve True si SUPERÓ el límite (hay que rechazar).
+
+    Por qué (27/jul): no había ningún tope — un editor refrescando (o una pestaña
+    recargando sola) podía agotar la cuota de la API de GitHub, que se COMPARTE
+    con los scans, y tumbar el sistema entero (sin detección ni mails hasta el
+    reset horario). Contador por ventana en Turso: sirve entre instancias
+    serverless (la memoria local no, cada request puede caer en otra máquina).
+
+    FAIL-OPEN: si Turso no responde, NO bloquea (mejor dejar pasar que dejar a
+    un editor afuera por un problema nuestro).
+    """
+    import time as _t
+    now = int(_t.time())
+    win = now - (now % window_s)
+    try:
+        ensure_schema()
+        res = _pipeline([
+            ("INSERT INTO rate_limit (k, window_start, n) VALUES (?, ?, 1) "
+             "ON CONFLICT(k) DO UPDATE SET "
+             "  n = CASE WHEN rate_limit.window_start = ? THEN rate_limit.n + 1 ELSE 1 END, "
+             "  window_start = ?", [key, win, win, win]),
+            ("SELECT n FROM rate_limit WHERE k = ?", [key]),
+        ], timeout=6)
+        rows = _rows_to_dicts(res[1])
+        return bool(rows) and int(rows[0]["n"] or 0) > limit
+    except Exception:
+        return False  # fail-open
 
 
 def push_tables_from_sqlite(conn, tables=None) -> bool:
