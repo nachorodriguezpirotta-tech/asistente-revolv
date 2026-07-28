@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from _shared import check_token, json_response, read_db
+    from _shared import check_token, json_response, read_db, rate_limited
     _IMPORT_ERROR = None
 except Exception as _e:
     _IMPORT_ERROR = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
@@ -165,6 +165,8 @@ class handler(BaseHTTPRequestHandler):
                 data = read_db(lambda c: _build_editor(c, editor))
                 return json_response(self, data)
             return json_response(self, {"error": "unauthorized"}, status=401)
+            if rate_limited(self, "rd", limit=90):
+                return
         except Exception as e:
             return json_response(self, {"error": str(e)[:200], "trace": traceback.format_exc()[:1500]}, status=500)
 
