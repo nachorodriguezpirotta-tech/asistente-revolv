@@ -77,6 +77,29 @@ def check_token(editor: str, token: str) -> bool:
     return hmac.compare_digest(expected, token)
 
 
+def rate_limited(handler_self, who: str, limit: int = 60, window_s: int = 60) -> bool:
+    """Si `who` superó el límite, responde 429 y devuelve True (cortar el handler).
+    `who` = editor/admin del token → el límite es POR PERSONA, así un editor
+    que refresca de más no afecta a los demás ni tumba los scans."""
+    try:
+        import sys as _s, os as _o
+        _r = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+        if _r not in _s.path:
+            _s.path.insert(0, _r)
+        import tasks_store
+        if not tasks_store.available():
+            return False
+        if tasks_store.rate_limit_hit(f"rl:{who}", limit=limit, window_s=window_s):
+            json_response(handler_self, {
+                "error": "Demasiadas peticiones seguidas. Esperá unos segundos y reintentá.",
+                "retry_after_s": window_s,
+            }, status=429)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def make_attachment_token(att_id) -> str:
     """Token de ALCANCE MÍNIMO: sirve SOLO para ver ESA imagen adjunta.
 
@@ -136,6 +159,10 @@ def _gh_request(method: str, path: str, body: dict = None) -> dict:
         raise RuntimeError(f"GitHub API {method} {path} → {e.code}: {body[:300]}") from e
 
 
+_DB_CACHE = {"path": None, "sha": None, "ts": 0.0}
+_DB_CACHE_TTL = 25  # segundos
+
+
 def fetch_db() -> Tuple[str, str]:
     """
     Descarga tracker.db del repo. Retorna (path_local_temporal, sha_actual).
@@ -144,6 +171,26 @@ def fetch_db() -> Tuple[str, str]:
     más grandes (la DB pesa ~2MB), hay que usar Accept: application/vnd.github.raw
     que devuelve el archivo binario completo.
     """
+    # CACHE (27/jul): cada request bajaba 6.7 MB y gastaba 2 llamadas a la API de
+    # GitHub, cuya cuota (5000/h) se COMPARTE con los scans. Un editor refrescando
+    # seguido podía agotarla y tumbar el sistema entero (sin detección ni mails).
+    # Con 25s de cache, refrescar 20 veces seguidas cuesta 1 descarga, no 20.
+    # No afecta la frescura real: las tablas que importan (pendientes, config) se
+    # espejan desde Turso en cada llamada, más abajo.
+    import time as _t
+    _now = _t.time()
+    if (_DB_CACHE["path"] and _now - _DB_CACHE["ts"] < _DB_CACHE_TTL
+            and os.path.exists(_DB_CACHE["path"])):
+        try:
+            _copy = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+            with open(_DB_CACHE["path"], "rb") as _src_f:
+                _copy.write(_src_f.read())
+            _copy.close()
+            _mirror_hot_tables(_copy.name)
+            return _copy.name, _DB_CACHE["sha"]
+        except Exception:
+            pass
+
     # 1. Obtener sha (metadata)
     meta = _gh_request("GET", f"/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{DB_FILE}?ref={GITHUB_BRANCH}")
     sha = meta["sha"]
@@ -164,10 +211,30 @@ def fetch_db() -> Tuple[str, str]:
     tmp.write(raw)
     tmp.close()
 
-    # Tablas CALIENTES del dashboard (tasks/blocks/progress/priority) viven en
-    # Turso desde jul/2026 — la copia en git es solo un espejo que puede estar
-    # vieja. Refrescarlas acá para que TODOS los SELECT legacy (data/stats/
-    # config/reviews) vean el estado real sin reescribirlos. Best-effort.
+    # Guardar en cache la copia recién bajada (antes del espejo, para que cada
+    # request espeje con datos frescos de Turso sobre la base cacheada).
+    try:
+        _cache_f = tempfile.NamedTemporaryFile(delete=False, suffix=".cache.db")
+        with open(tmp.name, "rb") as _s_f:
+            _cache_f.write(_s_f.read())
+        _cache_f.close()
+        _old = _DB_CACHE.get("path")
+        _DB_CACHE.update({"path": _cache_f.name, "sha": sha, "ts": _t.time()})
+        if _old and _old != _cache_f.name:
+            try:
+                os.unlink(_old)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    _mirror_hot_tables(tmp.name)
+    return tmp.name, sha
+
+
+def _mirror_hot_tables(db_path: str) -> None:
+    """Refresca las tablas CALIENTES desde Turso sobre la copia local, para que
+    TODOS los SELECT legacy (data/stats/config/reviews) vean el estado real."""
     try:
         import sys as _sys, os as _os
         _root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
@@ -175,15 +242,13 @@ def fetch_db() -> Tuple[str, str]:
             _sys.path.insert(0, _root)
         import tasks_store
         if tasks_store.available():
-            _mc = sqlite3.connect(tmp.name)
+            _mc = sqlite3.connect(db_path)
             try:
                 tasks_store.mirror_to_sqlite(_mc)
             finally:
                 _mc.close()
     except Exception as _e:
         print(f"   ⚠️ mirror tasks_store: {_e}")
-
-    return tmp.name, sha
 
 
 def push_db(local_path: str, sha: str, message: str) -> dict:
