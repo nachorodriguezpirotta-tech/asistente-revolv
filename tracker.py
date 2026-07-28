@@ -701,6 +701,32 @@ def create_task(cliente: str, editor: Optional[str], file_id: str, file_name: st
     Desde jul/2026 las tasks viven en TURSO (transaccional): el INSERT condicional
     es UNA sentencia atómica — dos scans concurrentes jamás duplican, y el
     dashboard ve la task al instante (sin esperar push de tracker.db)."""
+    # RESPETO AL TACHITO (28/jul, "yo borro algo y reaparece"): si Ignacio borró
+    # la tarjeta de este cliente, NO re-crearla por material que ya existía al
+    # momento del borrado — solo un crudo NUEVO (detectado después) la revive.
+    # Las tasks manuales (file_id 'manual:...') son de Ignacio → siempre pasan.
+    try:
+        if file_id and not str(file_id).startswith("manual"):
+            import tasks_store as _ts
+            _del = _ts.query(
+                "SELECT deleted_at FROM client_deletions WHERE TRIM(cliente)=TRIM(?)",
+                (cliente,))
+            if _del:
+                _da = _del[0]["deleted_at"]
+                _conn = get_conn()
+                try:
+                    _row = _conn.execute(
+                        "SELECT first_seen_at FROM known_files WHERE file_id=?",
+                        (file_id,)).fetchone()
+                finally:
+                    _conn.close()
+                if _row and _row[0] and str(_row[0]) <= str(_da):
+                    print(f"   ⏭ tarjeta de {cliente} NO re-creada: material anterior "
+                          f"al borrado del {_da[:16]} (borrar=borrado)")
+                    return -1
+    except Exception:
+        pass
+
     import tasks_store
     cliente = (cliente or "").strip()  # no partir cliente por trailing space
     # Sin editor resuelto: si el cliente YA tiene un pendiente CON editor, NO crear
