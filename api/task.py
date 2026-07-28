@@ -59,6 +59,22 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
     if len(norm) < 3:
         return cliente_input  # demasiado corto para fuzzy match seguro
 
+    # NOMBRE COMPLETO escrito a mano ⇒ NO adivinar (27/jul, caso "Roger RM
+    # Founders" → se guardaba como "Roger Marti" porque contiene el apodo
+    # 'roger'). Los apodos reales son CORTOS ('delfi', 'cisco', 'pao'); si el
+    # usuario escribió 2+ palabras es un nombre completo — y si además no
+    # matchea EXACTO con ningún cliente conocido, es un cliente NUEVO que está
+    # dando de alta. Regla de Ignacio: ante la duda, no adivinar.
+    if len(norm.split()) >= 2:
+        try:
+            import tasks_store as _ts
+            _hit = _ts.query(
+                "SELECT 1 AS x FROM tasks WHERE LOWER(TRIM(cliente))=? LIMIT 1", (norm,))
+        except Exception:
+            _hit = None
+        if not _hit:
+            return cliente_input  # tal cual lo escribió
+
     # 2. Construir universo de clientes conocidos
     universe = {}  # cliente_real → metadata {has_pending, same_editor, in_drive}
 
@@ -239,7 +255,10 @@ class handler(BaseHTTPRequestHandler):
                 "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1",
                 (cliente_resuelto, editor))
             if existing:
-                return json_response(self, {"error": f"Ya hay un pendiente de '{cliente}'"}, status=409)
+                _msg = f"Ya hay un pendiente de '{cliente_resuelto}'"
+                if cliente_resuelto.strip().lower() != cliente.strip().lower():
+                    _msg += f" (interpreté '{cliente}' como '{cliente_resuelto}')"
+                return json_response(self, {"error": _msg}, status=409)
             pseudo_id = f"manual:{editor.lower()}:{cliente_resuelto.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
             tasks_store.execute(
                 "INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count, count_locked) "
