@@ -32,6 +32,17 @@ def _normalize(s: str) -> str:
     return " ".join(s.lower().split())
 
 
+def _clean_editor(ed):
+    """El guión del agrupador ('—', '— sin editor —') NO es un editor: es la
+    etiqueta visual de "sin asignar". Si se guarda como valor real, el borrado y
+    la reasignación dejan de encontrar la tarjeta (bug 31/jul). Normalizar SIEMPRE
+    en la entrada."""
+    ed = (ed or "").strip()
+    if not ed or ed.startswith("\u2014") or ed.startswith("-"):
+        return ""
+    return ed
+
+
 def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
     """
     Resuelve un apodo al nombre real del cliente. Estrategia:
@@ -231,7 +242,7 @@ class handler(BaseHTTPRequestHandler):
             from _shared import check_token as _ct
             if not _ct("ADMIN", token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
-            target_editor = (body.get("target_editor") or "").strip()
+            target_editor = _clean_editor(body.get("target_editor"))
             if not target_editor or not cliente:
                 return json_response(self, {"error": "Faltan target_editor o cliente"}, status=400)
             editor = target_editor
@@ -296,11 +307,18 @@ class handler(BaseHTTPRequestHandler):
                 from datetime import datetime, timedelta
                 if target_editor:
                     r = tasks_store.execute(
-                        "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
+                        "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND TRIM(editor)=TRIM(?) AND status='pending'",
                         (cliente, target_editor))
                 elif is_no_editor_placeholder or (editor == "" and not is_admin):
+                    # BUG 31/jul ("borro y reaparece"): las tarjetas SIN EDITOR
+                    # tienen guardado el guión ('—', o '— sin editor —') como si
+                    # fuera el nombre del editor. La condición vieja solo cubría
+                    # NULL y '' → borraba 0 filas y devolvía ok:true, así que la
+                    # tarjeta desaparecía de la pantalla y volvía al refrescar.
                     r = tasks_store.execute(
-                        "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND (editor IS NULL OR editor='') AND status='pending'",
+                        "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND "
+                        "(editor IS NULL OR TRIM(editor)='' OR TRIM(editor) LIKE '—%') "
+                        "AND status='pending'",
                         (cliente,))
                 else:
                     r = tasks_store.execute(
@@ -346,8 +364,20 @@ class handler(BaseHTTPRequestHandler):
                         "ON CONFLICT(cliente) DO UPDATE SET deleted_at=excluded.deleted_at",
                         (nombre, deleted_at)))
                 tasks_store.execute_many(stmts)
+                # Red de seguridad: si los filtros no engancharon nada pero la
+                # tarjeta existe, borrar TODAS las pending de ese cliente. Que el
+                # tachito falle en silencio es peor que borrar de más (lo que se
+                # borra se recrea con material nuevo).
+                if count_deleted == 0:
+                    r2 = tasks_store.execute(
+                        "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
+                        (cliente,))
+                    count_deleted = r2.get("affected") or 0
+                    if count_deleted:
+                        print(f"   🧹 fallback: borradas {count_deleted} pending de {cliente!r}")
                 return json_response(self, {"ok": True, "count": count_deleted,
-                                            "cliente": cli, "editor": target_editor})
+                                            "cliente": cli, "editor": target_editor,
+                                            "nothing_deleted": count_deleted == 0})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
 
@@ -397,7 +427,7 @@ class handler(BaseHTTPRequestHandler):
                 if not isinstance(it, dict):
                     continue
                 c = (it.get("cliente") or "").strip()
-                e = (it.get("editor") or "").strip()
+                e = _clean_editor(it.get("editor"))
                 if not is_admin:
                     e = editor
                 e = e or None
