@@ -2089,6 +2089,12 @@ function deleteCliente(cliente, editor, btn) {
             else { params.set('editor', EDITOR); }
             try {
                 const res = await _mutFetch('/api/task?' + params.toString(), { method: 'DELETE' });
+                try {
+                    const _d = await res.clone().json();
+                    if (_d && _d.nothing_deleted) {
+                        alert('⚠️ No se pudo borrar esa tarjeta.\nAvisale a Nacho — quedó registrado.');
+                    }
+                } catch (_e) {}
                 const data = await res.json();
                 if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
             } catch (e) {
