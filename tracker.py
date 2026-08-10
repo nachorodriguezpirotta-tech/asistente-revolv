@@ -1956,6 +1956,60 @@ def get_latest_pending_review_for_client(cliente: str) -> Optional[dict]:
     return dict(r) if r else None
 
 
+def reconcile_portal_pending(limit: int = 200) -> int:
+    """Cierra proyectos del portal que siguen en 'por revisar' pero ya no esperan
+    nada del cliente (bug 10/ago: "aparecen en por revisar videos ya aprobados").
+
+    Dos casos, ambos verificables y conservadores:
+      A) El ARCHIVO ya fue aprobado/resuelto (client_reviews por video_file_id)
+         → status 'approved' (es literalmente cierto).
+      B) Existe OTRA versión del mismo cliente+nombre que ya fue atendida
+         (approved / feedback_sent / changes_requested) → la vieja quedó
+         reemplazada → status 'superseded' (NO 'approved': el cliente nunca
+         aprobó ESA versión, y el panel debe decir la verdad).
+
+    NO toca los pending_review legítimos (el cliente todavía no entró).
+    Portal y asistente comparten la misma base Turso.
+    """
+    try:
+        import tasks_store as _ts
+        if not _ts.available():
+            return 0
+    except Exception:
+        return 0
+    total = 0
+    try:
+        # A) archivo ya aprobado/resuelto
+        rows = _ts.query(
+            "SELECT p.id FROM projects p JOIN client_reviews cr "
+            "  ON cr.video_file_id = p.drive_file_id "
+            "WHERE p.status='pending_review' AND cr.status IN ('approved','resolved') "
+            f"LIMIT {int(limit)}")
+        if rows:
+            _ts.execute_many([
+                ("UPDATE projects SET status='approved' WHERE id=? AND status='pending_review'",
+                 (r["id"],)) for r in rows])
+            total += len(rows)
+        # B) reemplazados por una versión posterior ya atendida
+        rows2 = _ts.query(
+            "SELECT p.id FROM projects p WHERE p.status='pending_review' AND EXISTS ("
+            "  SELECT 1 FROM projects p2 WHERE p2.client_id=p.client_id "
+            "    AND TRIM(LOWER(p2.name))=TRIM(LOWER(p.name)) AND p2.id<>p.id "
+            "    AND p2.status IN ('approved','feedback_sent','changes_requested')) "
+            f"LIMIT {int(limit)}")
+        if rows2:
+            _ts.execute_many([
+                ("UPDATE projects SET status='superseded' WHERE id=? AND status='pending_review'",
+                 (r["id"],)) for r in rows2])
+            total += len(rows2)
+        if total:
+            print(f"   🔄 portal: {total} proyectos cerrados de 'por revisar' "
+                  f"({len(rows)} ya aprobados, {len(rows2)} reemplazados)")
+    except Exception as e:
+        print(f"   ⚠️ reconcile_portal_pending: {str(e)[:90]}")
+    return total
+
+
 def sync_reviews_from_portal(max_age_hours: int = 72) -> int:
     """Reconcilia revisiones pedidas desde el PORTAL (Turso, fuente de verdad
     transaccional) hacia client_reviews (tracker.db, frágil por concurrencia).
