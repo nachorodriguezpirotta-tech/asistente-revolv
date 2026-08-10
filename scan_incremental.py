@@ -608,10 +608,13 @@ def run(notify: bool = False):
         # Reconciliar reviews del PORTAL: recuperar las que se perdieron al pisarse
         # tracker.db (caso V178 Alberto 21/jul). El portal (Turso) es la verdad.
         try:
-            from tracker import sync_reviews_from_portal
+            from tracker import sync_reviews_from_portal, reconcile_portal_pending
             nsync = sync_reviews_from_portal()
             if nsync:
                 print(f"🔁 {nsync} review(s) recuperadas del portal.")
+            # Cerrar los "por revisar" que ya no esperan nada del cliente:
+            # aprobados, o reemplazados por una entrega posterior (bug 10/ago).
+            reconcile_portal_pending()
         except Exception as _e:
             print(f"sync_reviews_from_portal: {_e}")
         # Avisos de revisión pedida que el endpoint del portal no logró mandar
