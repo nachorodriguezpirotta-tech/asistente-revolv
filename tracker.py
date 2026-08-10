@@ -2002,9 +2002,26 @@ def reconcile_portal_pending(limit: int = 200) -> int:
                 ("UPDATE projects SET status='superseded' WHERE id=? AND status='pending_review'",
                  (r["id"],)) for r in rows2])
             total += len(rows2)
+        # C) Varias versiones del MISMO video (mismo cliente+nombre) todas en
+        #    'por revisar': solo la última es la vigente. Ej. "47. ChILo 83" con
+        #    5 archivos distintos = 5 re-subidas; las 4 viejas ya no esperan nada.
+        rows3 = _ts.query(
+            "SELECT p.id FROM projects p WHERE p.status='pending_review' AND EXISTS ("
+            "  SELECT 1 FROM projects p2 WHERE p2.client_id=p.client_id "
+            "    AND TRIM(LOWER(p2.name))=TRIM(LOWER(p.name)) AND p2.id<>p.id "
+            "    AND p2.status='pending_review' "
+            "    AND (p2.created_at > p.created_at OR "
+            "         (p2.created_at = p.created_at AND p2.id > p.id))) "
+            f"LIMIT {int(limit)}")
+        if rows3:
+            _ts.execute_many([
+                ("UPDATE projects SET status='superseded' WHERE id=? AND status='pending_review'",
+                 (r["id"],)) for r in rows3])
+            total += len(rows3)
         if total:
             print(f"   🔄 portal: {total} proyectos cerrados de 'por revisar' "
-                  f"({len(rows)} ya aprobados, {len(rows2)} reemplazados)")
+                  f"({len(rows)} ya aprobados, {len(rows2)} reemplazados, "
+                  f"{len(rows3)} versiones viejas)")
     except Exception as e:
         print(f"   ⚠️ reconcile_portal_pending: {str(e)[:90]}")
     return total
