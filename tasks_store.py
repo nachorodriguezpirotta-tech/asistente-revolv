@@ -220,6 +220,20 @@ def mirror_to_sqlite(conn, tables=HOT_TABLES):
                 local_cols = cols_t
             except Exception:
                 continue
+        # GUARDARRAIL (12/ago): NUNCA vaciar la copia local con un origen vacío.
+        # Si la consulta a Turso devuelve 0 filas por un error transitorio (o un
+        # resultado parcial del pipeline), el DELETE borraba la tabla local y el
+        # scan pusheaba ese vacío a git → pérdida real de datos. Caso: los 12
+        # editores del dashboard quedaron en 2. Ante la duda, NO se borra.
+        if not rows:
+            try:
+                _local_n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            except Exception:
+                _local_n = 0
+            if _local_n:
+                print(f"   ⚠️ espejo: {t} vino vacía de Turso pero local tiene "
+                      f"{_local_n} filas → NO se borra")
+                continue
         # Tablas que el SCAN escribe: espejo por UPSERT (sin DELETE). Si el scan
         # acaba de crear una review/carpeta y todavía no la subió a Turso, un
         # replace la borraría de la copia local → se perdería. Las demás (config
@@ -285,11 +299,30 @@ def push_tables_from_sqlite(conn, tables=None) -> bool:
                 rows = cur.fetchall()
             except Exception:
                 continue  # tabla no existe localmente
-            stmts.append((f"DELETE FROM {t}", None))
+            # GUARDARRAIL (12/ago): el replace completo (DELETE+INSERT) solo es
+            # seguro si la copia local está COMPLETA. Si tiene menos de la mitad
+            # de lo que hay en Turso, es una copia degradada (espejo fallido,
+            # bundle viejo): reemplazar destruiría datos buenos. Se hace upsert
+            # sin borrar y se avisa.
+            _safe_replace = True
+            try:
+                _remote = query(f"SELECT COUNT(*) AS n FROM {t}")
+                _rn = int(_remote[0]["n"]) if _remote else 0
+                if _rn and len(rows) * 2 < _rn:
+                    _safe_replace = False
+                    print(f"   ⚠️ push: {t} local={len(rows)} vs Turso={_rn} — "
+                          f"copia incompleta, NO se reemplaza (solo upsert)")
+            except Exception:
+                pass
             ph = ",".join("?" * len(cols))
             collist = ",".join(cols)
-            for row in rows:
-                stmts.append((f"INSERT INTO {t} ({collist}) VALUES ({ph})", list(row)))
+            if _safe_replace:
+                stmts.append((f"DELETE FROM {t}", None))
+                for row in rows:
+                    stmts.append((f"INSERT INTO {t} ({collist}) VALUES ({ph})", list(row)))
+            else:
+                for row in rows:
+                    stmts.append((f"INSERT OR REPLACE INTO {t} ({collist}) VALUES ({ph})", list(row)))
         if stmts:
             _pipeline(stmts, timeout=30)
         return True
