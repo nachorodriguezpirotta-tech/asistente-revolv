@@ -39,7 +39,7 @@ def _ts_query(sql, args=None):
     import tasks_store
     if tasks_store.available():
         try:
-            return _ts_query(sql, args)
+            return getattr(tasks_store, "query")(sql, args)
         except Exception as e:
             if not tasks_store.is_blocked():
                 raise
@@ -57,7 +57,7 @@ def _ts_execute(sql, args=None):
     import tasks_store
     if tasks_store.available():
         try:
-            return _ts_execute(sql, args)
+            return getattr(tasks_store, "execute")(sql, args)
         except Exception:
             if not tasks_store.is_blocked():
                 raise
@@ -75,7 +75,7 @@ def _ts_execute_many(stmts):
     import tasks_store
     if tasks_store.available():
         try:
-            return _ts_execute_many(stmts)
+            return getattr(tasks_store, "execute_many")(stmts)
         except Exception:
             if not tasks_store.is_blocked():
                 raise
