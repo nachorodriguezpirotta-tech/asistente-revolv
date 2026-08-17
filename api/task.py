@@ -403,7 +403,13 @@ class handler(BaseHTTPRequestHandler):
                 # Para apagar un cliente PARA SIEMPRE: Archivar.
                 blocked_until = (datetime.now() + timedelta(hours=6)).isoformat(timespec="seconds")
                 deleted_at = datetime.utcnow().isoformat(timespec="seconds")
-                stmts = []
+                stmts = [
+                    # En modo local (Turso bloqueado) la copia sqlite puede no
+                    # tener esta tabla todavía: crearla no cuesta nada.
+                    ("""CREATE TABLE IF NOT EXISTS client_deletions (
+                        cliente TEXT PRIMARY KEY,
+                        deleted_at TEXT NOT NULL)""", None),
+                ]
                 for nombre in {cli, cliente}:
                     stmts.append((
                         "INSERT INTO client_blocks (cliente, editor, blocked_until) VALUES (TRIM(?), '', ?) "
