@@ -124,6 +124,22 @@ def _note_blocked(msg: str) -> bool:
     return False
 
 
+def health_ok() -> bool:
+    """¿Turso sirve para LEER? (12/ago: el plan bloqueó las lecturas pero seguía
+    aceptando escrituras — el peor escenario: escribías y no lo veías, y los datos
+    quedaban partidos entre Turso y la copia local). Un ping barato marca el
+    bloqueo para que TODO el request use un solo origen, no dos.
+    El resultado se cachea vía _BLOCKED_UNTIL (5 min), así no cuesta por llamada."""
+    if is_blocked():
+        return False
+    try:
+        _pipeline([("SELECT 1", None)], timeout=8)
+        return True
+    except Exception as e:
+        _note_blocked(str(e))
+        return not is_blocked()
+
+
 def is_blocked() -> bool:
     import time as _t
     return _t.time() < _BLOCKED_UNTIL
