@@ -106,9 +106,32 @@ def _cfg():
     return url, token
 
 
+_BLOCKED_UNTIL = 0.0          # epoch hasta el cual consideramos Turso caído
+_BLOCK_COOLDOWN = 300         # 5 min sin reintentar tras un bloqueo
+
+
+def _note_blocked(msg: str) -> bool:
+    """Si el error es un bloqueo de plan/cuota, marcar Turso como NO disponible
+    por un rato para que TODO el sistema caiga solo al camino sqlite/git (12/ago:
+    Turso free bloqueó las lecturas y el dashboard no dejaba agregar pendientes).
+    Devuelve True si era un bloqueo."""
+    global _BLOCKED_UNTIL
+    m = (msg or "").lower()
+    if "blocked" in m or "forbidden" in m or "upgrade your plan" in m or "quota" in m:
+        import time as _t
+        _BLOCKED_UNTIL = _t.time() + _BLOCK_COOLDOWN
+        return True
+    return False
+
+
+def is_blocked() -> bool:
+    import time as _t
+    return _t.time() < _BLOCKED_UNTIL
+
+
 def available() -> bool:
     url, token = _cfg()
-    return bool(url and token)
+    return (not is_blocked()) and bool(url and token)
 
 
 def _pipeline(stmts, timeout=12):
@@ -140,7 +163,11 @@ def _pipeline(stmts, timeout=12):
     out = []
     for r in results[:-1]:  # sin el close
         if r["type"] == "error":
-            raise RuntimeError(r["error"]["message"])
+            _msg = r["error"]["message"]
+            if _note_blocked(_msg):
+                print(f"   🚧 Turso BLOQUEADO por plan/cuota → el sistema usa la "
+                      f"copia local (sqlite/git) por {_BLOCK_COOLDOWN//60} min")
+            raise RuntimeError(_msg)
         out.append(r["response"].get("result") or {})
     return out
 
@@ -193,10 +220,21 @@ def execute_many(stmts):
     return _pipeline([(s, list(a) if a else None) for s, a in stmts])
 
 
-def mirror_to_sqlite(conn, tables=HOT_TABLES):
+_LAST_MIRROR = {"ts": 0.0}
+MIRROR_MIN_INTERVAL = 20      # segundos entre espejos en la MISMA instancia
+
+
+def mirror_to_sqlite(conn, tables=HOT_TABLES, force: bool = False):
     """Pisa las tablas calientes de la conn sqlite local con el contenido de
     Turso, para que los SELECT legacy vean datos frescos. Best-effort: si Turso
     no responde, deja lo que había (stale) y devuelve False."""
+    # AHORRO (12/ago): el espejo leía las 14 tablas (858 filas) en CADA request y
+    # CADA scan → decenas de millones de lecturas/mes, que agotaron la cuota del
+    # plan. Dentro de una misma instancia caliente, 20s de gracia entre espejos.
+    import time as _t
+    if not force and (_t.time() - _LAST_MIRROR["ts"]) < MIRROR_MIN_INTERVAL:
+        return True
+    _LAST_MIRROR["ts"] = _t.time()
     try:
         ensure_schema()
         res = _pipeline([(f"SELECT * FROM {t}", None) for t in tables], timeout=10)
@@ -331,6 +369,9 @@ def push_tables_from_sqlite(conn, tables=None) -> bool:
         return False
 
 
+_LAST_UPSERT_SIG = {}
+
+
 def upsert_tables_from_sqlite(conn, tables) -> bool:
     """Empuja filas de sqlite → Turso con INSERT OR REPLACE (SIN borrar).
     Para el SCAN: escribe lo suyo (reviews nuevas, carpetas detectadas) sin pisar
@@ -348,6 +389,14 @@ def upsert_tables_from_sqlite(conn, tables) -> bool:
                 continue
             if not rows:
                 continue
+            # AHORRO (12/ago): antes se reescribían las ~200 filas en CADA scan
+            # (cada 2 min) aunque nada hubiera cambiado → ~4M escrituras/mes de
+            # puro derroche. Ahora se sube solo si el contenido cambió.
+            import hashlib as _h
+            _sig = _h.md5(repr(rows).encode()).hexdigest()
+            if _LAST_UPSERT_SIG.get(t) == _sig:
+                continue
+            _LAST_UPSERT_SIG[t] = _sig
             ph = ",".join("?" * len(cols))
             collist = ",".join(cols)
             for row in rows:
