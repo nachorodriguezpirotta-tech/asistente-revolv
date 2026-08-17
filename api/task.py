@@ -55,7 +55,7 @@ def _ts_execute(sql, args=None):
     """INSERT/UPDATE/DELETE con el mismo fallback. En modo degradado escribe en
     la copia sqlite y la sube a git (with_db) — más lento, pero el negocio sigue."""
     import tasks_store
-    if tasks_store.available():
+    if tasks_store.available() and tasks_store.health_ok():
         try:
             return getattr(tasks_store, "execute")(sql, args)
         except Exception:
@@ -73,7 +73,7 @@ def _ts_execute(sql, args=None):
 
 def _ts_execute_many(stmts):
     import tasks_store
-    if tasks_store.available():
+    if tasks_store.available() and tasks_store.health_ok():
         try:
             return getattr(tasks_store, "execute_many")(stmts)
         except Exception:
