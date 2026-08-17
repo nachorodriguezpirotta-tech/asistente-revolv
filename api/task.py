@@ -32,6 +32,61 @@ def _normalize(s: str) -> str:
     return " ".join(s.lower().split())
 
 
+def _ts_query(sql, args=None):
+    """SELECT contra Turso; si Turso está bloqueado (cuota/plan) cae a la copia
+    sqlite de git. 12/ago: con las lecturas bloqueadas, agregar un pendiente
+    devolvía error y el dashboard quedaba inutilizable."""
+    import tasks_store
+    if tasks_store.available():
+        try:
+            return _ts_query(sql, args)
+        except Exception as e:
+            if not tasks_store.is_blocked():
+                raise
+    from _shared import read_db
+    def _op(conn):
+        cur = conn.execute(sql, tuple(args or ()))
+        cols = [d[0] for d in cur.description] if cur.description else []
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+    return read_db(_op)
+
+
+def _ts_execute(sql, args=None):
+    """INSERT/UPDATE/DELETE con el mismo fallback. En modo degradado escribe en
+    la copia sqlite y la sube a git (with_db) — más lento, pero el negocio sigue."""
+    import tasks_store
+    if tasks_store.available():
+        try:
+            return _ts_execute(sql, args)
+        except Exception:
+            if not tasks_store.is_blocked():
+                raise
+    from _shared import with_db
+    out = {}
+    def _op(conn):
+        cur = conn.execute(sql, tuple(args or ()))
+        out["affected"] = cur.rowcount
+        out["last_id"] = cur.lastrowid
+    with_db(_op, message="task (modo local)")
+    return out
+
+
+def _ts_execute_many(stmts):
+    import tasks_store
+    if tasks_store.available():
+        try:
+            return _ts_execute_many(stmts)
+        except Exception:
+            if not tasks_store.is_blocked():
+                raise
+    from _shared import with_db
+    def _op(conn):
+        for sql, args in stmts:
+            conn.execute(sql, tuple(args or ()))
+    with_db(_op, message="task batch (modo local)")
+    return {}
+
+
 def _clean_editor(ed):
     """El guión del agrupador ('—', '— sin editor —') NO es un editor: es la
     etiqueta visual de "sin asignar". Si se guarda como valor real, el borrado y
@@ -92,7 +147,7 @@ def resolve_nickname(conn, cliente_input: str, editor: str) -> str:
     # 2a. Clientes con tasks (desde TURSO — fuente de verdad, jul/2026)
     try:
         import tasks_store
-        _task_rows = tasks_store.query("SELECT DISTINCT TRIM(cliente) as c, editor, status FROM tasks")
+        _task_rows = _ts_query("SELECT DISTINCT TRIM(cliente) as c, editor, status FROM tasks")
     except Exception:
         _task_rows = [dict(r) for r in conn.execute(
             "SELECT DISTINCT TRIM(cliente) as c, editor, status FROM tasks").fetchall()] if conn else []
@@ -184,11 +239,11 @@ def _set_pending_count_op(cliente, editor, count):
     """Setea pending_count (count_locked=1) en TURSO. Instantáneo y transaccional."""
     import tasks_store
     if editor:
-        r = tasks_store.execute(
+        r = _ts_execute(
             "UPDATE tasks SET pending_count=?, count_locked=1 WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
             (count, cliente, editor))
     else:
-        r = tasks_store.execute(
+        r = _ts_execute(
             "UPDATE tasks SET pending_count=?, count_locked=1 WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
             (count, cliente))
     return r.get("affected") or 0
@@ -262,7 +317,7 @@ class handler(BaseHTTPRequestHandler):
             finally:
                 if conn:
                     conn.close()
-            existing = tasks_store.query(
+            existing = _ts_query(
                 "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1",
                 (cliente_resuelto, editor))
             if existing:
@@ -271,7 +326,7 @@ class handler(BaseHTTPRequestHandler):
                     _msg += f" (interpreté '{cliente}' como '{cliente_resuelto}')"
                 return json_response(self, {"error": _msg}, status=409)
             pseudo_id = f"manual:{editor.lower()}:{cliente_resuelto.lower().replace(' ', '_')}:{int(_t.time() * 1000000)}"
-            tasks_store.execute(
+            _ts_execute(
                 "INSERT INTO tasks (cliente, editor, file_id, file_name, detected_at, status, mail_sent_at, pending_count, count_locked) "
                 "VALUES (?, ?, ?, ?, ?, 'pending', ?, 1, 1)",
                 (cliente_resuelto, editor, pseudo_id, "(pendiente cargado manualmente)", now_iso(), now_iso()))
@@ -306,7 +361,7 @@ class handler(BaseHTTPRequestHandler):
             try:
                 from datetime import datetime, timedelta
                 if target_editor:
-                    r = tasks_store.execute(
+                    r = _ts_execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND TRIM(editor)=TRIM(?) AND status='pending'",
                         (cliente, target_editor))
                 elif is_no_editor_placeholder or (editor == "" and not is_admin):
@@ -315,13 +370,13 @@ class handler(BaseHTTPRequestHandler):
                     # fuera el nombre del editor. La condición vieja solo cubría
                     # NULL y '' → borraba 0 filas y devolvía ok:true, así que la
                     # tarjeta desaparecía de la pantalla y volvía al refrescar.
-                    r = tasks_store.execute(
+                    r = _ts_execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND "
                         "(editor IS NULL OR TRIM(editor)='' OR TRIM(editor) LIKE '—%') "
                         "AND status='pending'",
                         (cliente,))
                 else:
-                    r = tasks_store.execute(
+                    r = _ts_execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
                         (cliente,))
                 count_deleted = r.get("affected") or 0
@@ -334,7 +389,7 @@ class handler(BaseHTTPRequestHandler):
                         if conn:
                             conn.close()
                     if resolved != cliente:
-                        r = tasks_store.execute(
+                        r = _ts_execute(
                             "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
                             (resolved, target_editor))
                         count_deleted = r.get("affected") or 0
@@ -363,13 +418,13 @@ class handler(BaseHTTPRequestHandler):
                         "INSERT INTO client_deletions (cliente, deleted_at) VALUES (TRIM(?), ?) "
                         "ON CONFLICT(cliente) DO UPDATE SET deleted_at=excluded.deleted_at",
                         (nombre, deleted_at)))
-                tasks_store.execute_many(stmts)
+                _ts_execute_many(stmts)
                 # Red de seguridad: si los filtros no engancharon nada pero la
                 # tarjeta existe, borrar TODAS las pending de ese cliente. Que el
                 # tachito falle en silencio es peor que borrar de más (lo que se
                 # borra se recrea con material nuevo).
                 if count_deleted == 0:
-                    r2 = tasks_store.execute(
+                    r2 = _ts_execute(
                         "DELETE FROM tasks WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
                         (cliente,))
                     count_deleted = r2.get("affected") or 0
@@ -387,13 +442,13 @@ class handler(BaseHTTPRequestHandler):
         except ValueError:
             return json_response(self, {"error": "falta id o cliente"}, status=400)
         try:
-            rows = tasks_store.query("SELECT id, cliente, editor FROM tasks WHERE id = ?", (task_id,))
+            rows = _ts_query("SELECT id, cliente, editor FROM tasks WHERE id = ?", (task_id,))
             if not rows:
                 return json_response(self, {"error": f"task #{task_id} no existe"}, status=404)
             row = rows[0]
             if not is_admin and row["editor"] != editor:
                 return json_response(self, {"error": "No podés borrar tareas de otro editor"}, status=403)
-            tasks_store.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            _ts_execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             return json_response(self, {"ok": True, "task_id": task_id,
                                         "cliente": row["cliente"], "editor": row["editor"]})
         except Exception as e:
@@ -478,7 +533,7 @@ class handler(BaseHTTPRequestHandler):
             if current < 0 or total < 0:
                 return json_response(self, {"error": "valores >= 0"}, status=400)
             try:
-                tasks_store.execute(
+                _ts_execute(
                     "INSERT INTO editor_progress (editor, label, current, total, updated_at) VALUES (?, ?, ?, ?, ?) "
                     "ON CONFLICT(editor, label) DO UPDATE SET current=excluded.current, "
                     "total=excluded.total, updated_at=excluded.updated_at",
@@ -507,7 +562,7 @@ class handler(BaseHTTPRequestHandler):
                     stmts.append((
                         "INSERT INTO cfg_delivery_priority (editor, cliente, priority, updated_at) VALUES (?,?,?,?)",
                         (target_editor_p, cli, i, now_iso())))
-                tasks_store.execute_many(stmts)
+                _ts_execute_many(stmts)
                 return json_response(self, {"ok": True, "editor": target_editor_p, "orden": len(clean)})
             except Exception as e:
                 return json_response(self, {"error": str(e)[:200]}, status=500)
@@ -524,11 +579,11 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, {"error": "falta cliente"}, status=400)
             try:
                 if editor_n:
-                    tasks_store.execute(
+                    _ts_execute(
                         "UPDATE tasks SET note=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
                         (note, cliente_n, editor_n))
                 else:
-                    tasks_store.execute(
+                    _ts_execute(
                         "UPDATE tasks SET note=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
                         (note, cliente_n))
                 return json_response(self, {"ok": True, "cliente": cliente_n, "note": note})
@@ -546,11 +601,11 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, {"error": "falta cliente"}, status=400)
             try:
                 if editor_u:
-                    tasks_store.execute(
+                    _ts_execute(
                         "UPDATE tasks SET urgent=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
                         (urgent, cliente_u, editor_u))
                 else:
-                    tasks_store.execute(
+                    _ts_execute(
                         "UPDATE tasks SET urgent=? WHERE TRIM(cliente)=TRIM(?) AND status='pending'",
                         (urgent, cliente_u))
                 return json_response(self, {"ok": True, "cliente": cliente_u, "urgent": bool(urgent)})
@@ -571,18 +626,18 @@ class handler(BaseHTTPRequestHandler):
                 current_editor.startswith("—") or
                 "sin editor" in current_editor.lower())
             try:
-                existing = tasks_store.query(
+                existing = _ts_query(
                     "SELECT id FROM tasks WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending' LIMIT 1",
                     (cliente_r, new_editor))
                 if existing:
                     return json_response(self, {"error": f"{new_editor} ya tiene pending de {cliente_r}"}, status=409)
                 if is_no_editor_placeholder:
-                    r = tasks_store.execute(
+                    r = _ts_execute(
                         "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) "
                         "AND (editor IS NULL OR editor='') AND status='pending'",
                         (new_editor, cliente_r))
                 else:
-                    r = tasks_store.execute(
+                    r = _ts_execute(
                         "UPDATE tasks SET editor=? WHERE TRIM(cliente)=TRIM(?) AND editor=? AND status='pending'",
                         (new_editor, cliente_r, current_editor))
                 n = r.get("affected") or 0
@@ -591,7 +646,7 @@ class handler(BaseHTTPRequestHandler):
                 # Override permanente: próximos archivos del cliente van al nuevo
                 # editor (cfg_client_editor es tabla caliente en Turso, el scan
                 # la ve vía espejo). Bug 29/may.
-                tasks_store.execute(
+                _ts_execute(
                     "INSERT INTO cfg_client_editor (cliente, editor, updated_at) VALUES (?, ?, ?) "
                     "ON CONFLICT(cliente) DO UPDATE SET editor=excluded.editor, updated_at=excluded.updated_at",
                     (cliente_r, new_editor, now_iso()))
