@@ -538,7 +538,7 @@ def init_db():
     try:
         import tasks_store
         if tasks_store.available():
-            tasks_store.mirror_to_sqlite(conn)
+            tasks_store.mirror_to_sqlite(conn, force=True)
     except Exception as _e:
         print(f"   ⚠️ mirror tasks_store en init_db: {_e}")
     conn.close()
