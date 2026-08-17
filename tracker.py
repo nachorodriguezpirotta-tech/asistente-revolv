@@ -176,6 +176,12 @@ def init_db():
     # Tablas de CONFIGURACIÓN: editables desde el dashboard sin tocar código.
     # Reemplazan/extienden el contenido de aliases.py (que queda como seed inicial).
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS client_deletions (
+            cliente TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL
+        );
+    """)
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS cfg_editors (
             name TEXT PRIMARY KEY,
             email TEXT,
