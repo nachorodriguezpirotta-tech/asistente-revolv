@@ -54,6 +54,13 @@ _CLAIM = (
 
 
 def _cfg():
+    """Cloudflare D1 primero (ago/2026, reemplazo de Turso); Turso de respaldo."""
+    acc = os.environ.get("CF_ACCOUNT_ID", "").strip()
+    tok = os.environ.get("CF_API_TOKEN", "").strip()
+    db = os.environ.get("CF_D1_DATABASE_ID", "").strip()
+    if acc and tok and db:
+        return (f"https://api.cloudflare.com/client/v4/accounts/{acc}"
+                f"/d1/database/{db}/query"), tok
     url = os.environ.get("TURSO_DATABASE_URL", "").strip()
     url = url.replace("libsql://", "https://")
     token = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
@@ -61,6 +68,29 @@ def _cfg():
 
 
 def _exec(url, token, sql, args=None, timeout=8):
+    if "api.cloudflare.com" in url:          # D1
+        body = {"sql": sql}
+        if args is not None:
+            body["params"] = [a if isinstance(a, (int, float)) else str(a) for a in args]
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(),
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            out = json.load(resp)
+        if not out.get("success"):
+            raise RuntimeError(str(out.get("errors"))[:200])
+        blocks = out.get("result", [])
+        b = blocks[0] if blocks else {}
+        meta = b.get("meta") or {}
+        # Formato compatible con el resto del módulo (cols/rows de libsql)
+        rows = b.get("results") or []
+        cols = [{"name": k} for k in (rows[0].keys() if rows else [])]
+        return {"cols": cols,
+                "rows": [[{"type": "text", "value": None if v is None else str(v)}
+                          for v in r.values()] for r in rows],
+                "affected_row_count": meta.get("changes", 0) or 0,
+                "last_insert_rowid": meta.get("last_row_id")}
     stmt = {"sql": sql}
     if args is not None:
         stmt["args"] = [
