@@ -160,6 +160,12 @@ def _gh_request(method: str, path: str, body: dict = None) -> dict:
 
 
 _DB_CACHE = {"path": None, "sha": None, "ts": 0.0}
+_FRESH = {"on": False}
+
+
+def pedir_frescos():
+    """La próxima lectura de este proceso salta el cache y re-espeja."""
+    _FRESH["on"] = True
 _DB_CACHE_TTL = 25  # segundos
 
 
@@ -179,7 +185,12 @@ def fetch_db() -> Tuple[str, str]:
     # espejan desde Turso en cada llamada, más abajo.
     import time as _t
     _now = _t.time()
-    if (_DB_CACHE["path"] and _now - _DB_CACHE["ts"] < _DB_CACHE_TTL
+    if _FRESH.get("on"):
+        # Pedido explícito de datos frescos (viene de una pantalla que acaba de
+        # guardar algo): saltar el cache y re-espejar, para que el cambio se vea
+        # al instante en vez de esperar hasta 25s.
+        _FRESH["on"] = False
+    elif (_DB_CACHE["path"] and _now - _DB_CACHE["ts"] < _DB_CACHE_TTL
             and os.path.exists(_DB_CACHE["path"])):
         try:
             _copy = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
