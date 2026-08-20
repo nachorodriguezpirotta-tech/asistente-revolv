@@ -185,10 +185,11 @@ def fetch_db() -> Tuple[str, str]:
     # espejan desde Turso en cada llamada, más abajo.
     import time as _t
     _now = _t.time()
-    if _FRESH.get("on"):
-        # Pedido explícito de datos frescos (viene de una pantalla que acaba de
-        # guardar algo): saltar el cache y re-espejar, para que el cambio se vea
-        # al instante en vez de esperar hasta 25s.
+    _forzar = bool(_FRESH.get("on"))
+    if _forzar:
+        # Pedido explícito de datos frescos (la pantalla acaba de guardar algo):
+        # saltar el cache del archivo Y re-sincronizar las tablas, para que el
+        # cambio se vea al instante en vez de esperar los 20-25s de gracia.
         _FRESH["on"] = False
     elif (_DB_CACHE["path"] and _now - _DB_CACHE["ts"] < _DB_CACHE_TTL
             and os.path.exists(_DB_CACHE["path"])):
@@ -239,11 +240,11 @@ def fetch_db() -> Tuple[str, str]:
     except Exception:
         pass
 
-    _mirror_hot_tables(tmp.name)
+    _mirror_hot_tables(tmp.name, force=_forzar)
     return tmp.name, sha
 
 
-def _mirror_hot_tables(db_path: str) -> None:
+def _mirror_hot_tables(db_path: str, force: bool = False) -> None:
     """Refresca las tablas CALIENTES desde Turso sobre la copia local, para que
     TODOS los SELECT legacy (data/stats/config/reviews) vean el estado real."""
     try:
@@ -255,7 +256,7 @@ def _mirror_hot_tables(db_path: str) -> None:
         if tasks_store.available():
             _mc = sqlite3.connect(db_path)
             try:
-                tasks_store.mirror_to_sqlite(_mc)
+                tasks_store.mirror_to_sqlite(_mc, force=force)
             finally:
                 _mc.close()
     except Exception as _e:
