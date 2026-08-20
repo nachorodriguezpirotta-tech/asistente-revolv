@@ -100,7 +100,21 @@ _SCHEMA = [
 _SCHEMA_READY = False
 
 
+def _cfg_d1():
+    """Cloudflare D1 (ago/2026): reemplaza a Turso, que bloqueó las lecturas al
+    agotarse la cuota del plan gratis. Mismo SQLite, así que NINGUNA consulta del
+    sistema cambió — sólo esta capa de transporte."""
+    acc = os.environ.get("CF_ACCOUNT_ID", "").strip()
+    token = os.environ.get("CF_API_TOKEN", "").strip()
+    db = os.environ.get("CF_D1_DATABASE_ID", "").strip()
+    if acc and token and db:
+        return (f"https://api.cloudflare.com/client/v4/accounts/{acc}"
+                f"/d1/database/{db}/query"), token
+    return "", ""
+
+
 def _cfg():
+    """Respaldo: Turso. Se conserva para poder volver atrás sin tocar código."""
     url = os.environ.get("TURSO_DATABASE_URL", "").strip().replace("libsql://", "https://")
     token = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
     return url, token
@@ -146,13 +160,89 @@ def is_blocked() -> bool:
 
 
 def available() -> bool:
+    if is_blocked():
+        return False
+    u1, t1 = _cfg_d1()
+    if u1 and t1:
+        return True
     url, token = _cfg()
-    return (not is_blocked()) and bool(url and token)
+    return bool(url and token)
+
+
+def _sql_literal(v):
+    """Valor SQL inline. D1 topea en 100 parámetros por consulta; cuando se pasa,
+    los valores van escritos en el SQL."""
+    if v is None:
+        return "NULL"
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, bytes):
+        return "X'" + v.hex() + "'"
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def _pipeline_d1(stmts, timeout=12):
+    """Misma firma que el pipeline de libsql, hablando con D1.
+
+    Optimización: si ningún statement lleva parámetros, van TODOS en un solo
+    request separados por ';' (D1 devuelve un bloque por consulta) — así el
+    espejo de 14 tablas sigue costando 1 sola llamada, como antes."""
+    url, token = _cfg_d1()
+
+    def _post(body):
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(),
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            out = json.load(resp)
+        if not out.get("success"):
+            msg = str(out.get("errors"))[:300]
+            _note_blocked(msg)
+            raise RuntimeError(msg)
+        return out.get("result", [])
+
+    def _conv(block):
+        rows = block.get("results") or []
+        meta = block.get("meta") or {}
+        return {"_d1_rows": rows,
+                "affected_row_count": meta.get("changes", 0) or 0,
+                "last_insert_rowid": meta.get("last_row_id")}
+
+    sin_args = all(not a for _, a in stmts)
+    if sin_args and len(stmts) > 1:
+        sql = ";\n".join(s.rstrip().rstrip(";") for s, _ in stmts)
+        blocks = _post({"sql": sql})
+        if len(blocks) == len(stmts):
+            return [_conv(b) for b in blocks]
+        # D1 no devolvió un bloque por consulta: caer a una por una
+    out = []
+    for sql, args in stmts:
+        if args:
+            vals = list(args)
+            if len(vals) > 90:      # límite de parámetros de D1
+                inline = sql
+                for v in vals:
+                    inline = inline.replace("?", _sql_literal(v), 1)
+                blocks = _post({"sql": inline})
+            else:
+                blocks = _post({"sql": sql, "params": [
+                    (v if isinstance(v, (int, float)) and not isinstance(v, bool)
+                     else None if v is None else str(v)) for v in vals]})
+        else:
+            blocks = _post({"sql": sql})
+        out.append(_conv(blocks[0]) if blocks else {"_d1_rows": [], "affected_row_count": 0, "last_insert_rowid": None})
+    return out
 
 
 def _pipeline(stmts, timeout=12):
     """Ejecuta una lista de (sql, args) en un solo request. Devuelve la lista de
-    results crudos de libsql. Lanza en error de red o de SQL."""
+    results crudos. Lanza en error de red o de SQL."""
+    u1, t1 = _cfg_d1()
+    if u1 and t1:
+        return _pipeline_d1(stmts, timeout)
     url, token = _cfg()
     if not url or not token:
         raise RuntimeError("Turso no configurado (TURSO_DATABASE_URL/AUTH_TOKEN)")
@@ -189,6 +279,8 @@ def _pipeline(stmts, timeout=12):
 
 
 def _rows_to_dicts(result):
+    if "_d1_rows" in result:          # D1 ya devuelve filas como diccionarios
+        return result["_d1_rows"]
     cols = [c["name"] for c in result.get("cols", [])]
     rows = []
     for raw in result.get("rows", []):
