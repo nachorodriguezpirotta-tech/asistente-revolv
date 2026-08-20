@@ -399,6 +399,13 @@ class handler(BaseHTTPRequestHandler):
         token = (params.get("t", [""])[0] or "").strip()
         list_clients = params.get("list_clients", [""])[0]
 
+        if params.get("fresh", [""])[0] == "1":
+            # La pantalla acaba de guardar algo y quiere verlo ya.
+            try:
+                from _shared import pedir_frescos
+                pedir_frescos()
+            except Exception:
+                pass
         if admin == "1":
             from _shared import make_token
             if not check_token("ADMIN", token):
