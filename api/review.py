@@ -110,6 +110,29 @@ def _render_error(msg: str, detail: str) -> str:
             .replace("{detail}", _escape_html(detail)))
 
 
+def _guardar_rapido(op, mensaje, verify=None):
+    """Ejecuta `op(conn)` en la base rápida (client_reviews vive ahí) y cae a
+    with_db si no está disponible.
+
+    Por qué (21/ago): TODAS estas acciones guardaban vía with_db (bajar+subir
+    tracker.db a git) y tardaban ~45s — más de lo que el navegador espera, así
+    que al editor le parecía que el botón "no anda" (caso: marcar corregida).
+    """
+    try:
+        import tasks_store
+        if tasks_store.available():
+            op(_D1Conn())
+            return True
+    except Exception as e:
+        print(f"   ⚠️ guardado rápido falló ({str(e)[:90]}) → camino largo")
+    from _shared import with_db as _wdb
+    if verify is not None:
+        _wdb(op, message=mensaje, verify=verify)
+    else:
+        _wdb(op, message=mensaje)
+    return False
+
+
 class _D1Row(dict):
     """Fila accesible por nombre (r["editor"]) y por índice (r[0]), como sqlite3.Row."""
     def __getitem__(self, k):
@@ -277,7 +300,7 @@ class handler(BaseHTTPRequestHandler):
                         "UPDATE client_reviews SET status='resolved', resolved_at=datetime('now') WHERE id=?",
                         (int(review_id),),
                     )
-                with_db(_do, message=f"review {review_id} marcada resuelta manualmente")
+                _guardar_rapido(_do, f"review {review_id} marcada resuelta manualmente")
                 # Avisar al CLIENTE que su corrección está lista (pedido Ignacio
                 # 12/jun: el aviso debe salir tanto al subir la corrección como
                 # al marcarla corregida a mano). Solo si estaba abierta (no
@@ -360,8 +383,7 @@ class handler(BaseHTTPRequestHandler):
                     return n == len(resolved_ids)
 
                 who = "admin" if is_admin else editor
-                with_db(_do_all, message=f"reviews: resolve_all por {who} ({0 if not resolved_ids else len(resolved_ids)})",
-                        verify=_verify_all)
+                _guardar_rapido(_do_all, f"reviews: resolve_all por {who} ({0 if not resolved_ids else len(resolved_ids)})")
                 return json_response(self, {"ok": True, "resolved": len(resolved_ids)})
 
             # MODO renotify: admin re-dispara la notificación de una review existente.            # MODO renotify: admin re-dispara la notificación de una review existente.
@@ -464,7 +486,7 @@ class handler(BaseHTTPRequestHandler):
                                 (cliente, file_id, file_name or None, editor),
                             )
                     try:
-                        with_db(_upsert_approval, message=f"approve: {cliente} aprobó {file_id}")
+                        _guardar_rapido(_upsert_approval, f"approve: {cliente} aprobó {file_id}")
                     except Exception as e:
                         print(f"approve upsert error: {e}")
                 try:
