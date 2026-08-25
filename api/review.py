@@ -110,6 +110,14 @@ def _render_error(msg: str, detail: str) -> str:
             .replace("{detail}", _escape_html(detail)))
 
 
+class _D1Row(dict):
+    """Fila accesible por nombre (r["editor"]) y por índice (r[0]), como sqlite3.Row."""
+    def __getitem__(self, k):
+        if isinstance(k, int):
+            return list(self.values())[k]
+        return dict.__getitem__(self, k)
+
+
 class _D1Cursor:
     def __init__(self, rows=None, rowcount=0, lastrowid=None):
         self._rows = rows or []
@@ -139,11 +147,7 @@ class _D1Conn:
         vals = list(args) if args else None
         if low.startswith("select"):
             rows = tasks_store.query(sql, vals)
-            out = []
-            for r in rows:
-                vs = list(r.values())
-                out.append(vs)      # tuplas como sqlite (se accede por índice)
-            return _D1Cursor(rows=out)
+            return _D1Cursor(rows=[_D1Row(r) for r in rows])
         r = tasks_store.execute(sql, vals)
         return _D1Cursor(rowcount=r.get("affected", 0), lastrowid=r.get("last_id"))
     def commit(self):
@@ -671,7 +675,18 @@ class handler(BaseHTTPRequestHandler):
                 try:
                     import tasks_store
                     if tasks_store.available():
-                        _op_con_editor(_D1Conn())
+                        # El editor se resuelve contra la copia LOCAL: mail_log y
+                        # cfg_excel_clients no están en la base rápida, y sin esto
+                        # la corrección quedaba sin editor y el aviso no le llegaba.
+                        if not (editor or "").strip():
+                            try:
+                                _res = read_db(lambda c: _resolve_editor_with_conn(c, cliente))
+                                if _res:
+                                    editor = _res
+                                    resolved_editor_holder["v"] = _res
+                            except Exception as _e2:
+                                print(f"   ⚠️ no pude resolver editor: {str(_e2)[:80]}")
+                        _op(_D1Conn())
                         _rapido = True
                 except Exception as _e:
                     print(f"   ⚠️ camino rápido falló ({str(_e)[:90]}) → guardo por el camino largo")
