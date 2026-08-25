@@ -110,6 +110,48 @@ def _render_error(msg: str, detail: str) -> str:
             .replace("{detail}", _escape_html(detail)))
 
 
+class _D1Cursor:
+    def __init__(self, rows=None, rowcount=0, lastrowid=None):
+        self._rows = rows or []
+        self.rowcount = rowcount
+        self.lastrowid = lastrowid
+        self.description = None
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+    def fetchall(self):
+        return self._rows
+
+
+class _D1Conn:
+    """Conn con interfaz sqlite que escribe DIRECTO en la base rápida.
+
+    Por qué (21/ago): este endpoint es el que llama el portal cuando un cliente
+    manda correcciones, y guardaba vía with_db (bajar+subir tracker.db a git):
+    **47 segundos medidos**, más que el tiempo que el portal espera → el cliente
+    veía "Enviando…" para siempre (caso Alberto, V86/V87). client_reviews ya vive
+    en la base rápida, así que acá se escribe ahí y responde en menos de 1s.
+    Los adjuntos (BLOBs) siguen por el camino viejo: si la corrección trae fotos,
+    se usa with_db como antes.
+    """
+    def execute(self, sql, args=()):
+        import tasks_store
+        low = sql.strip().lower()
+        vals = list(args) if args else None
+        if low.startswith("select"):
+            rows = tasks_store.query(sql, vals)
+            out = []
+            for r in rows:
+                vs = list(r.values())
+                out.append(vs)      # tuplas como sqlite (se accede por índice)
+            return _D1Cursor(rows=out)
+        r = tasks_store.execute(sql, vals)
+        return _D1Cursor(rowcount=r.get("affected", 0), lastrowid=r.get("last_id"))
+    def commit(self):
+        pass
+    def close(self):
+        pass
+
+
 def _resolve_editor_with_conn(conn, cliente):
     """Editor de un cliente usando la conn FRESCA del endpoint (with_db/read_db).
     En Vercel, tracker.get_conn() abre la copia bundleada del deploy (stale/local)
@@ -624,7 +666,17 @@ class handler(BaseHTTPRequestHandler):
                             conn.execute("UPDATE client_reviews SET editor=? WHERE id=? AND COALESCE(editor,'')=''",
                                          (resolved, rid))
 
-            with_db(_op_con_editor, message=f"review: nueva revisión pedida por {cliente}" + (f" (+{len(attachments)} imgs)" if attachments else ""))
+            _rapido = False
+            if not attachments:
+                try:
+                    import tasks_store
+                    if tasks_store.available():
+                        _op_con_editor(_D1Conn())
+                        _rapido = True
+                except Exception as _e:
+                    print(f"   ⚠️ camino rápido falló ({str(_e)[:90]}) → guardo por el camino largo")
+            if not _rapido:
+                with_db(_op_con_editor, message=f"review: nueva revisión pedida por {cliente}" + (f" (+{len(attachments)} imgs)" if attachments else ""))
             review_id = review_id_holder.get("id")
 
             # Notificar editor + admin (mail + push) con links a las imágenes
