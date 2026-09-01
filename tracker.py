@@ -1962,6 +1962,51 @@ def get_latest_pending_review_for_client(cliente: str) -> Optional[dict]:
     return dict(r) if r else None
 
 
+def registrar_carpetas_aprobadas() -> int:
+    """Completa el alta de las carpetas que aprobaste pero quedaron sin cliente.
+
+    Por qué (31/ago): aprobar una carpeta escribe en dos lugares — la decisión
+    (base rápida) y el alta en `clients` (copia de git). El segundo paso tardaba
+    tanto que el endpoint moría por timeout y la carpeta quedaba "aprobada" pero
+    el cliente sin registrar: sin tarjeta, sin link y sin detección de material
+    (caso Mónica 04/jul, caso Eduardo Soto 31/ago). Esta red lo cierra sola en el
+    próximo scan.
+    """
+    try:
+        import tasks_store as _ts
+        if not _ts.available():
+            return 0
+        aprobadas = _ts.query(
+            "SELECT folder_id, folder_name FROM pending_drive_folders WHERE status='approved'")
+    except Exception:
+        return 0
+    if not aprobadas:
+        return 0
+    n = 0
+    conn = get_conn()
+    try:
+        for r in aprobadas:
+            fid, nombre = r.get("folder_id"), (r.get("folder_name") or "").strip()
+            if not fid or not nombre:
+                continue
+            ya = conn.execute("SELECT 1 FROM clients WHERE folder_id=?", (fid,)).fetchone()
+            if ya:
+                continue
+            conn.execute(
+                "INSERT INTO clients (folder_id, cliente, raw_folder_id, last_scan_at) "
+                "VALUES (?, ?, NULL, ?) ON CONFLICT(folder_id) DO UPDATE SET cliente=excluded.cliente",
+                (fid, nombre, now_iso()))
+            n += 1
+            print(f"   🗂 alta completada: {nombre} (carpeta aprobada sin registrar)")
+        if n:
+            conn.commit()
+    except Exception as e:
+        print(f"   ⚠️ registrar_carpetas_aprobadas: {str(e)[:90]}")
+    finally:
+        conn.close()
+    return n
+
+
 def reconcile_portal_pending(limit: int = 200) -> int:
     """Cierra proyectos del portal que siguen en 'por revisar' pero ya no esperan
     nada del cliente (bug 10/ago: "aparecen en por revisar videos ya aprobados").
