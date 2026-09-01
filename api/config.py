@@ -486,7 +486,10 @@ class handler(BaseHTTPRequestHandler):
             # Secciones 100% en Turso → escritura DIRECTA (0.3s, transaccional).
             # `pending_folder` toca `clients` (no migrada) → sigue por with_db.
             TURSO_SECTIONS = ("editor", "nickname", "alias", "delivery",
-                              "client_email", "client_editor", "archive_client")
+                              "client_email", "client_editor", "archive_client",
+                              # 31/ago: aprobar carpeta también, o el botón muere
+                              # por timeout (>60s) y deja el alta a medias.
+                              "pending_folder")
             if section in TURSO_SECTIONS:
                 import tasks_store
                 if tasks_store.available():
@@ -797,12 +800,22 @@ class handler(BaseHTTPRequestHandler):
             WHERE folder_id = ?
         """, (decision, now, editor, folder_id))
         if decision == "approved":
-            # Agregar a clients para que aparezca con link
-            conn.execute("""
-                INSERT INTO clients (folder_id, cliente, raw_folder_id, last_scan_at)
-                VALUES (?, ?, NULL, ?)
-                ON CONFLICT(folder_id) DO UPDATE SET cliente=excluded.cliente, last_scan_at=excluded.last_scan_at
-            """, (folder_id, row["folder_name"], now))
+            # Agregar a clients para que aparezca con link.
+            # OJO (31/ago): `clients` (la del asistente) vive en la copia de git,
+            # no en la base rápida — este INSERT es lo que hacía que aprobar una
+            # carpeta tardara >60s y el endpoint muriera por timeout DEJANDO LA
+            # CARPETA APROBADA PERO EL CLIENTE SIN REGISTRAR (caso Mónica 04/jul,
+            # caso Eduardo Soto 31/ago). Si falla, no se pierde nada: el scan
+            # registra las carpetas aprobadas que le falten (ver
+            # `registrar_carpetas_aprobadas` en tracker.py).
+            try:
+                conn.execute("""
+                    INSERT INTO clients (folder_id, cliente, raw_folder_id, last_scan_at)
+                    VALUES (?, ?, NULL, ?)
+                    ON CONFLICT(folder_id) DO UPDATE SET cliente=excluded.cliente, last_scan_at=excluded.last_scan_at
+                """, (folder_id, row["folder_name"], now))
+            except Exception as _e:
+                print(f"   ⚠️ alta en clients diferida al scan: {str(_e)[:80]}")
             # Si hay editor, crear task pending count=1 con count_locked=1
             if editor:
                 import tasks_store
