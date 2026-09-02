@@ -95,6 +95,10 @@ _SCHEMA = [
     """CREATE TABLE IF NOT EXISTS client_deletions (
         cliente TEXT PRIMARY KEY,
         deleted_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS sync_state (
+        tabla TEXT PRIMARY KEY,
+        hash TEXT NOT NULL,
+        updated_at TEXT)""",
 ]
 
 _SCHEMA_READY = False
@@ -488,6 +492,7 @@ def upsert_tables_from_sqlite(conn, tables) -> bool:
     try:
         ensure_schema()
         stmts = []
+        _sigs_a_guardar = []
         for t in tables:
             try:
                 cur = conn.execute(f"SELECT * FROM {t}")
@@ -497,20 +502,44 @@ def upsert_tables_from_sqlite(conn, tables) -> bool:
                 continue
             if not rows:
                 continue
-            # AHORRO (12/ago): antes se reescribían las ~200 filas en CADA scan
-            # (cada 2 min) aunque nada hubiera cambiado → ~4M escrituras/mes de
-            # puro derroche. Ahora se sube solo si el contenido cambió.
+            # AHORRO: no reescribir las ~230 filas en CADA scan si nada cambió.
+            # OJO (03/sep): la primera versión guardaba el hash en memoria del
+            # proceso, pero cada scan de GitHub Actions es un proceso NUEVO → el
+            # hash siempre arrancaba vacío y subía igual: ~165.000 escrituras/día
+            # (el tope gratis es 100.000, y llegaban avisos de Cloudflare todos
+            # los días). Ahora el hash se guarda EN LA BASE, así sobrevive entre
+            # ejecuciones y el costo real es 1 lectura + 0 escrituras cuando no
+            # hubo cambios.
             import hashlib as _h
             _sig = _h.md5(repr(rows).encode()).hexdigest()
             if _LAST_UPSERT_SIG.get(t) == _sig:
                 continue
+            try:
+                _prev = query("SELECT hash FROM sync_state WHERE tabla=?", (t,))
+                if _prev and _prev[0].get("hash") == _sig:
+                    _LAST_UPSERT_SIG[t] = _sig
+                    continue
+            except Exception:
+                pass
             _LAST_UPSERT_SIG[t] = _sig
+            _sigs_a_guardar.append((t, _sig))
             ph = ",".join("?" * len(cols))
             collist = ",".join(cols)
             for row in rows:
                 stmts.append((f"INSERT OR REPLACE INTO {t} ({collist}) VALUES ({ph})", list(row)))
         if stmts:
+            # Registrar los hashes junto con los datos: si algo falla, no se
+            # marca como sincronizado y se reintenta en el próximo scan.
+            import datetime as _dt
+            _ahora = _dt.datetime.utcnow().isoformat(timespec="seconds")
+            for _t, _sig in _sigs_a_guardar:
+                stmts.append((
+                    "INSERT INTO sync_state (tabla, hash, updated_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(tabla) DO UPDATE SET hash=excluded.hash, updated_at=excluded.updated_at",
+                    (_t, _sig, _ahora)))
             _pipeline(stmts, timeout=40)
+            print(f"   ↑ {len(stmts)} escrituras a la base (tablas con cambios: "
+                  f"{[t for t, _ in _sigs_a_guardar]})")
         return True
     except Exception as e:
         print(f"   ⚠️ upsert_tables_from_sqlite: {str(e)[:90]}")
