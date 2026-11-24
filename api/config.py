@@ -373,7 +373,14 @@ class handler(BaseHTTPRequestHandler):
             if not self._auth(token):
                 return json_response(self, {"error": "unauthorized"}, status=401)
 
-            from _shared import read_db
+            # SIEMPRE datos frescos (24/nov). Bug "edito/borro algo y no se
+            # guarda": SÍ se guardaba en la base, pero este panel leía una copia
+            # de hasta ~45s atrás (cache del archivo 25s + gracia del espejo 20s,
+            # puestos para ahorrar consultas). Editabas, recargaba, no veías el
+            # cambio y parecía perdido. El panel lo usa sólo el admin y sus
+            # tablas son chicas: leer fresco no cuesta nada.
+            from _shared import read_db, pedir_frescos
+            pedir_frescos()
             data = read_db(_get_all_config)
             return json_response(self, {"ok": True, **data})
         except Exception as e:
