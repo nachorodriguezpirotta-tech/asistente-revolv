@@ -215,6 +215,14 @@ def _get_all_config(conn):
                         break
                 if not matched:
                     client_editors.append({"cliente": excel_cli, "editor": editor, "source": "sheet"})
+        # Asignaciones manuales (override) de clientes que todavía no figuran en
+        # ningún lado (sin carpeta, sin tareas). Antes se guardaban pero NUNCA se
+        # mostraban — asignabas el editor y "no se guardaba" (24/nov).
+        ya = {_norm(ce["cliente"]) for ce in client_editors}
+        for cli_o, ed_o in overrides.items():
+            if cli_o and _norm(cli_o) not in ya:
+                client_editors.append({"cliente": cli_o, "editor": ed_o, "source": "override"})
+                ya.add(_norm(cli_o))
     except Exception:
         pass
 
@@ -297,12 +305,16 @@ def _get_all_config(conn):
             all_names = [m["cliente"] for m in g["members"]]
             if any(n in archived_clients for n in all_names):
                 continue  # grupo archivado, no mostrar
-            aliases = [n for n in all_names if n != g["canonical"]]
+            # OJO (24/nov): esta variable se llamaba `aliases` y PISABA la lista
+            # de alias de la tabla (cargada arriba). El return devolvía la de la
+            # última iteración → el panel mostraba 0 alias aunque se guardaran
+            # bien. Nombre distinto para no repetir el choque.
+            nombres_alt = [n for n in all_names if n != g["canonical"]]
             client_editors.append({
                 "cliente": g["canonical"],
                 "editor": g["editor"],
                 "source": g["source"],
-                "aliases": aliases,
+                "aliases": nombres_alt,
             })
     except Exception:
         pass
