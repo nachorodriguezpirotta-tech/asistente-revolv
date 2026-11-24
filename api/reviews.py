@@ -158,15 +158,26 @@ class handler(BaseHTTPRequestHandler):
             admin = params.get("admin", [""])[0] == "1"
             editor = (params.get("editor", [""])[0] or "").strip()
 
+            # Lectura SIEMPRE fresca (24/nov): al marcar una corrección como
+            # hecha, la lista tiene que reflejarlo al instante. Con el cache de
+            # ~45s seguía apareciendo y parecía que el botón no había andado.
+            try:
+                from _shared import pedir_frescos
+                pedir_frescos()
+            except Exception:
+                pass
             if admin and check_token("ADMIN", token):
+                if rate_limited(self, "admin", limit=90):
+                    return
                 data = read_db(_build_admin)
                 return json_response(self, data)
             if editor and check_token(editor, token):
+                # (el limitador estaba DESPUÉS del return y nunca corría)
+                if rate_limited(self, f"ed:{editor.lower()}", limit=90):
+                    return
                 data = read_db(lambda c: _build_editor(c, editor))
                 return json_response(self, data)
             return json_response(self, {"error": "unauthorized"}, status=401)
-            if rate_limited(self, "rd", limit=90):
-                return
         except Exception as e:
             return json_response(self, {"error": str(e)[:200], "trace": traceback.format_exc()[:1500]}, status=500)
 
