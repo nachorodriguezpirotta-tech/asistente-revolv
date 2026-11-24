@@ -624,12 +624,13 @@ class handler(BaseHTTPRequestHandler):
                 return json_response(self, data)
 
             if editor and check_token(editor, token):
+                # (el limitador estaba después del return final y nunca corría)
+                if rate_limited(self, f"ed:{editor.lower()}", limit=90):
+                    return
                 data = read_db(lambda conn: _build_editor_self_stats(conn, editor))
                 return json_response(self, data)
 
             return json_response(self, {"error": "unauthorized"}, status=401)
-            if rate_limited(self, "rd", limit=90):
-                return
         except Exception as e:
             return json_response(self, {
                 "error": str(e),
