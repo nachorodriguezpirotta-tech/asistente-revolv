@@ -1351,7 +1351,17 @@ def recover_orphan_completion_mails(max_age_hours: int = 48, cap: int = 6) -> in
             try:
                 if is_client_archived(cli):
                     continue
-                # ¿ya salió de verdad? (mail_log, ventana 14 días — no solo 6h)
+                # ¿ya salió de verdad? Primero la bandeja de salida (D1, no se
+                # pierde); después mail_log (git) como respaldo. Si falló todos
+                # sus intentos el admin ya fue avisado: no reabrir.
+                try:
+                    import outbox as _ob
+                    from notifier import _video_base
+                    _est = _ob.estado_aviso_entrega(cli, name, _video_base(name))
+                except Exception:
+                    _est = None
+                if _est in ("enviado", "abandonado"):
+                    continue
                 if completion_mail_already_sent(cli, fid, name, minutes=20160):
                     continue
                 # ¿está encolado SIN mandar? → pendiente legítimo, el notifier lo procesa

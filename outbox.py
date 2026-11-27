@@ -198,3 +198,31 @@ def marcar_avisado(evento):
                       (MAX_INTENTOS, evento))
     except Exception:
         pass
+
+
+def estado_aviso_entrega(cliente, file_name, base, dias=14):
+    """¿Qué pasó con el aviso de entrega de este video? La bandeja es la verdad.
+    Devuelve 'enviado', 'abandonado' o None (no hay rastro).
+    Mira la identidad nueva (entrega|cliente|video|día|…) y, para los avisos
+    mandados antes del 27/nov con la clave vieja, el asunto del mail."""
+    try:
+        cli = (cliente or "").strip().lower()
+        desde = int(time.time()) - dias * 86400
+        # OJO D1: un patrón de LIKE no puede pasar los 50 bytes (da 400 con
+        # nombres de video largos) → substr()/instr(), que no tienen límite.
+        p1, p2 = f"entrega|{cli}|{base}|", f"correccion|{cli}|{base}|"
+        filas = _ts().query(
+            "SELECT estado, intentos FROM outbox WHERE actualizado>=? AND ("
+            " substr(evento,1,?)=? OR substr(evento,1,?)=? OR instr(asunto,?)>0) "
+            "ORDER BY CASE estado WHEN 'enviado' THEN 0 ELSE 1 END LIMIT 1",
+            (desde, len(p1), p1, len(p2), p2, f"entregó {file_name} de {cliente}"))
+        if not filas:
+            return None
+        f = filas[0]
+        if f.get("estado") == "enviado":
+            return "enviado"
+        if f.get("estado") == "fallido" and int(f.get("intentos") or 0) >= MAX_INTENTOS:
+            return "abandonado"
+        return None
+    except Exception:
+        return None
