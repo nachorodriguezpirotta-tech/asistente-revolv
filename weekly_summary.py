@@ -160,7 +160,9 @@ def run(dry_run: bool = False):
         return
 
     try:
-        msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html)
+        _sem = (__import__("datetime").datetime.utcnow() - __import__("datetime").timedelta(hours=3)).strftime("%G-W%V")
+        msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html,
+                           kind="weekly_summary", evento=f"resumen-semanal|{_sem}|{TEST_EMAIL.lower()}")
         print(f"   ✅ Enviado a {TEST_EMAIL}: {msg_id}")
     except Exception as e:
         print(f"   ❌ Falló: {e}")

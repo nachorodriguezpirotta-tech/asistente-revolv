@@ -169,7 +169,9 @@ def run(dry_run: bool = False):
         return
 
     try:
-        msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html, kind="monthly_summary")
+        _mes = (__import__("datetime").datetime.utcnow() - __import__("datetime").timedelta(hours=3)).strftime("%Y-%m")
+        msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html,
+                           kind="monthly_summary", evento=f"resumen-mensual|{_mes}|{TEST_EMAIL.lower()}")
         print(f"   ✅ Enviado: {msg_id}")
     except Exception as e:
         print(f"   ❌ Falló: {e}")

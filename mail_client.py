@@ -105,130 +105,123 @@ def send_mail(to: str, subject: str, body_text: str, body_html: Optional[str] = 
               from_name: str = "Asistente Revolv",
               kind: str = "", cliente: Optional[str] = None, editor: Optional[str] = None,
               dedupe_window_minutes: int = 0,
-              dedupe_key_override: Optional[str] = None) -> str:
-    """
-    Manda un mail desde la cuenta autorizada.
-    Retorna el message_id.
-    Registra cada envío (éxito/falla) en mail_log para auditoría.
+              dedupe_key_override: Optional[str] = None,
+              evento: Optional[str] = None) -> str:
+    """Manda un mail. TODO pasa por la bandeja de salida única (outbox.py).
 
-    Si `dedupe_window_minutes > 0`, ANTES de enviar consulta mail_log si ya se
-    mandó un mail con el mismo dedupe_key en esa ventana. Si sí,
-    retorna el msg_id del existente sin enviar otra vez. Útil para evitar
-    duplicados causados por race condition entre containers (caso del scan
-    que vio el mismo archivo y encoló mail en dos workers paralelos).
+    Identidad del mail (lo que decide si "es el mismo" que uno anterior):
+      - `evento`: identidad explícita del suceso, p. ej.
+        "entrega|cliente|video 8|2026-11-18|dest". Se manda UNA vez y nunca más.
+        Es la forma recomendada.
+      - `dedupe_key_override` + `dedupe_window_minutes`: identidad heredada; se
+        puede volver a mandar pasada la ventana.
+      - solo `dedupe_window_minutes`: la identidad es destinatario + asunto.
+      - nada: mail sin protección de duplicado (solo se registra).
 
-    `dedupe_key_override`: si se pasa, se usa ese string como base del hash
-    en lugar de `to+subject`. Útil cuando el subject varía entre workers
-    (ej: editor "Agus" vs "—") pero la identidad lógica del mail es la misma.
+    Devuelve el msg_id de Gmail si salió. Si NO se manda porque no corresponde,
+    devuelve un texto que termina en "-skip":
+      "outbox-sent-skip"      ya había salido (confirmado): el que llama puede
+                              dar la tarea por cumplida
+      "outbox-busy-skip"      otro proceso lo está mandando en este momento
+      "outbox-abandoned-skip" falló todos sus intentos (el admin recibe aviso)
+    Si Gmail falla, levanta la excepción (y queda registrada para reintentar).
     """
     import hashlib
-    # Calcular dedupe_key SIEMPRE (aún si dedupe_window=0, para tener log preciso)
-    if dedupe_key_override:
-        dkey = hashlib.sha1(dedupe_key_override.encode()).hexdigest()[:24]
+    if evento:
+        clave, ventana = evento, (dedupe_window_minutes or None)
+    elif dedupe_key_override:
+        clave = hashlib.sha1(dedupe_key_override.encode()).hexdigest()[:24]
+        ventana = dedupe_window_minutes or None
+    elif dedupe_window_minutes > 0:
+        clave, ventana = _dedupe_key(to, subject), dedupe_window_minutes
     else:
-        dkey = _dedupe_key(to, subject)
+        clave, ventana = None, None
 
-    if dedupe_window_minutes > 0:
-        # ── CAPA 1 (ATÓMICA, Turso): a prueba de races de git ──────────────
-        # Reclamo atómico del derecho a mandar. Si dos procesos concurrentes
-        # intentan el mismo mail, solo UNO gana acá (Turso serializa). Es la
-        # barrera definitiva contra duplicados, independiente de tracker.db/git.
+    def _log(msg_id, ok, error=None):
         try:
-            from turso_dedupe import claim_mail
-            _verdict = claim_mail(dkey, kind, subject, to, dedupe_window_minutes)
-        except Exception:
-            _verdict = "unavailable"
-        if _verdict == "duplicate":
-            print(f"   🔄 dedupe Turso: ya se mandó '{subject[:60]}' a {to} (<{dedupe_window_minutes}min). SKIP")
-            try:
-                from tracker import log_mail
-                log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
-                         editor=editor, msg_id="turso-dedupe", success=True,
-                         error="dedupe-skip-turso", dedupe_key=dkey)
-            except Exception:
-                pass
-            return "turso-dedupe-skip"
-        # Si _verdict == 'send' (lo reclamamos) o 'unavailable' (Turso caído),
-        # seguimos a la CAPA 2 (mail_log) como segunda barrera / respaldo.
-        # ── CAPA 2 (mail_log en git): respaldo ─────────────────────────────
-        # Sincronizar mail_log con el remote ANTES de chequear duplicado
-        try:
-            _sync_mail_log_from_remote()
+            from tracker import log_mail
+            log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente, editor=editor,
+                     msg_id=msg_id, success=ok, error=error, dedupe_key=clave)
         except Exception:
             pass
-        # Chequeo por dedupe_key (estable, no depende de subject string)
+
+    usar_outbox = False
+    if clave:
         try:
-            from tracker import check_recent_mail_by_key
-            existing = check_recent_mail_by_key(dkey, minutes=dedupe_window_minutes)
+            import outbox
+            usar_outbox = outbox.disponible()
         except Exception:
-            existing = None
-        if existing:
-            # Si reclamamos en Turso pero el mail_log dice que ya existía,
-            # liberamos el claim para no dejar un registro huérfano inconsistente.
-            if _verdict == "send":
-                try:
-                    from turso_dedupe import release_mail
-                    release_mail(dkey)
-                except Exception:
-                    pass
-            print(f"   🔄 dedupe: ya se mandó '{subject[:60]}' a {to} hace <{dedupe_window_minutes}min (msg_id={existing}). SKIP")
+            usar_outbox = False
+        if usar_outbox:
             try:
-                from tracker import log_mail
-                log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
-                         editor=editor, msg_id=existing, success=True,
-                         error="dedupe-skip", dedupe_key=dkey)
+                veredicto = outbox.reservar(clave, kind, to, subject, ventana)
+            except Exception as e:
+                # La bandeja no respondió: preferimos el respaldo viejo a no mandar.
+                print(f"   ⚠️ bandeja de salida no respondió ({str(e)[:80]}): uso el respaldo")
+                usar_outbox = False
+                veredicto = None
+            if veredicto == "ya-enviado":
+                print(f"   🔄 ya había salido: '{subject[:60]}' → {to}. No se repite.")
+                _log("outbox", True, "dedupe-skip-outbox")
+                return "outbox-sent-skip"
+            if veredicto == "en-curso":
+                print(f"   ⏳ otro proceso está mandando '{subject[:60]}' → {to}. No se repite.")
+                return "outbox-busy-skip"
+            if veredicto == "abandonado":
+                print(f"   🛑 '{subject[:60]}' → {to} falló todos sus intentos; no se reintenta.")
+                return "outbox-abandoned-skip"
+        if not usar_outbox:
+            # RESPALDO (base rápida caída): el chequeo viejo contra mail_log.
+            try:
+                _sync_mail_log_from_remote()
             except Exception:
                 pass
-            return existing
+            try:
+                from tracker import check_recent_mail_by_key
+                existing = check_recent_mail_by_key(clave, minutes=(ventana or 10080))
+            except Exception:
+                existing = None
+            if existing:
+                _log(existing, True, "dedupe-skip")
+                return "outbox-sent-skip"
+
     msg = MIMEMultipart("alternative")
     msg["To"] = to
     msg["Subject"] = subject
     msg["From"] = from_name
-
     msg.attach(MIMEText(body_text, "plain", "utf-8"))
     if body_html:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
-
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
 
     try:
         service = _get_service()
-        sent = service.users().messages().send(
-            userId="me",
-            body={"raw": raw},
-        ).execute()
+        sent = service.users().messages().send(userId="me", body={"raw": raw}).execute()
         msg_id = sent["id"]
-        # Confirmar el claim en Turso: el mail SALIÓ. Sin esto, el claim queda
-        # "fantasma" y otro proceso lo robaría a los 10 min → duplicado.
-        try:
-            from turso_dedupe import confirm_mail
-            confirm_mail(dkey)
-        except Exception:
-            pass
-        # Log success con dedupe_key (sirve para próxima vez evitar duplicado)
-        try:
-            from tracker import log_mail
-            log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
-                     editor=editor, msg_id=msg_id, success=True, dedupe_key=dkey)
-        except Exception:
-            pass
-        return msg_id
     except Exception as e:
-        # El envío falló: liberar el claim de Turso para que el reintento pueda
-        # mandar (si no, el claim queda y el reintento vería 'duplicate').
-        try:
-            from turso_dedupe import release_mail
-            release_mail(dkey)
-        except Exception:
-            pass
-        try:
-            from tracker import log_mail
-            log_mail(to_email=to, subject=subject, kind=kind, cliente=cliente,
-                     editor=editor, msg_id=None, success=False, error=str(e)[:300],
-                     dedupe_key=dkey)
-        except Exception:
-            pass
+        if usar_outbox:
+            try:
+                import outbox
+                outbox.fallo(clave, e)
+            except Exception:
+                pass
+        _log(None, False, str(e)[:300])
         raise
+
+    # Salió. Lo primero es dejarlo asentado en la bandeja (lo que evita que se
+    # repita); el log de git es secundario y puede perderse sin consecuencias.
+    try:
+        import outbox
+        if clave:
+            # también en modo respaldo: así, cuando la bandeja vuelve, ya sabe
+            # que este evento salió y no lo repite.
+            outbox.confirmar(clave, msg_id, kind, to, subject)
+        else:
+            outbox.registrar_libre(kind, to, subject, msg_id)
+    except Exception:
+        pass
+    _log(msg_id, True)
+    return msg_id
 
 
 if __name__ == "__main__":

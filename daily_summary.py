@@ -257,7 +257,10 @@ def run(dry_run: bool = False):
     else:
         # 1. Mail completo a Ignacio (admin)
         try:
-            msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html)
+            # 1 resumen por día aunque el cron corra dos veces (identidad = fecha)
+            _dia = (__import__("datetime").datetime.utcnow() - __import__("datetime").timedelta(hours=3)).strftime("%Y-%m-%d")
+            msg_id = send_mail(to=TEST_EMAIL, subject=subject, body_text=text, body_html=html,
+                               kind="daily_summary", evento=f"resumen-diario|{_dia}|{TEST_EMAIL.lower()}")
             print(f"✅ Admin: msg_id={msg_id} → {TEST_EMAIL}")
         except Exception as e:
             print(f"❌ Admin: {e}")
@@ -285,7 +288,10 @@ def run(dry_run: bool = False):
             print("     (dry-run)")
             continue
         try:
-            msg_id = send_mail(to=email, subject=ed_subject, body_text=ed_text, body_html=ed_html)
+            _dia = (__import__("datetime").datetime.utcnow() - __import__("datetime").timedelta(hours=3)).strftime("%Y-%m-%d")
+            msg_id = send_mail(to=email, subject=ed_subject, body_text=ed_text, body_html=ed_html,
+                               kind="daily_summary_editor", editor=editor,
+                               evento=f"resumen-diario-editor|{_dia}|{email.lower()}")
             print(f"     ✅ msg_id={msg_id}")
         except Exception as e:
             print(f"     ❌ {e}")

@@ -299,21 +299,30 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
         notif_dedupe_key = f"notif-pending|{_norm_cli(cliente)}|{(editor or '').strip().lower()}|{_mat_sig}"
 
         any_sent = False
+        envio_nuevo = False
         for dest in destinatarios:
             try:
                 # ventana 1200 min = 20h → 1 mail por cliente por día
                 msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html,
+                                   kind="material", cliente=cliente, editor=editor,
                                    dedupe_window_minutes=1200,
                                    dedupe_key_override=f"{notif_dedupe_key}|{dest.lower()}")
                 print(f"     ✅ enviado a {dest} · msg_id={msg_id}")
-                any_sent = True
+                # Si OTRO proceso lo está mandando justo ahora, no marcamos la
+                # tarea: si ese otro fallara, el aviso se perdería. Queda para la
+                # próxima vuelta, que lo verá ya enviado.
+                if msg_id != "outbox-busy-skip":
+                    any_sent = True
+                if _es_envio_real(msg_id):
+                    envio_nuevo = True
             except Exception as e:
                 print(f"     ❌ falló a {dest}: {e}")
         if any_sent:
             mark_mail_sent(task_ids)
 
-        # Mandar push notification además del mail
-        try:
+        # Push solo cuando el aviso salió AHORA (no repetirlo en cada vuelta)
+        if envio_nuevo:
+          try:
             from push_sender import send_push
             push_body = f"{len(items)} archivo{'s' if len(items) != 1 else ''} nuevo{'s' if len(items) != 1 else ''}"
             push_title = f"🎬 {cliente}"
@@ -323,7 +332,7 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
             # Al editor
             if editor:
                 send_push(editor=editor, title=push_title, body=push_body, url=f"/?editor={editor}", tag=f"crudo-{cliente}")
-        except Exception as e:
+          except Exception as e:
             print(f"     ⚠️ push: {e}")
 
     if dry_run:
@@ -331,6 +340,100 @@ def run(dry_run: bool = False, recipient: Optional[str] = None):
 
 
 # ─── MAILS DE CIERRE (cuando se entrega un editado) ──────────────────────────
+
+def _video_base(nombre: str) -> str:
+    """Identidad de un video a partir del nombre del archivo, tolerante a
+    re-subidas: '3.mp4', 'Copia de 3.mp4' y '3 (1).mp4' → '3'.
+    'Video 8 corregido.mov' → 'video 8'."""
+    import re
+    n = (nombre or "").strip()
+    n = re.sub(r"^\s*(copia de|copy of)\s+", "", n, flags=re.I)
+    try:
+        from tracker import _correction_stem
+        return _correction_stem(n) or n.lower()
+    except Exception:
+        return n.lower()
+
+
+def _dia_evento(item) -> str:
+    """Día (hora Argentina) en que se DETECTÓ el archivo. Es estable: no cambia
+    si el aviso se reintenta al día siguiente, así que no genera duplicados."""
+    from datetime import datetime, timedelta
+    v = (item or {}).get("created_at") or (item or {}).get("first_seen_at")
+    try:
+        d = datetime.fromisoformat(str(v)[:19])
+    except Exception:
+        d = datetime.utcnow()
+    return (d - timedelta(hours=3)).strftime("%Y-%m-%d")
+
+
+def _es_envio_real(msg_id) -> bool:
+    return bool(msg_id) and not str(msg_id).endswith("-skip")
+
+
+def _ya_cumplido(msg_id) -> bool:
+    """Salió ahora o ya había salido antes (confirmado en la bandeja)."""
+    return _es_envio_real(msg_id) or str(msg_id) == "outbox-sent-skip"
+
+
+def _motivo_fallido(f) -> str:
+    if f.get("estado") == "enviando":
+        return "quedó a medias (el proceso se cortó): puede haber salido, chequealo"
+    n = int(f.get("intentos") or 0)
+    err = (f.get("error") or "").replace(" [avisado]", "")[:160]
+    return f"falló {n} vez/veces · {err}" if err else f"falló {n} vez/veces"
+
+
+def alertar_mails_fallidos() -> int:
+    """Red de seguridad de la bandeja de salida (27/nov/2026).
+
+    Si un mail falló todos sus intentos (Gmail caído, dirección rota, token
+    vencido), antes se perdía en silencio. Ahora le llega UN aviso al admin con
+    la lista, una sola vez por mail, para reenviarlo o corregir la dirección.
+    """
+    try:
+        import outbox
+        if not outbox.disponible():
+            return 0
+        filas = outbox.abandonados_sin_avisar()
+    except Exception as e:
+        print(f"   ⚠️ alertar_mails_fallidos: {str(e)[:90]}")
+        return 0
+    if not filas:
+        return 0
+    lineas = []
+    for f in filas:
+        cuando = ""
+        try:
+            cuando = datetime.utcfromtimestamp(int(f.get("actualizado") or 0) - 3 * 3600).strftime("%d/%m %H:%M")
+        except Exception:
+            pass
+        f["_motivo"] = _motivo_fallido(f)
+        lineas.append(f"• {f.get('asunto') or '(sin asunto)'}\n"
+                      f"   para: {f.get('destinatario') or '?'} · tipo: {f.get('tipo') or '?'} · {cuando}\n"
+                      f"   {f['_motivo']}")
+    cuerpo = ("Estos mails no salieron (o quedaron a medias). No se reintentan solos:\n\n"
+              + "\n\n".join(lineas)
+              + "\n\nRevisá la dirección del destinatario o avisale a mano.\n\n— Asistente Revolv")
+    html = ("<div style='font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:14px;color:#111'>"
+            "<p><b>⚠️ Estos mails no salieron (o quedaron a medias).</b> No se reintentan solos.</p><ul>"
+            + "".join(
+                f"<li style='margin-bottom:10px'><b>{(f.get('asunto') or '(sin asunto)')}</b><br>"
+                f"<span style='color:#555'>para {f.get('destinatario') or '?'} · {f.get('tipo') or '?'}</span><br>"
+                f"<span style='color:#a00;font-size:12px'>{f['_motivo']}</span></li>"
+                for f in filas)
+            + "</ul><p>Revisá la dirección del destinatario o avisale a mano.</p>"
+            "<p style='color:#777'>— Asistente Revolv</p></div>")
+    try:
+        send_mail(to=TEST_EMAIL, subject=f"⚠️ {len(filas)} mail(s) no salieron",
+                  body_text=cuerpo, body_html=html, kind="alerta-fallidos")
+    except Exception as e:
+        print(f"   ⚠️ alerta de fallidos no salió: {str(e)[:90]}")
+        return 0
+    for f in filas:
+        outbox.marcar_avisado(f.get("evento"))
+    return len(filas)
+
 
 def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[str] = None) -> int:
     """
@@ -507,7 +610,12 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
                 _stem = _correction_stem(file_name)
             except Exception:
                 _stem = (file_name or "").lower().strip()
-            _correction_dedupe_key = f"correction-admin|{cliente.strip().lower()}|{_stem}"
+            # Identidad por video + DÍA de detección (27/nov). Antes era por
+            # video solo, con ventana de 7 días: si el editor corregía el mismo
+            # video dos veces en la semana, la SEGUNDA corrección no avisaba
+            # (caso Elizabeth "Video 8" 16/11 y 18/11). Re-subidas del mismo
+            # día siguen contando como una.
+            _correction_dedupe_key = f"correccion|{cliente.strip().lower()}|{_video_base(file_name)}|{_dia_evento(c)}"
         else:
             # Mail unificado: SIEMPRE el formato "entregó 1 video de X". Incluye
             # el nombre del archivo en el subject para que Ignacio sepa qué subió
@@ -529,7 +637,10 @@ def send_completion_mails(cierres: Optional[list] = None, recipient: Optional[st
             # Bug reportado 21/may: V61/V62 Alberto, 2 mails cada uno con counters
             # distintos ("1 restante" vs "0 restantes (cliente cerrado)").
             # Fix: dedupe_key basado en file_id (idéntico para el mismo archivo).
-            _completion_dedupe_key = f"completion-admin|{cliente.strip().lower()}|{file_id or file_name}"
+            # Identidad por video + DÍA (27/nov). Antes era por archivo de Drive:
+            # si el editor re-subía el mismo video ("3.mp4", "Copia de 3.mp4",
+            # "3.mp4") llegaban 3 avisos (caso Rafa / Sandy 20/11).
+            _completion_dedupe_key = f"entrega|{cliente.strip().lower()}|{_video_base(file_name)}|{_dia_evento(c)}"
 
         link_text = f"\n📁 {video_label}: {video_url}\n" if video_url else ""
         link_html = f'<p style="margin: 20px 0;"><a href="{video_url}" style="background:#ff4747;color:white;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:600;">📁 {video_label}</a></p>' if video_url else ""
@@ -558,40 +669,37 @@ Archivo: {file_name}{link_text}
         # Cambio por pedido directo del user.
         destinatarios = [to]
 
+        # Resultado del aviso al admin, destinatario por destinatario:
+        #   envio_nuevo → salió AHORA (dispara el push)
+        #   any_sent    → el aviso está cumplido (salió ahora o ya había salido):
+        #                 habilita cerrar la cola y los efectos al cliente, que son
+        #                 seguros de repetir porque cada uno tiene su propia
+        #                 identidad en la bandeja de salida.
+        #   en_curso    → otro proceso lo está mandando: no cerrar todavía
+        #   abandonado  → falló todos los intentos: cerrar (el admin recibe alerta)
         any_sent = False
+        envio_nuevo = False
+        en_curso = False
+        abandonado = False
+        _override = _correction_dedupe_key if is_correction else _completion_dedupe_key
         for dest in destinatarios:
             try:
-                # dedupe_window=6h: si dos workers de GHA procesaron en paralelo
-                # el mismo editado y mandaron el mismo mail, mail_log lo atrapa y
-                # evitamos el duplicado (bug reportado por Ignacio 20/may).
-                # Subido de 30min a 6h porque cuando un scan falla al pushear
-                # tracker.db (bug 21/may con tracker.db conflict), el siguiente
-                # scan re-procesa el archivo. Con ventana 30min, si pasó más,
-                # se mandaba duplicado. 6h cubre casi cualquier retraso de retry.
-                # Para correcciones, usamos dedupe_key_override estable (no depende
-                # del editor ni del file_id) para atrapar el caso "Agus" vs "—".
-                _override = _correction_dedupe_key if is_correction else _completion_dedupe_key
-                # ventana 7 días (10080 min): el scan completo re-detecta
-                # editados viejos por días cuando los claims no persisten. Con
-                # 20h se re-mandaba a los 2 días (bug 04/jun Natalia Pereyra
-                # "5. reel 5" re-enviado 2 días después). 7 días por file_id
-                # es seguro: el mismo archivo físico no se re-notifica en una
-                # semana, y para entonces el filtro de "editado viejo >3 días"
-                # ya lo marcó baseline → deja de detectarse.
                 msg_id = send_mail(to=dest, subject=subject, body_text=text, body_html=html,
-                                   kind="completion", cliente=cliente, editor=editor,
-                                   dedupe_window_minutes=10080,
-                                   dedupe_key_override=_override)
-                print(f"  ✅ mail cierre enviado a {dest}: {editor} → {cliente} (msg_id={msg_id})")
-                # Solo un envío REAL habilita el marcado en Drive. Un 'dedupe-skip'
-                # puede ser el eco de un claim FANTASMA (run muerto entre claim y
-                # send): si lo contáramos, marcaríamos Drive y el mail moriría
-                # para siempre (cadena de fantasmas, caso video 6 Roger RM 23/jul).
-                if msg_id and not str(msg_id).endswith("-skip"):
+                                   kind="correction" if is_correction else "completion",
+                                   cliente=cliente, editor=editor,
+                                   evento=f"{_override}|{dest.lower()}")
+                print(f"  ✅ aviso a {dest}: {editor} → {cliente} ({msg_id})")
+                if _ya_cumplido(msg_id):
                     any_sent = True
-                sent += 1
+                if _es_envio_real(msg_id):
+                    envio_nuevo = True
+                    sent += 1
+                if msg_id == "outbox-busy-skip":
+                    en_curso = True
+                if msg_id == "outbox-abandoned-skip":
+                    abandonado = True
             except Exception as e:
-                print(f"  ❌ falló mail cierre a {dest} [{cliente}]: {e}")
+                print(f"  ❌ falló aviso a {dest} [{cliente}]: {e}")
 
         # Marcar el archivo en Drive como "mail mandado" — dedupe atómico que
         # NO depende de git. Aunque tracker.db/mail_log se pierda en un push
@@ -603,8 +711,9 @@ Archivo: {file_name}{link_text}
             except Exception:
                 pass
 
-        # Push notification de cierre: SOLO al admin también (mismo criterio)
-        if any_sent:
+        # Push notification de cierre: SOLO al admin, y solo si el aviso salió
+        # AHORA (si ya había salido en otra vuelta, el push también salió).
+        if envio_nuevo:
             try:
                 from push_sender import send_push
                 if closed:
@@ -657,58 +766,46 @@ Archivo: {file_name}{link_text}
                     client_folder_id=client_folder_id,
                     file_id=file_id,
                     editor=editor,
+                    dia=_dia_evento(c),
                 )
             except Exception as e:
                 print(f"     ⚠️ mail cliente: {e}")
 
-        # Si el mail falló (any_sent=False), revertir el claim para que otro intento futuro
-        # pueda reintentarlo. claim_completion_mail ya marcó mail_sent_at, así que en caso
-        # de falla, lo desmarcamos.
+        # ¿Cerrar el item de la cola o dejarlo para el próximo ciclo?
+        # La bandeja de salida es la verdad (no se pierde como la marca en git):
+        #   - cumplido o abandonado  → cerrar
+        #   - otro proceso mandando  → dejar abierto, en el próximo ciclo se cierra
+        #   - falló Gmail            → dejar abierto: la bandeja cuenta los intentos
+        #                              y a los 5 lo da por abandonado (con alerta)
+        # Antes se decidía mirando mail_log (git), que perdía registros: el
+        # sistema no se enteraba de que el mail había salido y reintentaba 20
+        # veces a ciegas (420 intentos frenados vs 170 mails reales en 30 días).
         row_id = c.get("id")
         if row_id is not None and isinstance(row_id, int):
-            if not any_sent:
-                # LOOP INFINITO (26/jul, caso "notificador loco"): un dedupe-skip
-                # dejaba any_sent=False → se revertía el claim → se reintentaba cada
-                # 2 min PARA SIEMPRE (items con 1567 retries, 4000 registros/día en
-                # mail_log). Distinguir:
-                #  a) skip legítimo (el mail YA salió de verdad, hay rastro en
-                #     mail_log success sin error de skip) → CERRAR el item.
-                #  b) tope de reintentos (>20 ≈ 40 min) → CERRAR igual: si en 20
-                #     intentos no salió, reintentar no lo va a arreglar y el ruido
-                #     es peor que el mail perdido (la red de huérfanos lo re-encola
-                #     si de verdad falta).
-                #  c) falla transitoria genuina → revertir y reintentar.
-                _close = False
+            if any_sent or abandonado:
+                if not any_sent:
+                    print(f"  🛑 cierro #{row_id} ({cliente} / {str(file_name)[:30]}): falló todos los intentos")
+                # claim_completion_mail ya dejó mail_sent_at puesto: nada que hacer
+            else:
+                from tracker import get_conn
+                conn = get_conn()
+                conn.execute(
+                    "UPDATE pending_completion_mails SET mail_sent_at = NULL WHERE id = ?",
+                    (row_id,),
+                )
+                conn.commit()
+                conn.close()
+                if not en_curso:
+                    mark_completion_mail_failed(row_id)
+                # Red de seguridad por si la bandeja de salida estuviera caída
+                # mucho tiempo: más de 288 vueltas (~1 día) → cerrar.
                 try:
-                    from tracker import completion_mail_already_sent as _sent_ok
-                    if file_id and _sent_ok(cliente, file_id, file_name, minutes=20160):
-                        _close = True   # (a) ya salió: no reintentar más
-                except Exception:
-                    pass
-                try:
-                    if int(c.get("retry_count") or 0) >= 20:
-                        _close = True   # (b) tope
-                except Exception:
-                    pass
-                if _close:
-                    print(f"  🛑 cierro item de cola #{row_id} ({cliente} / {str(file_name)[:30]}): ya enviado o tope de reintentos")
-                    try:
+                    if int(c.get("retry_count") or 0) >= 288:
                         from tracker import mark_completion_mail_sent
                         mark_completion_mail_sent(row_id)
-                    except Exception:
-                        pass
-                else:
-                    # (c) Revertir: queremos retry en próximo scan
-                    from tracker import get_conn
-                    conn = get_conn()
-                    conn.execute(
-                        "UPDATE pending_completion_mails SET mail_sent_at = NULL WHERE id = ?",
-                        (row_id,),
-                    )
-                    conn.commit()
-                    conn.close()
-                    mark_completion_mail_failed(row_id)
-            # Si any_sent=True, ya está marcado correctamente (claim lo marcó)
+                        print(f"  🛑 cierro #{row_id}: un día entero sin poder resolverse")
+                except Exception:
+                    pass
 
     return sent
 
@@ -724,7 +821,8 @@ def send_client_delivery_mail(cliente: str, file_name: str,
                                 edited_folder_id: Optional[str],
                                 client_folder_id: Optional[str],
                                 file_id: Optional[str],
-                                editor: Optional[str] = None) -> bool:
+                                editor: Optional[str] = None,
+                                dia: Optional[str] = None) -> bool:
     """Manda mail al cliente avisando que se entregó un video. SOLO si está
     en cfg_clients con notifications_enabled=1.
 
@@ -887,10 +985,18 @@ Nacho te subió tu video nuevo:
         # dedupe 7 días + key estable por (cliente, file_id): el mismo video al
         # mismo cliente no se manda 2 veces aunque el scan re-detecte el
         # editado por días (bug concurrencia). Key independiente del subject.
-        _cli_override = f"client-delivery|{cliente.strip().lower()}|{file_id or file_name}"
-        msg_id = send_mail(to=to_email, subject=subject, body_text=text, body_html=html,
-                            dedupe_window_minutes=10080,
-                            dedupe_key_override=_cli_override)
+        # Identidad: video + día de detección (27/nov). Antes por archivo de
+        # Drive → si el editor re-subía el mismo video, al CLIENTE le llegaban
+        # varios "tu video está listo" del mismo video.
+        if dia:
+            _evento = f"cliente-listo|{cliente.strip().lower()}|{_video_base(file_name)}|{dia}|{to_email.lower()}"
+            msg_id = send_mail(to=to_email, subject=subject, body_text=text, body_html=html,
+                               kind="client-delivery", cliente=cliente, evento=_evento)
+        else:
+            _cli_override = f"client-delivery|{cliente.strip().lower()}|{file_id or file_name}"
+            msg_id = send_mail(to=to_email, subject=subject, body_text=text, body_html=html,
+                               kind="client-delivery", cliente=cliente,
+                               dedupe_window_minutes=10080, dedupe_key_override=_cli_override)
         print(f"   📧 mail al cliente {cliente} ({to_email}): {file_name} (msg_id={msg_id})")
         return True
     except Exception as e:
@@ -1003,9 +1109,16 @@ a llegar al cliente un mail nuevo con la versión corregida.
 
     for dest in destinatarios:
         try:
-            # dedupe 6h, mismo razonamiento que en send_completion_mails
-            msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html,
-                                dedupe_window_minutes=360)
+            # Identidad = el pedido de revisión: 1 aviso por pedido y por
+            # destinatario, lo mande el portal o la red durable del scan.
+            if review_id:
+                msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html,
+                                   kind="revision-requested", cliente=cliente, editor=editor,
+                                   evento=f"revision-pedida|{review_id}|{dest.lower()}")
+            else:
+                msg_id = send_mail(to=dest, subject=subject, body_text=body_text, body_html=body_html,
+                                   kind="revision-requested", cliente=cliente, editor=editor,
+                                   dedupe_window_minutes=360)
             print(f"   📧 revisión enviada a {dest} (msg_id={msg_id})")
         except Exception as e:
             print(f"   ⚠️ falló mail revisión a {dest}: {e}")
@@ -1199,11 +1312,15 @@ Un abrazo,<br><strong style="color:#222;">Nacho</strong><br>
         stem = _correction_stem(file_name)
     except Exception:
         stem = (file_name or "").lower().strip()
-    override = f"correction-client|{cliente.strip().lower()}|{stem}"
+    # Identidad del aviso "tu corrección está lista": cliente + video (sin
+    # "Copia de"). Los dos caminos (con y sin pedido registrado) comparten la
+    # misma, así que aunque los dos lo detecten sale UNO. Ventana 6 h: una
+    # segunda tanda de cambios del mismo video más tarde sí avisa.
+    _ev_listo = f"cliente-corregido|{cliente.strip().lower()}|{_video_base(file_name)}|{to_email.lower()}"
     try:
         send_mail(to=to_email, subject=subject, body_text=body_text, body_html=body_html,
                   kind="client-correction-ready", cliente=cliente,
-                  dedupe_window_minutes=60, dedupe_key_override=override)
+                  evento=_ev_listo, dedupe_window_minutes=360)
         print(f"   📧 corrección lista → cliente {cliente} ({to_email})")
     except Exception as e:
         print(f"   ⚠️ falló mail corrección lista a {cliente}: {e}")
@@ -1280,11 +1397,15 @@ Un abrazo,<br><strong style="color:#222;">Nacho</strong><br>
         stem = _correction_stem(video)
     except Exception:
         stem = (video or "").lower().strip()
-    override = f"correction-client|{cliente.strip().lower()}|{stem}"
+    # Identidad del aviso "tu corrección está lista": cliente + video (sin
+    # "Copia de"). Los dos caminos (con y sin pedido registrado) comparten la
+    # misma, así que aunque los dos lo detecten sale UNO. Ventana 6 h: una
+    # segunda tanda de cambios del mismo video más tarde sí avisa.
+    _ev_listo = f"cliente-corregido|{cliente.strip().lower()}|{_video_base(video)}|{to_email.lower()}"
     try:
         send_mail(to=to_email, subject=subject, body_text=body_text, body_html=body_html,
-                   kind="client-correction-ready", cliente=cliente,
-                   dedupe_window_minutes=60, dedupe_key_override=override)
+                  kind="client-correction-ready", cliente=cliente,
+                  evento=_ev_listo, dedupe_window_minutes=360)
         print(f"   📧 revisión resuelta enviada a cliente {cliente} ({to_email})")
     except Exception as e:
         print(f"   ⚠️ falló mail revisión resuelta a {cliente}: {e}")

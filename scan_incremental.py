@@ -631,6 +631,15 @@ def run(notify: bool = False):
                 print(f"📝 {nrev} aviso(s) de revisión pedida enviados (durable).")
         except Exception as _e:
             print(f"notify_pending_reviews: {_e}")
+        # Mails que fallaron todos sus intentos → 1 aviso al admin (nunca más
+        # pérdidas silenciosas).
+        try:
+            from notifier import alertar_mails_fallidos
+            nfal = alertar_mails_fallidos()
+            if nfal:
+                print(f"⚠️ {nfal} mail(s) fallidos avisados al admin.")
+        except Exception as _e:
+            print(f"alertar_mails_fallidos: {_e}")
 
 
     # DURABILIDAD (26/jul): subir a Turso lo que este scan escribió en las tablas
