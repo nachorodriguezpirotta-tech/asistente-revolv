@@ -205,6 +205,41 @@ def _resolve_client_for_file(f: dict, folder_to_client: dict, raw_to_client: dic
     return None, None
 
 
+def _mantenimiento_mails():
+    """Reintentos de mails aunque Drive no haya cambiado (27/nov/2026).
+
+    Antes, sin cambios en Drive el scan cortaba acá y un aviso que había
+    fallado (o un pedido de revisión que el portal no logró avisar) esperaba
+    hasta el próximo archivo subido: de noche o un finde, horas. Todo esto es
+    barato si no hay nada pendiente (lecturas locales + 1 consulta a la base).
+    """
+    import time as _t
+    try:
+        from notifier import run as notify_run, send_completion_mails
+        notify_run(dry_run=False)            # avisos de material sin mandar
+        n = send_completion_mails([])        # cola de entregas/correcciones
+        if n:
+            print(f"📧 {n} mail(s) de entrega reintentados y enviados.")
+    except Exception as e:
+        print(f"mantenimiento (cola): {e}")
+    try:
+        from notifier import notify_pending_reviews
+        n = notify_pending_reviews()
+        if n:
+            print(f"📝 {n} aviso(s) de revisión pedida enviados (reintento).")
+    except Exception as e:
+        print(f"mantenimiento (revisiones): {e}")
+    # El aviso de fallidos no necesita correr cada 2 min: cada ~10.
+    if int(_t.time() // 120) % 5 == 0:
+        try:
+            from notifier import alertar_mails_fallidos
+            n = alertar_mails_fallidos()
+            if n:
+                print(f"⚠️ {n} mail(s) fallidos avisados al admin.")
+        except Exception as e:
+            print(f"mantenimiento (alerta): {e}")
+
+
 def run(notify: bool = False):
     print("⚡ SCAN INCREMENTAL — solo cambios desde el último run")
     init_db()
@@ -235,6 +270,8 @@ def run(notify: bool = False):
 
     if not changes:
         print("   ✅ Nada nuevo.")
+        if notify:
+            _mantenimiento_mails()
         return
 
     # 3) Cargar índice de carpetas para clasificar rápido
